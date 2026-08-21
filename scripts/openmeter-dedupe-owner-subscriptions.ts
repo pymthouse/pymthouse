@@ -185,12 +185,21 @@ async function loadStarterRefs(developerAppIds: string[]): Promise<StarterRef[]>
       ),
     );
 
-  return rows.map((row) => ({
-    planId: row.id,
-    clientId: row.clientId,
-    openmeterPlanId: row.openmeterPlanId,
-    planKey: buildOpenMeterPlanKey(row.clientId, row.id),
-  }));
+  // plans.clientId is nullable for platform-scoped plans; this script only
+  // deals with app Starter plans, and the inArray filter already excludes
+  // NULL, so narrow explicitly rather than assert.
+  return rows.flatMap((row) =>
+    row.clientId
+      ? [
+          {
+            planId: row.id,
+            clientId: row.clientId,
+            openmeterPlanId: row.openmeterPlanId,
+            planKey: buildOpenMeterPlanKey(row.clientId, row.id),
+          },
+        ]
+      : [],
+  );
 }
 
 function isStarterSubscription(

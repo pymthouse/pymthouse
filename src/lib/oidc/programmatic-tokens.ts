@@ -14,6 +14,10 @@ import { and, eq } from "drizzle-orm";
 import { validateClientSecret } from "./clients";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { assertSignJobNotMixedWithAdmin, SignJobScopeExclusivityError } from "@/lib/oidc/scopes";
+import {
+  billingSubjectClaim,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -104,12 +108,25 @@ export async function issueProgrammaticTokens(input: {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const scope = input.scopes.join(" ").trim();
 
+  // An app owner may hold an app_users row on their own app, but their usage
+  // settles on the shared owner wallet. The identity webhook keys off
+  // user_type === "app_owner" to rewrite usage_subject to owner:{id}, which
+  // the collector strips to the canonical owner customer key. Hardcoding
+  // "app_user" here sent owner traffic to app_…:{ownerId}, a subject no
+  // customer is attributed — metered and displayed, but never invoiced.
+  // See docs/adr-owner-vs-app-billing.md.
+  const billingIdentity = await resolveOpenMeterBillingIdentity({
+    clientId: binding.oauthClientId,
+    externalUserId,
+  });
+
   const accessToken = await new SignJWT({
     scope,
     scp: input.scopes,
     client_id: binding.oauthClientId,
     external_user_id: externalUserId,
-    user_type: "app_user",
+    user_type: billingIdentity.isOwner ? "app_owner" : "app_user",
+    ...billingSubjectClaim(billingIdentity),
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)

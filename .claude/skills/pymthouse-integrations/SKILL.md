@@ -32,10 +32,11 @@ Each developer app typically has **two** registered OIDC clients:
 
 | Role | `client_id` shape | Secret? | Used for |
 | --- | --- | --- | --- |
-| **Public** (SDK, browser, RFC 8628 device) | `app_…` | No (`token_endpoint_auth_method: none`) | Device/auth URLs, `client_id` in verification links, subject JWT must show this `client_id` |
+| **Public** (SDK, browser device, RFC 8628) | `app_…` | No (`token_endpoint_auth_method: none`) | Device/auth URLs, `client_id` in verification links, subject JWT must show this `client_id` — **no** authorization-code redirects |
 | **Confidential** (Builder / M2M) | `m2m_…` | Yes | `Authorization: Basic base64(m2m_id:secret)` on Builder routes and RFC 8693 token exchange |
+| **Confidential web RP** (portal SSO) | `web_…` | Yes | authorization_code + redirects (Kong Dev Portal, etc.) |
 
-They are siblings: `developer_apps.oidc_client_id` → public row; `developer_apps.m2m_oidc_client_id` → M2M row.
+They are siblings: `developer_apps.oidc_client_id` → public row; `developer_apps.m2m_oidc_client_id` → M2M row; `developer_apps.web_oidc_client_id` → web RP row.
 
 **Do not** put the M2M id in env vars meant for the public app (e.g. integrators must set **public** `app_…` wherever the device URL’s `client_id` or Builder path `{clientId}` is the public id).
 
@@ -54,7 +55,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 - **Mint user access token**: `POST .../users/{externalUserId}/token` with optional `{ "scope": "sign:job" }`. Issued JWT `sub` is **`app_users.id`** (app user row), not necessarily a `users` / `end_users` row by itself.
 - **Signer session exchange (canonical)**: `POST /api/v1/apps/{clientId}/oidc/token` — RFC 8693 form body with `subject_token` = user JWT or `pmth_*` API key. Optional M2M Basic auth.
 - **Clearinghouse direct signer mint**: M2M `POST /api/v1/oidc/token` with `scope=sign:mint_user_token`, `external_user_id` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
-- **Allowances**: `POST .../users/{externalUserId}/allowances`, balance `GET .../usage/balance?externalUserId=...` — OpenMeter entitlements on hosted instance.
+- **Allowances**: Konnect credit balance `GET .../users/{externalUserId}/allowances` (`live` spendable / `settled` ledger / `pending` unbooked grants). Plan included remaining is `GET .../usage/balance?externalUserId=...`. Free grants are admin-only (`POST /api/v1/admin/billing/owners/{userId}/grants` via customer-service).
 
 ## OpenMeter / usage ingest
 

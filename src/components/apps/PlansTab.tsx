@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PipelineModelPicker from "@/components/PipelineModelPicker";
 
 import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
+import InfoTooltip from "@/components/InfoTooltip";
 import {
   excludedDocumentFromPickerValues,
   expandDocumentToConcreteKeys,
@@ -21,6 +22,7 @@ import {
   parseMarkupPercentInput,
 } from "@/lib/plan-pricing";
 import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
+import { OPENMETER_DOCS } from "@/lib/openmeter/constants";
 import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
   validateCustomPlanName,
@@ -32,6 +34,11 @@ import {
   usdCentsDisplayToMicros,
   usdMicrosToCentsDisplay,
 } from "@/lib/format-usd-micros";
+import {
+  normalizePlanBillingCycle,
+  type PlanBillingCycle,
+} from "@/lib/openmeter/billing-cycle";
+import { readMutationError } from "@/lib/http/mutation-error";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -42,9 +49,12 @@ interface PlanRow {
   priceAmount: string;
   priceCurrency: string;
   status: string;
+  phaseOutAt?: string | null;
+  replacementPlanId?: string | null;
   overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
+  resolvedBehavior?: string;
   discoveryProfileId?: string | null;
   isNetworkDefault?: boolean;
   isStarterDefault?: boolean;
@@ -92,10 +102,13 @@ interface PlanDraft {
   type: string;
   priceAmount: string;
   priceCurrency: string;
+  billingCycle: PlanBillingCycle;
   includedUsdDisplay: string;
   defaultMarkupPct: string;
   capabilityKeys: string[];
   capabilityMarkupByKey: Record<string, string>;
+  status: string;
+  replacementPlanId: string;
 }
 
 const PLAN_TYPES = [
@@ -103,6 +116,22 @@ const PLAN_TYPES = [
   { value: "subscription", label: "Subscription" },
   { value: "usage", label: "Pay-Per-Use" },
 ] as const;
+
+const BILLING_CYCLE_OPTIONS: Array<{ value: PlanBillingCycle; label: string }> = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+function billingCyclePeriodLabel(cycle: PlanBillingCycle): string {
+  if (cycle === "daily") return "Daily";
+  if (cycle === "weekly") return "Weekly";
+  return "Monthly";
+}
+
+function billingCyclePriceLabel(cycle: PlanBillingCycle, currency: string): string {
+  return `${billingCyclePeriodLabel(cycle)} price (${currency})`;
+}
 
 async function readFetchJson(res: Response): Promise<{
   ok: boolean;
@@ -289,12 +318,15 @@ function planToDraft(plan: PlanRow): PlanDraft {
   return {
     name: plan.name,
     type: plan.type,
-    priceAmount: plan.priceAmount,
+    priceAmount: normalizeUsdCentsDisplay(plan.priceAmount || "0"),
     priceCurrency: plan.priceCurrency,
+    billingCycle: normalizePlanBillingCycle(plan.billingCycle),
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
     capabilityMarkupByKey: capabilitiesToMarkupByKey(caps),
+    status: plan.status || "active",
+    replacementPlanId: plan.replacementPlanId ?? "",
   };
 }
 
@@ -302,12 +334,15 @@ function emptyDraft(): PlanDraft {
   return {
     name: "",
     type: "free",
-    priceAmount: "0",
+    priceAmount: "0.00",
     priceCurrency: "USD",
+    billingCycle: "monthly",
     includedUsdDisplay: "",
-    defaultMarkupPct: "",
+    defaultMarkupPct: "0",
     capabilityKeys: [],
     capabilityMarkupByKey: {},
+    status: "active",
+    replacementPlanId: "",
   };
 }
 
@@ -604,6 +639,29 @@ function TypeBadge({ type }: Readonly<{ type: string }>) {
   );
 }
 
+function StatusBadge({ status }: Readonly<{ status: string }>) {
+  const styles: Record<string, string> = {
+    active: "text-emerald-400/90 border-emerald-500/30 bg-emerald-500/10",
+    phase_out: "text-amber-400/90 border-amber-500/30 bg-amber-500/10",
+    draft: "text-zinc-400 border-zinc-600 bg-zinc-800/50",
+  };
+  const labels: Record<string, string> = {
+    active: "Active",
+    phase_out: "Phase-out",
+    draft: "Draft",
+  };
+  const label = labels[status] ?? "Active";
+  return (
+    <span
+      className={`text-[10px] font-medium uppercase tracking-wide border rounded px-1.5 py-0.5 shrink-0 ${
+        styles[status] ?? "text-zinc-400 border-zinc-600"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
 // ── Plan draft form (edit + create) ───────────────────────────────────────────
 
 function PlanDraftForm({
@@ -664,43 +722,123 @@ function PlanDraftForm({
         />
       </div>
 
+      {/* Pay-Per-Use is threshold-only (#398): no user-facing billing cycle. */}
+      {draft.type === "subscription" && (
+        <div>
+          <label
+            htmlFor={`${idPrefix}-billing-cycle`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
+            Billing cycle
+            <InfoTooltip
+              href={OPENMETER_DOCS.billingCadence}
+              wide
+              label={
+                "Maps to OpenMeter rate-card billingCadence (e.g. Monthly → P1M).\n" +
+                "Controls how often usage invoices close and included allowance renews."
+              }
+            />
+          </label>
+          <select
+            id={`${idPrefix}-billing-cycle`}
+            value={draft.billingCycle}
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                billingCycle: normalizePlanBillingCycle(e.target.value),
+              })
+            }
+            disabled={!canEdit}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+          >
+            {BILLING_CYCLE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-500 mt-1">
+            How often usage invoices close and included allowance renews.
+          </p>
+        </div>
+      )}
+
       {(draft.type === "subscription" || draft.type === "usage") && (
         <div>
           <label htmlFor={`${idPrefix}-default-markup`} className="block text-xs text-zinc-500 mb-1">
             Default usage markup (% over network cost)
           </label>
-          <input
-            id={`${idPrefix}-default-markup`}
-            type="text"
-            inputMode="decimal"
-            value={draft.defaultMarkupPct}
-            onChange={(e) =>
-              onChange({ ...draft, defaultMarkupPct: sanitizePercentInput(e.target.value) })
-            }
-            placeholder="0 = pass-through network pricing"
-            disabled={!canEdit}
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-          />
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/20">
+            <input
+              id={`${idPrefix}-default-markup`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={draft.defaultMarkupPct}
+              onChange={(e) =>
+                onChange({ ...draft, defaultMarkupPct: sanitizePercentInput(e.target.value) })
+              }
+              onBlur={() => {
+                const trimmed = draft.defaultMarkupPct.trim();
+                if (trimmed === "" || trimmed === ".") {
+                  onChange({ ...draft, defaultMarkupPct: "0" });
+                }
+              }}
+              placeholder="0"
+              disabled={!canEdit}
+              aria-label="Default usage markup percent"
+              className="min-w-0 flex-1 bg-transparent text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 focus:outline-none"
+            />
+            <span className="shrink-0 text-sm text-zinc-500" aria-hidden="true">
+              %
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            0% = pass-through network pricing
+          </p>
         </div>
       )}
 
       {draft.type === "subscription" && (
         <>
           <div>
-            <label htmlFor={`${idPrefix}-price`} className="block text-xs text-zinc-500 mb-1">
-              Monthly price ({draft.priceCurrency})
+            <label
+              htmlFor={`${idPrefix}-price`}
+              className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+            >
+              {billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
+              <InfoTooltip
+                href={OPENMETER_DOCS.flatFee}
+                wide
+                label={
+                  "Maps to an OpenMeter flat_fee rate card (subscription_fee).\n" +
+                  "Recurring charge billed each billing cadence when amount is greater than $0."
+                }
+              />
             </label>
-            <input
+            <DollarCentsInput
               id={`${idPrefix}-price`}
               value={draft.priceAmount}
-              onChange={(e) => onChange({ ...draft, priceAmount: e.target.value })}
+              onChange={(priceAmount) => onChange({ ...draft, priceAmount })}
+              placeholder="0.00"
               disabled={!canEdit}
-              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+              aria-label={billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
             />
           </div>
           <div>
-          <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
-            Included usage allowance
+          <label
+            htmlFor={`${idPrefix}-included`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
+            Included usage allowance (per billing cycle)
+            <InfoTooltip
+              href={OPENMETER_DOCS.usageDiscount}
+              wide
+              label={
+                "Maps to OpenMeter rate-card discounts.usage (metered entitlement grant).\n" +
+                "Free included USD micros each cycle before prepaid credits / overage invoice."
+              }
+            />
           </label>
           <DollarCentsInput
             id={`${idPrefix}-included`}
@@ -838,15 +976,23 @@ function buildPlanPayload(
   const payload: Record<string, unknown> = {
     name: draft.name.trim(),
     type: draft.type,
-    priceAmount: draft.priceAmount,
+    priceAmount:
+      draft.type === "subscription"
+        ? normalizeUsdCentsDisplay(draft.priceAmount || "0")
+        : "0",
     priceCurrency: draft.priceCurrency,
+    billingCycle: draft.billingCycle,
     ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,
     overageRateUsd,
   };
 
-  if (planId) payload.id = planId;
+  if (planId) {
+    payload.id = planId;
+    payload.status = draft.status;
+    payload.replacementPlanId = draft.replacementPlanId.trim() || null;
+  }
 
   return payload;
 }
@@ -1301,8 +1447,19 @@ function StarterPlanCard({
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
           <div>
-            <label htmlFor="starter-included-usd" className="block text-sm text-zinc-300 mb-1">
+            <label
+              htmlFor="starter-included-usd"
+              className="mb-1 flex items-center gap-1.5 text-sm text-zinc-300"
+            >
               Included usage allowance
+              <InfoTooltip
+                href={OPENMETER_DOCS.usageDiscount}
+                wide
+                label={
+                  "Maps to OpenMeter rate-card discounts.usage (metered entitlement grant).\n" +
+                  "Free included USD micros each cycle for new end users on Starter."
+                }
+              />
             </label>
             <DollarCentsInput
               id="starter-included-usd"
@@ -1347,6 +1504,7 @@ function CustomPlanCard({
   catalog,
   catalogError,
   blockedConcreteKeys,
+  replacementOptions,
   canEdit,
   isEditing,
   onEdit,
@@ -1359,6 +1517,7 @@ function CustomPlanCard({
   catalog: PipelineCatalogEntry[];
   catalogError: string | null;
   blockedConcreteKeys: Set<string>;
+  replacementOptions: Array<{ id: string; name: string }>;
   canEdit: boolean;
   isEditing: boolean;
   onEdit: () => void;
@@ -1400,11 +1559,7 @@ function CustomPlanCard({
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
-        setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to save (${res.status})`,
-        );
+        setError(readMutationError(data.body, `Failed to save (${res.status})`));
         return;
       }
       if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
@@ -1443,11 +1598,29 @@ function CustomPlanCard({
           <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
             {plan.name}
             <TypeBadge type={plan.type} />
+            <StatusBadge status={plan.status} />
           </h3>
           {plan.type === "subscription" && (
             <p className="text-xs text-zinc-500 mt-1">
               {`${plan.priceAmount} ${plan.priceCurrency}`}
               {plan.billingCycle && ` · ${plan.billingCycle}`}
+            </p>
+          )}
+          {plan.type === "usage" && plan.resolvedBehavior && (
+            <p className="text-xs text-zinc-500 mt-1">{plan.resolvedBehavior}</p>
+          )}
+          {plan.status === "phase_out" && (
+            <p className="text-xs text-amber-400/90 mt-1">
+              Phasing out
+              {plan.phaseOutAt
+                ? ` · migrate by ${new Date(plan.phaseOutAt).toLocaleDateString()}`
+                : ""}
+              {plan.replacementPlanId
+                ? ` · suggested ${
+                    replacementOptions.find((o) => o.id === plan.replacementPlanId)
+                      ?.name ?? plan.replacementPlanId
+                  }`
+                : ""}
             </p>
           )}
           {plan.includedUsdMicros && (
@@ -1496,6 +1669,61 @@ function CustomPlanCard({
             canEdit={canEdit}
             idPrefix={`plan-${plan.id}`}
           />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor={`plan-${plan.id}-status`}
+                className="block text-xs font-medium text-zinc-400 mb-1"
+              >
+                Lifecycle status
+              </label>
+              <select
+                id={`plan-${plan.id}-status`}
+                value={draft.status}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    status: e.target.value,
+                  })
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              >
+                <option value="active">Active</option>
+                <option value="phase_out">Phase-out</option>
+                <option value="draft">Draft</option>
+              </select>
+            </div>
+            {draft.status === "phase_out" && (
+              <div>
+                <label
+                  htmlFor={`plan-${plan.id}-replacement`}
+                  className="block text-xs font-medium text-zinc-400 mb-1"
+                >
+                  Replacement plan
+                </label>
+                <select
+                  id={`plan-${plan.id}-replacement`}
+                  value={draft.replacementPlanId}
+                  disabled={!canEdit}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      replacementPlanId: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                >
+                  <option value="">None (use Starter when migrating)</option>
+                  {replacementOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -1517,7 +1745,9 @@ function CustomPlanCard({
           <p className="text-xs text-zinc-500">
             Saving paid plans publishes retail $/micro rate cards to OpenMeter. Use Usage API
             with <code className="text-zinc-400">?include=retail&amp;groupBy=pipeline_model</code>{" "}
-            to validate effective rates.
+            to validate effective rates. Phase-out blocks new subscribers; migrate remaining
+            users with{" "}
+            <code className="text-zinc-400">npm run openmeter:migrate-plan-subscribers</code>.
           </p>
         </>
       )}
@@ -1565,9 +1795,7 @@ function AddPlanPanel({
       const data = await readFetchJson(res);
       if (!data.ok) {
         setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to create (${res.status})`,
+          readMutationError(data.body, `Failed to create (${res.status})`),
         );
         return;
       }
@@ -1781,7 +2009,7 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
           setCatalogError(`Pipeline catalog unavailable (HTTP ${status})`);
         }
       })
-      .catch(() => setCatalogError("NaaP catalog unavailable"));
+      .catch(() => setCatalogError("Network catalog unavailable"));
   }, []);
 
   const deletePlan = async (planId: string) => {
@@ -1882,6 +2110,14 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
               catalog={catalog}
               catalogError={catalogError}
               blockedConcreteKeys={blockedConcreteKeys}
+              replacementOptions={[
+                ...(starterPlan
+                  ? [{ id: starterPlan.id, name: starterPlan.name }]
+                  : []),
+                ...customPlans
+                  .filter((p) => p.id !== plan.id && p.status !== "phase_out")
+                  .map((p) => ({ id: p.id, name: p.name })),
+              ]}
               canEdit={canEdit}
               isEditing={editingPlanId === plan.id}
               onEdit={() => setEditingPlanId(plan.id)}

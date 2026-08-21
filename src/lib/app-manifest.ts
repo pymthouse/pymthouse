@@ -8,7 +8,7 @@ import {
   buildManifestWhenCatalogUnavailable,
   toAppManifestResponse,
 } from "@/lib/discovery-allowlist-manifest";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalog } from "@/lib/network-catalog";
 import {
   getOrCreateNetworkDefaultPlan,
   selectNetworkDefaultPlan,

@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
+import { formatBillingWei } from "@/lib/billing-format";
+import CycleRange from "@/components/billing/CycleRange";
 import type {
   BillingAppUsageSummary,
   BillingUsageDashboardPayload,
   BillingUserUsageRow,
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 
 type AppUsageEntry = BillingAppUsageSummary;
 type UserUsage = BillingUserUsageRow;
@@ -48,19 +50,24 @@ export function BillingDashboardHeader({
   singleAppName,
   cycle,
   isOpenMeter,
+  appId,
 }: Readonly<{
   scope: BillingUsageDashboardPayload["scope"];
   singleAppName: string | null | undefined;
   cycle: BillingUsageDashboardPayload["cycle"];
   isOpenMeter: boolean;
+  /** App id for the Identities cross-link (single-app scope only). */
+  appId?: string | null;
 }>) {
+  // The metering vendor is an implementation detail; surface whether usage is
+  // live-metered, not which product does it.
   const sourceClass = isOpenMeter ? "text-emerald-500/90" : "text-zinc-500";
-  const sourceLabel = isOpenMeter ? "OpenMeter" : "Postgres";
+  const sourceLabel = isOpenMeter ? "Live metering" : "Cached usage";
   const cycleLine = (
     <p className="text-xs text-zinc-600 mt-2 break-words">
-      Cycle: {formatBillingPeriod(cycle.start)} — {formatBillingPeriod(cycle.end)}
+      Cycle: <CycleRange start={cycle.start} end={cycle.end} />
       <span className="mx-2 text-zinc-700">·</span>
-      <span className={sourceClass}>Source: {sourceLabel}</span>
+      <span className={sourceClass}>{sourceLabel}</span>
     </p>
   );
 
@@ -80,12 +87,22 @@ export function BillingDashboardHeader({
           </p>
           {cycleLine}
         </div>
-        <Link
-          href="/usage"
-          className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
-        >
-          ← All applications
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {appId ? (
+            <Link
+              href={`/apps/${appId}/identities`}
+              className="text-sm text-emerald-400 transition-colors hover:text-emerald-300"
+            >
+              Identities →
+            </Link>
+          ) : null}
+          <Link
+            href="/usage"
+            className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            ← All applications
+          </Link>
+        </div>
       </div>
     );
   }
@@ -150,7 +167,7 @@ export function AppUsageSection({
               />
             </svg>
             <div className="min-w-0">
-              {scope === "all" ? (
+              {scope === "all" && entry.app.usageKind !== "personal" ? (
                 <h2 className="font-semibold text-zinc-100 break-words">
                   <Link
                     href={`/apps/${entry.app.id}/usage`}
@@ -164,7 +181,12 @@ export function AppUsageSection({
                 <h2 className="font-semibold text-zinc-100 break-words">{entry.app.name}</h2>
               )}
               <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{entry.app.id}</p>
-              {isAdmin && (
+              {entry.app.usageKind === "personal" && (
+                <p className="text-xs text-zinc-500 mt-1">
+                  Your {PLATFORM_DEFAULT_USAGE_DISPLAY_NAME} key usage
+                </p>
+              )}
+              {isAdmin && entry.app.usageKind !== "personal" && (
                 <p className="text-xs text-zinc-500 mt-1 break-words">
                   Owner:{" "}
                   <span className="text-zinc-300">
@@ -283,7 +305,22 @@ function AppUsageUserTable({
               >
                 <td className="px-4 sm:px-5 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <code className="text-xs text-zinc-300">{userUsage.userLabel}</code>
+                    {userUsage.externalUserId ? (
+                      <Link
+                        href={`/apps/${entry.app.id}/identities/${encodeURIComponent(userUsage.externalUserId)}`}
+                        className="font-mono text-xs text-zinc-300 transition-colors hover:text-emerald-400"
+                        title={userUsage.userLabel}
+                      >
+                        {userUsage.userLabel}
+                      </Link>
+                    ) : (
+                      <span
+                        className="font-mono text-xs text-zinc-300"
+                        title={userUsage.userLabel}
+                      >
+                        {userUsage.userLabel}
+                      </span>
+                    )}
                     <span
                       className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
                     >

@@ -1,7 +1,12 @@
 import { hasScope } from "@/lib/auth";
 import {
   resolveActiveAppApiKey,
+  resolveActiveAppApiKeyFromBearer,
 } from "@/lib/app-api-keys";
+import {
+  buildDiscoverOrchestratorsUrl,
+  normalizeDiscoveryCaps,
+} from "@/lib/discovery-service-url";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import {
   mintSignerJwtForExternalUser,
@@ -23,10 +28,34 @@ export const GRANT_TYPE_TOKEN_EXCHANGE =
 export const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
-// Same URN as SUBJECT — intentionally separate constants for RFC 8693 semantics:
-// SUBJECT identifies the inbound token type; ISSUED identifies the outbound token type.
+/** RFC 8693 private token-type URI for bare/composite app-user API keys. */
+export const SUBJECT_API_KEY_TOKEN_TYPE =
+  "urn:pymthouse:oauth:token-type:api_key";
+
+// Same URN as SUBJECT_ACCESS_TOKEN_TYPE — intentionally separate constants for
+// RFC 8693 semantics: SUBJECT identifies the inbound token type; ISSUED
+// identifies the outbound token type.
 const ISSUED_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
+
+/** True when `subject_token_type` is the canonical API-key URI. */
+export function isApiKeySubjectTokenType(subjectTokenType: string): boolean {
+  return subjectTokenType.trim() === SUBJECT_API_KEY_TOKEN_TYPE;
+}
+
+/**
+ * True when `subject_token_type` may be used for API-key → SignerSession:
+ * canonical `api_key` or legacy `access_token`.
+ */
+export function isAcceptedApiKeySubjectTokenType(
+  subjectTokenType: string,
+): boolean {
+  const trimmed = subjectTokenType.trim();
+  return (
+    trimmed === SUBJECT_API_KEY_TOKEN_TYPE ||
+    trimmed === SUBJECT_ACCESS_TOKEN_TYPE
+  );
+}
 
 const LEGACY_SIGNER_AUDIENCES = new Set([
   "livepeer-clearinghouse",
@@ -39,6 +68,24 @@ const COMPOSITE_APP_API_KEY_PREFIX_RE = /^app_[a-f0-9]{24}_/;
 const COMPOSITE_APP_API_KEY_RE = /^app_[a-f0-9]{24}_.+/;
 /** Opaque hex secret from a composite exchange (subject_token after split). */
 const OPAQUE_HEX_SECRET_RE = /^[a-f0-9]{32,}$/i;
+
+/**
+ * True when `subject_token` is a stored app-user API key shape (not a JWT).
+ * Includes bare `pmth_*`, composite `app_*_*`, and opaque hex secrets.
+ */
+export function looksLikeAppApiKeySubjectToken(subjectToken: string): boolean {
+  const token = subjectToken.trim();
+  if (!token) {
+    return false;
+  }
+  if (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) {
+    return true;
+  }
+  if (COMPOSITE_APP_API_KEY_RE.test(token)) {
+    return true;
+  }
+  return OPAQUE_HEX_SECRET_RE.test(token);
+}
 
 export class AppScopedSignerTokenExchangeError extends Error {
   code: string;
@@ -72,9 +119,13 @@ export function getSignerTokenAudienceEnv(): string | null {
   return raw ? normalizeUri(raw) : null;
 }
 
-export function getSignerDiscoveryUrl(): string | undefined {
-  const raw = process.env.DISCOVERY_URL?.trim();
-  return raw || undefined;
+/** Default discovery URL for a signer base: `{signer}/discover-orchestrators`. */
+export function getSignerDiscoveryUrl(
+  appClientId?: string | null,
+): string | undefined {
+  const signerUrl = getClientSignerApiUrl(appClientId).trim();
+  if (!signerUrl) return undefined;
+  return buildDiscoverOrchestratorsUrl(signerUrl);
 }
 
 export function acceptedSignerAudiences(): Set<string> {
@@ -217,15 +268,31 @@ export async function resolveAppScopedSubjectToken(
     }
   }
 
-  // Bare stored API key, composite app_*_*, or opaque hex secret segment.
-  const looksLikeApiKey =
-    (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) ||
-    COMPOSITE_APP_API_KEY_RE.test(token) ||
-    OPAQUE_HEX_SECRET_RE.test(token);
-  if (!looksLikeApiKey) {
+  return resolveAppScopedApiKeySubjectToken(token, publicClientId, inject);
+}
+
+/**
+ * Resolve a subject that must be an app-user API key (no JWT path).
+ * Used when `subject_token_type` is `urn:pymthouse:oauth:token-type:api_key`.
+ */
+export async function resolveAppScopedApiKeySubjectToken(
+  subjectToken: string,
+  publicClientId: string,
+  inject: Partial<AppScopedSignerTokenExchangeDeps> = {},
+): Promise<ResolvedSubject> {
+  const deps = { ...defaultAppScopedExchangeDeps, ...inject };
+  const token = subjectToken.trim();
+  if (!token) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_request",
+      "subject_token is required",
+    );
+  }
+
+  if (!looksLikeAppApiKeySubjectToken(token)) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",
-      "subject_token is not a valid access token for this issuer",
+      "subject_token is not a valid API key for this issuer",
     );
   }
 
@@ -233,7 +300,7 @@ export async function resolveAppScopedSubjectToken(
   if (!resolved) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",
-      "subject_token is not a valid access token for this issuer",
+      "subject_token is not a valid API key for this issuer",
     );
   }
 
@@ -274,6 +341,8 @@ export async function handleAppScopedSignerTokenExchange(
     resource: string;
     audiences: string[];
     correlationId: string;
+    discovery_url?: string;
+    caps?: string[];
   },
   inject: Partial<AppScopedSignerTokenExchangeDeps> = {},
 ): Promise<SignerSession> {
@@ -300,10 +369,14 @@ export async function handleAppScopedSignerTokenExchange(
     );
   }
 
-  if (input.subjectTokenType.trim() !== SUBJECT_ACCESS_TOKEN_TYPE) {
+  const subjectTokenType = input.subjectTokenType.trim();
+  if (
+    subjectTokenType !== SUBJECT_ACCESS_TOKEN_TYPE &&
+    subjectTokenType !== SUBJECT_API_KEY_TOKEN_TYPE
+  ) {
     throw new AppScopedSignerTokenExchangeError(
       "unsupported_token_type",
-      `subject_token_type must be ${SUBJECT_ACCESS_TOKEN_TYPE}`,
+      `subject_token_type must be ${SUBJECT_API_KEY_TOKEN_TYPE} (API key) or ${SUBJECT_ACCESS_TOKEN_TYPE}`,
     );
   }
 
@@ -311,11 +384,18 @@ export async function handleAppScopedSignerTokenExchange(
   validateRequestedTokenType(input.requestedTokenType);
   validateSignerTarget(input.resource, input.audiences);
 
-  const subject = await resolveAppScopedSubjectToken(
-    input.subjectToken,
-    publicClientId,
-    inject,
-  );
+  const subject =
+    subjectTokenType === SUBJECT_API_KEY_TOKEN_TYPE
+      ? await resolveAppScopedApiKeySubjectToken(
+          input.subjectToken,
+          publicClientId,
+          inject,
+        )
+      : await resolveAppScopedSubjectToken(
+          input.subjectToken,
+          publicClientId,
+          inject,
+        );
 
   if (subject.publicClientId !== publicClientId) {
     throw new AppScopedSignerTokenExchangeError(
@@ -352,15 +432,98 @@ export async function handleAppScopedSignerTokenExchange(
     throw err;
   }
 
+  const signerUrl = deps.getClientSignerApiUrl(subject.publicClientId);
+  const discoveryOverride = input.discovery_url?.trim();
+  const discoveryUrl =
+    discoveryOverride ||
+    deps.getSignerDiscoveryUrl(subject.publicClientId) ||
+    (signerUrl ? buildDiscoverOrchestratorsUrl(signerUrl) : undefined);
+
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,
     expires_in: minted.expires_in,
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: deps.getClientSignerApiUrl(subject.publicClientId),
-    discovery_url: deps.getSignerDiscoveryUrl(),
+    signer_url: signerUrl,
+    discovery_url: discoveryUrl,
+    caps: normalizeDiscoveryCaps(input.caps),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     correlation_id: input.correlationId,
   });
+}
+
+/**
+ * Issuer-path RFC 8693 exchange when `subject_token` is a bare/composite API
+ * key. Resolves the app from the credential (no `{clientId}` in the URL), then
+ * mints the same SignerSession as the app-scoped route.
+ */
+export async function handleIssuerApiKeySignerTokenExchange(
+  input: {
+    clientId: string;
+    clientSecret: string;
+    grantType: string;
+    subjectToken: string;
+    subjectTokenType: string;
+    requestedTokenType: string;
+    resource: string;
+    audiences: string[];
+    correlationId: string;
+    discovery_url?: string;
+    caps?: string[];
+  },
+  inject: Partial<AppScopedSignerTokenExchangeDeps> & {
+    resolveActiveAppApiKeyFromBearer?: typeof resolveActiveAppApiKeyFromBearer;
+  } = {},
+): Promise<SignerSession> {
+  if (!isAcceptedApiKeySubjectTokenType(input.subjectTokenType)) {
+    throw new AppScopedSignerTokenExchangeError(
+      "unsupported_token_type",
+      `subject_token_type must be ${SUBJECT_API_KEY_TOKEN_TYPE} (API key) or ${SUBJECT_ACCESS_TOKEN_TYPE}`,
+    );
+  }
+
+  const resolveFromBearer =
+    inject.resolveActiveAppApiKeyFromBearer ?? resolveActiveAppApiKeyFromBearer;
+  const subjectToken = input.subjectToken.trim();
+
+  if (!looksLikeAppApiKeySubjectToken(subjectToken)) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid API key for this issuer",
+    );
+  }
+
+  if (subjectToken.startsWith("pmth_cs_")) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "client secrets cannot be used as subject_token",
+    );
+  }
+
+  const resolved = await resolveFromBearer(subjectToken);
+  if (!resolved) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid API key for this issuer",
+    );
+  }
+
+  return handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: resolved.publicClientId,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      grantType: input.grantType,
+      subjectToken,
+      subjectTokenType: input.subjectTokenType,
+      requestedTokenType: input.requestedTokenType,
+      resource: input.resource,
+      audiences: input.audiences,
+      correlationId: input.correlationId,
+      discovery_url: input.discovery_url,
+      caps: input.caps,
+    },
+    inject,
+  );
 }

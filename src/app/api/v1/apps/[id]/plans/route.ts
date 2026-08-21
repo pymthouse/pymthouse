@@ -3,6 +3,12 @@ import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { discoveryProfiles, planCapabilityBundles, plans } from "@/db/schema";
+import {
+  AppActivationError,
+  planRequiresSellGate,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
+import { activationProblemResponse } from "@/lib/activation/problem";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   canEditProviderApp,
@@ -14,11 +20,12 @@ import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import { billingPlansApiV2Enabled } from "@/lib/billing/feature-flags";
 import { listBillingProducts } from "@/lib/billing/backend";
 import { toPlanApiRow } from "@/lib/billing/product-dto";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalog } from "@/lib/network-catalog";
 import {
   archivePlanInOpenMeter,
   syncPlanToOpenMeter,
 } from "@/lib/openmeter/plans-sync";
+import { countActiveKonnectSubscriptionsForPlan } from "@/lib/openmeter/konnect-subscriptions";
 import {
   assertCapabilityRowsDiscoverable,
   loadDiscoverableSetForApp,
@@ -35,6 +42,12 @@ import {
   validateCapabilityFeatureKeys,
 } from "@/lib/openmeter/capability-features";
 import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
+import { parsePlanBillingCycleInput } from "@/lib/openmeter/billing-cycle";
+import {
+  isPayPerUsePlanType,
+  parseChargeThresholdUsdInput,
+  PAY_PER_USE_NOMINAL_BILLING_CYCLE,
+} from "@/lib/billing/pay-per-use-threshold";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -336,11 +349,33 @@ export async function POST(
     }
   }
 
-  const planType = coerceJsonScalarString(body.type, "free");
+  const planType = coerceJsonScalarString(body.type, "free").trim().toLowerCase();
   const overageRate = resolveOverageRateUsdForPost(planType, body);
   if (!overageRate.ok) {
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
   }
+
+  const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+  if (!billingCycleParsed.ok) {
+    return NextResponse.json({ error: billingCycleParsed.error }, { status: 400 });
+  }
+
+  // Pay-Per-Use is threshold-driven (#398): the charge threshold replaces the
+  // billing cycle as the invoicing trigger. A nominal internal cycle is kept
+  // only because OpenMeter/Konnect requires a billingCadence on every plan.
+  const chargeThresholdParsed = parseChargeThresholdUsdInput(body.chargeThresholdUsd);
+  if (!chargeThresholdParsed.ok) {
+    return NextResponse.json({ error: chargeThresholdParsed.error }, { status: 400 });
+  }
+  if (chargeThresholdParsed.value !== null && !isPayPerUsePlanType(planType)) {
+    return NextResponse.json(
+      { error: "chargeThresholdUsd is only valid for Pay-Per-Use (type \"usage\") plans" },
+      { status: 400 },
+    );
+  }
+  const effectiveBillingCycle = isPayPerUsePlanType(planType)
+    ? PAY_PER_USE_NOMINAL_BILLING_CYCLE
+    : billingCycleParsed.value;
 
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
@@ -353,6 +388,23 @@ export async function POST(
   }
 
   const planId = uuidv4();
+  const planStatus = coerceJsonScalarString(body.status, "active");
+  const priceAmount = coerceJsonScalarString(body.priceAmount, "0");
+  if (planRequiresSellGate({ status: planStatus, priceAmount })) {
+    try {
+      await runActivationGate("sell_paid_plans", appId);
+    } catch (err) {
+      if (err instanceof AppActivationError) {
+        return activationProblemResponse({
+          reason: err.code,
+          billingMode: err.billingMode,
+          actionUrl: err.actionUrl,
+          detail: err.message,
+        });
+      }
+      throw err;
+    }
+  }
   if (planType !== "free" && parsedCapabilities.capabilities.length > 0) {
     const featureKeys = validateCapabilityFeatureKeys({
       clientId: appId,
@@ -375,12 +427,13 @@ export async function POST(
         clientId: appId,
         name,
         type: planType,
-        priceAmount: coerceJsonScalarString(body.priceAmount, "0"),
+        priceAmount,
         priceCurrency: coerceJsonScalarString(body.priceCurrency, "USD"),
-        status: coerceJsonScalarString(body.status, "active"),
+        status: planStatus,
         overageRateUsd: overageRate.value,
         includedUsdMicros,
-        billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
+        billingCycle: effectiveBillingCycle,
+        chargeThresholdUsdMicros: chargeThresholdParsed.value,
         discoveryProfileId,
         isNetworkDefault: false,
         isStarterDefault: false,
@@ -422,8 +475,8 @@ export async function POST(
     throw e;
   }
 
-  const planStatus = coerceJsonScalarString(body.status, "active");
-  if (planStatus === "active") {
+  const planStatusAfterInsert = planStatus;
+  if (planStatusAfterInsert === "active") {
     const sync = await syncPlanToOpenMeter(planId);
     if (!sync.ok) {
       return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
@@ -555,6 +608,45 @@ export async function PUT(
   }
 
   const now = new Date().toISOString();
+
+  const existingForGate = await db
+    .select()
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+    .limit(1);
+  const existingGateRow = existingForGate[0];
+  if (existingGateRow && !existingGateRow.isNetworkDefault && !existingGateRow.isStarterDefault) {
+    const nextStatusForGate =
+      body.status === undefined
+        ? existingGateRow.status
+        : coerceJsonScalarString(body.status);
+    const nextPriceForGate =
+      body.priceAmount === undefined
+        ? existingGateRow.priceAmount
+        : coerceJsonScalarString(body.priceAmount);
+    if (
+      planRequiresSellGate({
+        status: nextStatusForGate,
+        priceAmount: nextPriceForGate,
+        isStarterDefault: existingGateRow.isStarterDefault,
+      })
+    ) {
+      try {
+        await runActivationGate("sell_paid_plans", appId);
+      } catch (err) {
+        if (err instanceof AppActivationError) {
+          return activationProblemResponse({
+            reason: err.code,
+            billingMode: err.billingMode,
+            actionUrl: err.actionUrl,
+            detail: err.message,
+          });
+        }
+        throw err;
+      }
+    }
+  }
+
   const txnResult = await db.transaction(async (tx) => {
     const existingRows = await tx
       .select()
@@ -581,10 +673,45 @@ export async function PUT(
     }
 
     const nextType =
-      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
+      body.type === undefined
+        ? existing.type
+        : coerceJsonScalarString(body.type).trim().toLowerCase();
     const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
     if (!overageRate.ok) {
       return { tag: "validation" as const, error: overageRate.error };
+    }
+
+    let billingCyclePut: string | undefined;
+    if (body.billingCycle !== undefined) {
+      const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+      if (!billingCycleParsed.ok) {
+        return { tag: "validation" as const, error: billingCycleParsed.error };
+      }
+      billingCyclePut = billingCycleParsed.value;
+    }
+    // Threshold-only Pay-Per-Use (#398): the cycle is a nominal internal
+    // no-op boundary — pin it so callers cannot make the cycle the trigger.
+    if (isPayPerUsePlanType(nextType)) {
+      billingCyclePut = PAY_PER_USE_NOMINAL_BILLING_CYCLE;
+    }
+
+    let chargeThresholdPut: string | null | undefined = undefined; // undefined = don't change
+    if (body.chargeThresholdUsd !== undefined) {
+      const chargeThresholdParsed = parseChargeThresholdUsdInput(body.chargeThresholdUsd);
+      if (!chargeThresholdParsed.ok) {
+        return { tag: "validation" as const, error: chargeThresholdParsed.error };
+      }
+      if (chargeThresholdParsed.value !== null && !isPayPerUsePlanType(nextType)) {
+        return {
+          tag: "validation" as const,
+          error: "chargeThresholdUsd is only valid for Pay-Per-Use (type \"usage\") plans",
+        };
+      }
+      chargeThresholdPut = chargeThresholdParsed.value;
+    } else if (!isPayPerUsePlanType(nextType) && existing.chargeThresholdUsdMicros) {
+      // Leaving Pay-Per-Use clears the threshold — it has no meaning on
+      // cycle-billed plan types.
+      chargeThresholdPut = null;
     }
 
     const rawIncludedUsdPut = body.includedUsdMicros;
@@ -601,6 +728,94 @@ export async function PUT(
       }
     }
 
+    const nextStatus =
+      body.status === undefined
+        ? existing.status
+        : coerceJsonScalarString(body.status);
+    if (
+      nextStatus !== "draft" &&
+      nextStatus !== "active" &&
+      nextStatus !== "phase_out"
+    ) {
+      return {
+        tag: "validation" as const,
+        error: 'status must be "draft", "active", or "phase_out"',
+      };
+    }
+
+    let phaseOutAtPut: string | null | undefined = undefined;
+    if (body.phaseOutAt !== undefined) {
+      if (body.phaseOutAt === null || body.phaseOutAt === "") {
+        phaseOutAtPut = null;
+      } else if (typeof body.phaseOutAt === "string" && body.phaseOutAt.trim()) {
+        const parsed = Date.parse(body.phaseOutAt.trim());
+        if (Number.isNaN(parsed)) {
+          return {
+            tag: "validation" as const,
+            error: "phaseOutAt must be a valid ISO timestamp",
+          };
+        }
+        phaseOutAtPut = new Date(parsed).toISOString();
+      } else {
+        return {
+          tag: "validation" as const,
+          error: "phaseOutAt must be an ISO string or null",
+        };
+      }
+    }
+
+    let replacementPlanIdPut: string | null | undefined = undefined;
+    if (body.replacementPlanId !== undefined) {
+      if (body.replacementPlanId === null || body.replacementPlanId === "") {
+        replacementPlanIdPut = null;
+      } else if (
+        typeof body.replacementPlanId === "string" &&
+        body.replacementPlanId.trim()
+      ) {
+        replacementPlanIdPut = body.replacementPlanId.trim();
+        if (replacementPlanIdPut === planId) {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId cannot reference the same plan",
+          };
+        }
+        const replacementRows = await tx
+          .select({ id: plans.id, status: plans.status })
+          .from(plans)
+          .where(
+            and(
+              eq(plans.id, replacementPlanIdPut),
+              eq(plans.clientId, appId),
+            ),
+          )
+          .limit(1);
+        if (!replacementRows[0]) {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId not found for this app",
+          };
+        }
+        if (replacementRows[0].status === "phase_out") {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId must not be a phase_out plan",
+          };
+        }
+      } else {
+        return {
+          tag: "validation" as const,
+          error: "replacementPlanId must be a string or null",
+        };
+      }
+    }
+
+    if (nextStatus === "phase_out") {
+      phaseOutAtPut =
+        phaseOutAtPut === undefined
+          ? (existing.phaseOutAt ?? new Date().toISOString())
+          : phaseOutAtPut;
+    }
+
     const updated = await tx
       .update(plans)
       .set({
@@ -614,15 +829,19 @@ export async function PUT(
           body.priceCurrency === undefined
             ? existing.priceCurrency
             : coerceJsonScalarString(body.priceCurrency),
-        status:
-          body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
+        status: nextStatus,
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle === undefined
-          ? {}
-          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
+        ...(billingCyclePut === undefined ? {} : { billingCycle: billingCyclePut }),
+        ...(chargeThresholdPut !== undefined
+          ? { chargeThresholdUsdMicros: chargeThresholdPut }
+          : {}),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
+          : {}),
+        ...(phaseOutAtPut !== undefined ? { phaseOutAt: phaseOutAtPut } : {}),
+        ...(replacementPlanIdPut !== undefined
+          ? { replacementPlanId: replacementPlanIdPut }
           : {}),
         updatedAt: now,
       })
@@ -693,8 +912,10 @@ export async function PUT(
 
   const updatedStatus =
     body.status === undefined ? undefined : coerceJsonScalarString(body.status);
+  // Keep OpenMeter plan published while phase_out so existing subscribers continue.
   const shouldSync =
-    (updatedStatus ?? "active") === "active" &&
+    ((updatedStatus ?? "active") === "active" ||
+      updatedStatus === "phase_out") &&
     txnResult.tag === "ok";
   if (shouldSync) {
     const sync = await syncPlanToOpenMeter(planId);
@@ -733,19 +954,36 @@ export async function DELETE(
         id: plans.id,
         isNetworkDefault: plans.isNetworkDefault,
         isStarterDefault: plans.isStarterDefault,
+        openmeterPlanId: plans.openmeterPlanId,
       })
       .from(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .limit(1);
 
     if (!planRows[0]) {
-      return false;
+      return false as const;
     }
     if (planRows[0].isNetworkDefault) {
       return "network_default" as const;
     }
     if (planRows[0].isStarterDefault) {
       return "starter_default" as const;
+    }
+
+    const openmeterPlanId = planRows[0].openmeterPlanId?.trim();
+    if (openmeterPlanId) {
+      try {
+        const activeCount =
+          await countActiveKonnectSubscriptionsForPlan(openmeterPlanId);
+        if (activeCount > 0) {
+          return { tag: "has_subscribers" as const, activeCount };
+        }
+      } catch (err) {
+        return {
+          tag: "subscriber_check_failed" as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
 
     await tx
@@ -760,7 +998,7 @@ export async function DELETE(
       .delete(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .returning({ id: plans.id });
-    return removed.length > 0;
+    return removed.length > 0 ? ("ok" as const) : (false as const);
   });
 
   if (!deleted) {
@@ -776,6 +1014,24 @@ export async function DELETE(
     return NextResponse.json(
       { error: "The Starter default plan cannot be deleted" },
       { status: 409 },
+    );
+  }
+  if (typeof deleted === "object" && deleted.tag === "has_subscribers") {
+    return NextResponse.json(
+      {
+        error:
+          "Plan still has active OpenMeter subscribers; phase out the plan and migrate subscribers first",
+        activeSubscribers: deleted.activeCount,
+      },
+      { status: 409 },
+    );
+  }
+  if (typeof deleted === "object" && deleted.tag === "subscriber_check_failed") {
+    return NextResponse.json(
+      {
+        error: `Unable to verify OpenMeter subscribers before delete: ${deleted.error}`,
+      },
+      { status: 503 },
     );
   }
 

@@ -15,14 +15,70 @@ type KonnectCreditBalanceResponse = {
   retrieved_at?: string;
 };
 
-type KonnectCreditGrantRow = {
+/** Konnect GET /credits/balance row, passed through as decimal dollar strings. */
+export type KonnectUsdCreditBalance = {
+  currency: string;
+  live: string;
+  pending: string;
+  settled: string;
+  retrievedAt: string | null;
+};
+
+function konnectAmountOrZero(raw: string | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed || !/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return "0";
+  }
+  return trimmed;
+}
+
+function pickBalanceRowForCurrency(
+  body: KonnectCreditBalanceResponse,
+  currency: string,
+): KonnectCreditBalanceRow | undefined {
+  return (body.balances ?? []).find(
+    (item) => (item.currency ?? "").toUpperCase() === currency,
+  );
+}
+
+export type KonnectCreditGrantRow = {
   id?: string;
   amount?: string;
   currency?: string;
   status?: string;
   name?: string;
   key?: string;
+  /**
+   * Konnect has used both snake_case and camelCase for grant timestamps across
+   * revisions; accept either so the ledger can place grants chronologically.
+   * All optional — an undated grant is skipped rather than mis-ordered.
+   */
+  effective_at?: string;
+  effectiveAt?: string;
+  created_at?: string;
+  createdAt?: string;
 };
+
+/** First usable ISO timestamp on a grant row, or null when undated. */
+export function konnectGrantTimestamp(
+  grant: KonnectCreditGrantRow,
+): string | null {
+  const candidates = [
+    grant.effective_at,
+    grant.effectiveAt,
+    grant.created_at,
+    grant.createdAt,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    const ms = Date.parse(trimmed);
+    if (Number.isNaN(ms)) continue;
+    // Normalize so localeCompare ordering against ISO usage/invoice dates works.
+    return new Date(ms).toISOString();
+  }
+  return null;
+}
 
 type KonnectCreditGrantsListResponse = {
   data?: KonnectCreditGrantRow[];
@@ -118,21 +174,94 @@ export async function listKonnectCreditGrants(input: {
     return [];
   }
 
+  const pageSize = 100;
+  const maxPages = 50;
+  const grants: KonnectCreditGrantRow[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const params = new URLSearchParams();
+    params.set("page[size]", String(pageSize));
+    params.set("page[number]", String(page));
+    const response = await konnectCreditsFetch(
+      `/customers/${encodeURIComponent(customerId)}/credits/grants?${params}`,
+      { method: "GET" },
+      apiKey,
+    );
+    if (response.status === 404) {
+      return grants;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Konnect credits/grants list failed (${response.url}) [${response.status}]: ${await response.text()}`,
+      );
+    }
+    const body = (await response.json()) as KonnectCreditGrantsListResponse;
+    const batch = body.data ?? [];
+    grants.push(...batch);
+    if (batch.length < pageSize) {
+      break;
+    }
+  }
+  return grants;
+}
+
+/**
+ * Thin Konnect credits/balance read. Does not list grants or invent
+ * consumed/lifetime totals. Filter by currency; do not merge currencies.
+ * `live` is spendable (open charges applied). `settled` is the committed ledger.
+ * `pending` is unbooked / future-dated grants — not spendable yet.
+ */
+export async function readKonnectUsdCreditBalance(input: {
+  customerId: string;
+  currency?: string;
+  featureKey?: string;
+  apiKey?: string;
+}): Promise<KonnectUsdCreditBalance | null> {
+  const customerId = input.customerId.trim();
+  if (!customerId) {
+    throw new Error("readKonnectUsdCreditBalance: customerId must be non-empty");
+  }
+  const apiKey = resolveApiKey(input.apiKey);
+  if (!apiKey) {
+    return null;
+  }
+
+  const currency = (input.currency ?? "USD").trim().toUpperCase() || "USD";
+  const params = new URLSearchParams();
+  params.set("filter[currency][eq]", currency);
+  const featureKey = input.featureKey?.trim();
+  if (featureKey) {
+    params.set("filter[feature_key][eq]", featureKey);
+  }
+
   const response = await konnectCreditsFetch(
-    `/customers/${encodeURIComponent(customerId)}/credits/grants?page[size]=100`,
+    `/customers/${encodeURIComponent(customerId)}/credits/balance?${params}`,
     { method: "GET" },
     apiKey,
   );
   if (response.status === 404) {
-    return [];
+    return {
+      currency,
+      live: "0",
+      pending: "0",
+      settled: "0",
+      retrievedAt: null,
+    };
   }
   if (!response.ok) {
     throw new Error(
-      `Konnect credits/grants list failed (${response.url}) [${response.status}]: ${await response.text()}`,
+      `Konnect credits/balance failed (${response.url}) [${response.status}]: ${await response.text()}`,
     );
   }
-  const body = (await response.json()) as KonnectCreditGrantsListResponse;
-  return body.data ?? [];
+
+  const body = (await response.json()) as KonnectCreditBalanceResponse;
+  const row = pickBalanceRowForCurrency(body, currency);
+  return {
+    currency,
+    live: konnectAmountOrZero(row?.live),
+    pending: konnectAmountOrZero(row?.pending),
+    settled: konnectAmountOrZero(row?.settled),
+    retrievedAt: body.retrieved_at?.trim() || null,
+  };
 }
 
 export async function getKonnectCreditBalance(input: {

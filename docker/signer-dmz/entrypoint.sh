@@ -155,11 +155,12 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     [ -n "${ORCH_WEBHOOK_URL:-}" ] && ARGS="$ARGS -orchWebhookUrl=${ORCH_WEBHOOK_URL}"
     [ -n "${LIVE_AI_CAP_REPORT_INTERVAL:-}" ] && ARGS="$ARGS -liveAICapReportInterval=${LIVE_AI_CAP_REPORT_INTERVAL}"
   fi
-  # Default ON for preview A/B signer-test only; OFF elsewhere. Override with BYOC_PER_CAP_PRICING=0|1.
+  # Default ON for A/B signer-test services only; OFF elsewhere. Override with BYOC_PER_CAP_PRICING=0|1.
   _byoc_default=0
-  if [ "${RAILWAY_SERVICE_NAME:-}" = "pymthouse-signer-test" ]; then
-    _byoc_default=1
-  fi
+  case "${RAILWAY_SERVICE_NAME:-}" in
+    pymthouse-signer-test|pymthouse-signer-test-preview-only) _byoc_default=1 ;;
+    *) _byoc_default=0 ;;
+  esac
   _byoc="${BYOC_PER_CAP_PRICING:-$_byoc_default}"
   if [ "$_byoc" = "1" ] || [ "$_byoc" = "true" ]; then
     if /usr/local/bin/livepeer -help 2>&1 | grep -q 'byocPerCapPricing'; then

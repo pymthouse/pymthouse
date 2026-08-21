@@ -1,14 +1,4 @@
-import { redirect } from "next/navigation";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
-/**
- * App profile now lives as a tab in the main app settings page.
- * Keep this URL for deep links.
- */
-export default async function AppProfileRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}?tab=profile`);
-}
+/** Alias of App profile (`/apps/[id]`). */
+export default AppSettingsSegmentPage;

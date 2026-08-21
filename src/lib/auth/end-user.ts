@@ -1,6 +1,9 @@
 import { and, eq } from "drizzle-orm";
 
-import { splitCompositeApiKey } from "@/lib/app-api-keys";
+import {
+  resolveActiveAppApiKeyFromBearer,
+  splitCompositeApiKey,
+} from "@/lib/app-api-keys";
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
@@ -16,7 +19,7 @@ export type EndUserAuth = {
 };
 
 /**
- * Reject client-supplied subject overrides on `/api/v1/user/*` routes.
+ * Reject client-supplied subject overrides on end-user self-serve routes.
  * Subject is always taken from the Bearer credential.
  */
 export function endUserSubjectOverrideError(
@@ -119,24 +122,58 @@ async function resolveSignerJwtEndUser(
   };
 }
 
+export type AuthenticateEndUserOptions = {
+  /** When set, credential must bind to this public `app_…` client id. */
+  expectedPublicClientId?: string;
+};
+
+function bindExpectedPublicClientId(
+  auth: EndUserAuth,
+  expectedPublicClientId: string,
+): EndUserAuth | null {
+  if (expectedPublicClientId && auth.publicClientId !== expectedPublicClientId) {
+    return null;
+  }
+  return auth;
+}
+
 /**
- * Authenticate an end-user Bearer credential for `/api/v1/user/*`.
- * Accepts programmatic user JWTs and signer JWTs (subject forced from the token).
+ * Authenticate an end-user Bearer credential for app-scoped self-serve routes.
+ * Accepts bare `pmth_*` / hex app API keys, optional composite `app_*_*`,
+ * programmatic user JWTs, and signer JWTs. Subject is always from the token.
  */
 export async function authenticateEndUser(
   request: Request,
+  options?: AuthenticateEndUserOptions,
 ): Promise<EndUserAuth | null> {
   const token = readBearerToken(request);
   if (!token) {
     return null;
   }
 
-  // Reject obvious API-key shapes here — full key resolution lives on feat/api-refactor.
-  // Dashboard + Builder mint paths use JWTs.
+  const expected = options?.expectedPublicClientId?.trim() || "";
+
+  // Prefer API-key shape when composite or clearly a stored key (not a JWT).
   const looksLikeJwt = token.split(".").length === 3;
   const composite = splitCompositeApiKey(token);
-  if (composite || !looksLikeJwt) {
-    return null;
+  if (
+    composite ||
+    (!looksLikeJwt && (token.startsWith("pmth_") || /^[a-f0-9]+$/i.test(token)))
+  ) {
+    const resolved = await resolveActiveAppApiKeyFromBearer(token);
+    if (resolved) {
+      return bindExpectedPublicClientId(
+        {
+          publicClientId: resolved.publicClientId,
+          developerAppId: resolved.developerAppId,
+          externalUserId: resolved.externalUserId,
+        },
+        expected,
+      );
+    }
+    if (composite || !looksLikeJwt) {
+      return null;
+    }
   }
 
   const payload = await verifyAccessToken(token);
@@ -145,18 +182,22 @@ export async function authenticateEndUser(
   }
   const rec = payload as Record<string, unknown>;
 
+  // Signer JWTs carry external_user_id / user_type=external_user with sub=external id.
   const signerResolved = await resolveSignerJwtEndUser(rec);
   if (signerResolved) {
-    return signerResolved;
+    return bindExpectedPublicClientId(signerResolved, expected);
   }
 
   try {
     const resolved = await resolveSubjectAccessToken(token);
-    return {
-      publicClientId: resolved.publicClientId,
-      developerAppId: resolved.developerAppId,
-      externalUserId: resolved.externalUserId,
-    };
+    return bindExpectedPublicClientId(
+      {
+        publicClientId: resolved.publicClientId,
+        developerAppId: resolved.developerAppId,
+        externalUserId: resolved.externalUserId,
+      },
+      expected,
+    );
   } catch (err) {
     if (err instanceof SubjectAccessTokenResolveError) {
       return null;

@@ -11,9 +11,9 @@ import {
   type SeededDeveloperApp,
 } from "@/test-utils/fixtures";
 import {
-  installNaapCatalogMock,
-  uninstallNaapCatalogMock,
-} from "@/test-utils/naap-catalog-mock";
+  installNetworkCatalogMock,
+  uninstallNetworkCatalogMock,
+} from "@/test-utils/network-catalog-mock";
 import {
   installProviderAppSessionAuth,
   uninstallProviderAppSessionAuth,
@@ -45,9 +45,9 @@ test("plans API: network default plan rules", async (t) => {
     { id: "pipe-a", name: "A", models: ["m1", "m2"] },
     { id: "pipe-b", name: "B", models: ["only"] },
   ];
-  installNaapCatalogMock({ catalog: MOCK_CATALOG });
+  installNetworkCatalogMock({ catalog: MOCK_CATALOG });
   t.after(() => {
-    uninstallNaapCatalogMock();
+    uninstallNetworkCatalogMock();
   });
 
   await t.test("GET lists exactly one network default plan", async (t) => {
@@ -247,13 +247,13 @@ test("plans API: network default plan rules", async (t) => {
 });
 
 test("plans POST accepts subscription with retail overageRateUsd", async (t) => {
-  installNaapCatalogMock({
+  installNetworkCatalogMock({
     catalog: [
       { id: "text-to-image", name: "Text to Image", models: ["stabilityai/sdxl"] },
     ],
   });
   t.after(() => {
-    uninstallNaapCatalogMock();
+    uninstallNetworkCatalogMock();
   });
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -290,6 +290,38 @@ test("plans POST accepts subscription with retail overageRateUsd", async (t) => 
   assert.equal(planRows[0].type, "subscription");
   assert.equal(planRows[0].overageRateUsd, "0.0000015");
   assert.equal(planRows[0].includedUsdMicros, "20000000");
+});
+
+test("plans POST accepts billingCycle and rejects invalid values", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  authorizedApp = app;
+  t.after(async () => {
+    authorizedApp = null;
+    await cleanupTestApp(app);
+  });
+
+  const weekly = await postPlan(app.clientId, {
+    name: "Weekly plan",
+    type: "subscription",
+    priceAmount: "5",
+    priceCurrency: "USD",
+    billingCycle: "weekly",
+  });
+  assert.equal(weekly.status, 201);
+  const weeklyRows = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.id, weekly.body.id as string))
+    .limit(1);
+  assert.equal(weeklyRows[0]?.billingCycle, "weekly");
+
+  const invalid = await postPlan(app.clientId, {
+    name: "Bad cycle",
+    type: "usage",
+    billingCycle: "yearly",
+  });
+  assert.equal(invalid.status, 400);
+  assert.match(String(invalid.body.error), /billingCycle must be one of/);
 });
 
 test("plans POST validates capabilities and discovery policy payloads", async (t) => {
@@ -351,4 +383,100 @@ test("plans POST validates capabilities and discovery policy payloads", async (t
     .where(eq(plans.id, withProfile.body.id as string))
     .limit(1);
   assert.equal(planRows[0]?.discoveryProfileId, profileId);
+});
+
+test("plans PUT accepts phase_out status and replacementPlanId", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  authorizedApp = app;
+  t.after(async () => {
+    authorizedApp = null;
+    await cleanupTestApp(app);
+  });
+
+  const created = await postPlan(app.clientId, {
+    name: "Legacy Pro",
+    type: "subscription",
+    priceAmount: "20",
+    priceCurrency: "USD",
+  });
+  assert.equal(created.status, 201);
+  const planId = created.body.id as string;
+
+  const starter = await db
+    .select()
+    .from(plans)
+    .where(and(eq(plans.clientId, app.clientId), eq(plans.isStarterDefault, true)))
+    .limit(1);
+  assert.ok(starter[0]);
+
+  const { PUT } = await import("./route");
+  const res = await PUT(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: planId,
+        status: "phase_out",
+        replacementPlanId: starter[0]!.id,
+        phaseOutAt: "2026-12-01T00:00:00.000Z",
+      }),
+    }),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(res.status, 200);
+
+  const rows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+  assert.equal(rows[0]?.status, "phase_out");
+  assert.equal(rows[0]?.replacementPlanId, starter[0]!.id);
+  assert.equal(rows[0]?.phaseOutAt, "2026-12-01T00:00:00.000Z");
+
+  const badStatus = await PUT(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: planId, status: "archived" }),
+    }),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(badStatus.status, 400);
+});
+
+test("plans DELETE without OpenMeter id succeeds; rejects self-replacement", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  authorizedApp = app;
+  t.after(async () => {
+    authorizedApp = null;
+    await cleanupTestApp(app);
+  });
+
+  const created = await postPlan(app.clientId, {
+    name: "Temp plan",
+    type: "free",
+  });
+  assert.equal(created.status, 201);
+  const planId = created.body.id as string;
+
+  const { PUT, DELETE } = await import("./route");
+  const selfReplace = await PUT(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: planId,
+        status: "phase_out",
+        replacementPlanId: planId,
+      }),
+    }),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(selfReplace.status, 400);
+
+  const del = await DELETE(
+    new Request(
+      `http://localhost/api/v1/apps/${app.clientId}/plans?planId=${encodeURIComponent(planId)}`,
+      { method: "DELETE" },
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(del.status, 200);
 });

@@ -23,3 +23,12 @@ export default function AppStatusBadge({ status }: Readonly<{ status: string }>)
     </span>
   );
 }
+
+/** Singleton system app used for Explorer / personal network keys. */
+export function PlatformDefaultBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium leading-none text-sky-300">
+      Platform default
+    </span>
+  );
+}

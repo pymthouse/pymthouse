@@ -74,7 +74,6 @@ async function main() {
   const created = await createAppUserApiKey({
     developerAppId: app.id,
     appUserId: provisioned.appUserId,
-    publicClientId: clientId,
     label: "balance-gate-zero-credit",
   });
 

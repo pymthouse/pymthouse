@@ -18,7 +18,7 @@ export default function AdminAppsHome({
 
   return (
     <>
-      <MyAppsShortcutTiles />
+      <MyAppsShortcutTiles showApiKeys={false} />
 
       <AdminAppsSection
         initialApps={myApps}

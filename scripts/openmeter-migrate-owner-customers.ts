@@ -37,24 +37,18 @@ import {
   ensureOwnerCustomer,
 } from "../src/lib/openmeter/customers";
 import {
-  createKonnectCreditGrant,
-  getKonnectCreditBalance,
-} from "../src/lib/openmeter/konnect-credits";
-import {
   ensureOwnerStarterPlanSynced,
   ensureOwnerStarterSubscription,
   OWNER_STARTER_PLAN_KEY,
 } from "../src/lib/openmeter/owner-starter-plan";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
+import { requireKonnectConfig } from "./lib/openmeter-konnect-migrate";
 import {
-  isOpenMeterSubscriptionActive,
-  listOpenMeterSubscriptionsForCustomer,
-} from "../src/lib/openmeter/subscription-read";
-import {
-  readKonnectSubjectKeys,
-  replaceKonnectCustomerSubjectKeys,
-  requireKonnectConfig,
-} from "./lib/openmeter-konnect-migrate";
+  cancelLegacySubscriptions,
+  findCustomerIdByKey,
+  releaseLegacySubjectKeys,
+  transferLegacyWalletBalance,
+} from "./lib/openmeter-legacy-wallet-migrate";
 
 type Args = {
   ownerId?: string;
@@ -153,58 +147,6 @@ async function listOwners(filterOwnerId?: string): Promise<
   return [...byOwner.entries()].map(([ownerId, apps]) => ({ ownerId, apps }));
 }
 
-async function findCustomerIdByKey(
-  client: ReturnType<typeof getHostedAdminClient>,
-  customerKey: string,
-): Promise<string | null> {
-  const listed = await client.customers.list({
-    key: customerKey,
-    page: 1,
-    pageSize: 50,
-  });
-  const match = (listed?.items ?? []).find((item) => item.key === customerKey);
-  return match?.id ?? null;
-}
-
-async function transferBalanceFromLegacyCustomer(input: {
-  client: ReturnType<typeof getHostedAdminClient>;
-  legacyCustomerId: string;
-  legacyKey: string;
-  ownerCustomerId: string;
-  ownerKey: string;
-  featureKey: string;
-  apiKey: string | undefined;
-  dryRun: boolean;
-}): Promise<bigint> {
-  const balance = await getKonnectCreditBalance({
-    customerId: input.legacyCustomerId,
-    apiKey: input.apiKey,
-  });
-  if (!balance || balance.balanceUsdMicros <= 0n) {
-    console.log(`  [skip] empty legacy wallet ${input.legacyKey}`);
-    return 0n;
-  }
-  console.log(
-    `  [legacy] ${input.legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
-  );
-  if (input.dryRun) {
-    return balance.balanceUsdMicros;
-  }
-  await createKonnectCreditGrant({
-    customerId: input.ownerCustomerId,
-    amountUsdMicros: balance.balanceUsdMicros,
-    name: "Migrated owner prepaid balance",
-    description: `Transferred from legacy ${input.legacyKey}`,
-    featureKey: input.featureKey,
-    idempotencyKey: `migrate-owner-bare:${input.ownerCustomerId}:${input.legacyCustomerId}`,
-    apiKey: input.apiKey,
-  });
-  console.log(
-    `  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${input.ownerKey}`,
-  );
-  return balance.balanceUsdMicros;
-}
-
 function legacyCustomerKeys(ownerId: string, apps: OwnedApp[]): string[] {
   const wire = buildOwnerWireSubject(ownerId);
   const keys = [wire];
@@ -215,74 +157,6 @@ function legacyCustomerKeys(ownerId: string, apps: OwnedApp[]): string[] {
     );
   }
   return [...new Set(keys)];
-}
-
-async function releaseLegacySubjectKeys(input: {
-  customerId: string;
-  customerKey: string;
-  dryRun: boolean;
-  baseUrl: string;
-  apiKey: string;
-}): Promise<void> {
-  if (input.dryRun) {
-    console.log(
-      `  [dry-run] would clear subjectKeys on legacy ${input.customerKey}`,
-    );
-    return;
-  }
-  // Free wire subjects for the bare owner customer. Use a deprecated subject
-  // so Konnect still has at least one key, including when the legacy customer
-  // key itself is owner:{id}. PUT-replace via Konnect — SDK update has left
-  // live keys alongside deprecated: on incomplete releases.
-  const retiredKey = `deprecated:${input.customerKey}`;
-  try {
-    const updated = await replaceKonnectCustomerSubjectKeys({
-      baseUrl: input.baseUrl,
-      apiKey: input.apiKey,
-      customerId: input.customerId,
-      name: `Legacy ${input.customerKey}`,
-      subjectKeys: [retiredKey],
-    });
-    const after = readKonnectSubjectKeys(updated);
-    if (after.length !== 1 || after[0] !== retiredKey) {
-      console.warn(
-        `  [warn] release incomplete on ${input.customerKey}: got ${JSON.stringify(after)} (expected [${retiredKey}])`,
-      );
-      return;
-    }
-    console.log(`  [ok] released subjectKeys on ${input.customerKey} → ${retiredKey}`);
-  } catch (err) {
-    console.warn(
-      `  [warn] could not release subjectKeys on ${input.customerKey}:`,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-}
-
-async function cancelLegacySubscriptions(input: {
-  client: ReturnType<typeof getHostedAdminClient>;
-  customerId: string;
-  customerKey: string;
-  dryRun: boolean;
-}): Promise<number> {
-  const listed = await listOpenMeterSubscriptionsForCustomer(
-    input.client,
-    input.customerId,
-  );
-  const active = listed.filter((s) => isOpenMeterSubscriptionActive(s.status));
-  let cancels = 0;
-  for (const sub of active) {
-    if (input.dryRun) {
-      console.log(
-        `  [dry-run] would cancel ${sub.id} on legacy ${input.customerKey}`,
-      );
-    } else {
-      await input.client.subscriptions.cancel(sub.id, { timing: "immediate" });
-      console.log(`  [cancel] ${sub.id} on legacy ${input.customerKey}`);
-    }
-    cancels += 1;
-  }
-  return cancels;
 }
 
 async function processLegacyWallets(input: {
@@ -311,13 +185,14 @@ async function processLegacyWallets(input: {
     }
 
     if (input.transferBalances && input.ownerCustomerId) {
-      transferMicros += await transferBalanceFromLegacyCustomer({
-        client: input.client,
+      transferMicros += await transferLegacyWalletBalance({
         legacyCustomerId: legacyId,
         legacyKey,
-        ownerCustomerId: input.ownerCustomerId,
-        ownerKey: input.customerKey,
+        targetCustomerId: input.ownerCustomerId,
+        targetKey: input.customerKey,
         featureKey: DEFAULT_TRIAL_FEATURE_KEY,
+        grantName: "Migrated owner prepaid balance",
+        idempotencyKey: `migrate-owner-bare:${input.ownerCustomerId}:${legacyId}`,
         apiKey: input.apiKey,
         dryRun: input.dryRun,
       });

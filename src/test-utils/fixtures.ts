@@ -36,6 +36,30 @@ export async function createTestUser(opts?: { id?: string; role?: string }): Pro
   return id;
 }
 
+export async function deleteTestUser(id: string): Promise<void> {
+  await db.execute(sql`DELETE FROM sessions WHERE user_id = ${id}`);
+  await db.execute(sql`DELETE FROM provider_admins WHERE user_id = ${id}`);
+  await db.execute(sql`DELETE FROM app_billing_oauth_states WHERE user_id = ${id}`);
+  await db.execute(sql`DELETE FROM owner_billing_config WHERE owner_user_id = ${id}`);
+  await db.execute(
+    sql`UPDATE owner_billing_config SET updated_by = NULL WHERE updated_by = ${id}`,
+  );
+  await db.execute(
+    sql`UPDATE platform_billing_settings SET updated_by = NULL WHERE updated_by = ${id}`,
+  );
+  await db.execute(
+    sql`UPDATE admin_invites SET used_by = NULL WHERE used_by = ${id}`,
+  );
+  await db.execute(sql`DELETE FROM admin_invites WHERE created_by = ${id}`);
+  await db.execute(
+    sql`UPDATE developer_apps SET reviewed_by = NULL WHERE reviewed_by = ${id}`,
+  );
+  await db.execute(
+    sql`UPDATE subscriptions SET user_id = NULL WHERE user_id = ${id}`,
+  );
+  await db.execute(sql`DELETE FROM users WHERE id = ${id}`);
+}
+
 /**
  * Creates a platform user and registers teardown to delete that row. Use for
  * tests that need an extra user outside {@link cleanupTestApp} (e.g. a
@@ -47,7 +71,7 @@ export async function createTestUserWithCleanup(
 ): Promise<string> {
   const id = await createTestUser(opts);
   t.after(async () => {
-    await db.delete(users).where(eq(users.id, id));
+    await deleteTestUser(id);
   });
   return id;
 }
@@ -116,6 +140,7 @@ export async function createJobTokenForApp(opts: {
 export async function createAppUser(opts: {
   clientId: string;
   externalUserId: string;
+  status?: "active" | "inactive";
 }): Promise<{ id: string; externalUserId: string }> {
   const id = `app-user-${randomUUID()}`;
   await createTestUser({ id });
@@ -123,7 +148,7 @@ export async function createAppUser(opts: {
     id,
     clientId: opts.clientId,
     externalUserId: opts.externalUserId,
-    status: "active",
+    status: opts.status ?? "active",
   });
   return { id, externalUserId: opts.externalUserId };
 }
@@ -314,6 +339,7 @@ export async function cleanupTestApp(
   await deleteFromOptionalTable("app_openmeter_config", "client_id", appId);
   await deleteFromOptionalTable("app_billing_config", "client_id", appId);
   await deleteFromOptionalTable("app_billing_oauth_states", "client_id", appId);
+  await deleteFromOptionalTable("app_user_stripe_customers", "client_id", appId);
 
   await db.execute(sql`DELETE FROM developer_apps WHERE id = ${appId}`);
   await db.execute(sql`DELETE FROM oidc_clients WHERE id = ${oidcClientPk}`);

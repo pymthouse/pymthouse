@@ -7,6 +7,42 @@ const turnkeyAuthComponent = path.join(
 );
 
 const nextConfig: NextConfig = {
+  /** Canonical Internal API paths backed by the existing route handlers. */
+  async rewrites() {
+    return [
+      {
+        source: "/api/v1/internal/admin/:path*",
+        destination: "/api/v1/admin/:path*",
+      },
+      {
+        source: "/api/v1/internal/signer/:path*",
+        destination: "/api/v1/signer/:path*",
+      },
+      {
+        source: "/api/v1/internal/apps",
+        destination: "/api/v1/apps",
+      },
+      // Client-id scoped only (`app_*`). Excludes public `apps/branding`,
+      // Builder `…/oidc/*`, and end-user `…/me/*` from the Internal prefix.
+      {
+        source: "/api/v1/internal/apps/:clientId(app_[^/]+)",
+        destination: "/api/v1/apps/:clientId",
+      },
+      {
+        source:
+          "/api/v1/internal/apps/:clientId(app_[^/]+)/:path((?!(?:oidc|me)(?:/|$)).*)",
+        destination: "/api/v1/apps/:clientId/:path*",
+      },
+      {
+        source: "/api/v1/internal/billing",
+        destination: "/api/v1/billing",
+      },
+      {
+        source: "/api/v1/internal/billing/:path*",
+        destination: "/api/v1/billing/:path*",
+      },
+    ];
+  },
   serverExternalPackages: [
     "better-sqlite3",
     "oidc-provider",

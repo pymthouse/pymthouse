@@ -3,7 +3,9 @@ import {
   OpenApiGeneratorV3,
   type RouteConfig,
 } from "@asteasolutions/zod-to-openapi";
-import type { ZodTypeAny } from "zod";
+import type { z } from "zod";
+
+import { BUILDER_INFO_DESCRIPTION } from "@/lib/openapi/tags";
 
 export const openApiRegistry = new OpenAPIRegistry();
 
@@ -30,7 +32,7 @@ export function defineRoute(input: DefineRouteInput): void {
   openApiRegistry.registerPath(input);
 }
 
-export function registerSchema<T extends ZodTypeAny>(
+export function registerSchema<T extends z.ZodType>(
   name: string,
   schema: T,
 ): T {
@@ -51,10 +53,7 @@ export function generateOpenApiDocument() {
     info: {
       title: "PymtHouse Builder API",
       version: "1.0.0",
-      description:
-        "Machine-facing Builder API for integrator backends. " +
-        "Signer session exchange: `POST /api/v1/apps/{clientId}/oidc/token`. " +
-        "OIDC provider metadata (device flow, client_credentials) is published via OpenID Provider Configuration.",
+      description: BUILDER_INFO_DESCRIPTION,
     },
   });
 }

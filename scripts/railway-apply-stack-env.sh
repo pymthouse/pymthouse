@@ -104,4 +104,11 @@ if railway_service_in_environment pymthouse-signer-test "$ENV"; then
   railway_apply_signer_env pymthouse-signer-test "$PE_FLAGS"
 fi
 
+# Preview-only A/B signer (Railway service pymthouse-signer-test-preview-only).
+# Must get the same ETH_RPC_URL as pymthouse — a stale private router URL fails
+# livepeer chain-ID lookup (HTTP 521) and blocks /healthz.
+if railway_service_in_environment pymthouse-signer-test-preview-only "$ENV"; then
+  railway_apply_signer_env pymthouse-signer-test-preview-only "$PE_FLAGS"
+fi
+
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."

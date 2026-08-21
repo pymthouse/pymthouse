@@ -9,9 +9,12 @@
     "kafka",
     "openmeter-collector",
     "pymthouse",
-    "pymthouse-signer-test"
+    "pymthouse-signer-test",
+    "pymthouse-signer-test-preview-only"
   ],
-  "previewOnlyServices": [],
+  "previewOnlyServices": [
+    "pymthouse-signer-test-preview-only"
+  ],
   "services": {
     "kafka": { "kind": "image" },
     "openmeter-collector": { "kind": "image" },
@@ -24,8 +27,16 @@
       "kind": "repo",
       "manifest": "deploy/pymthouse-signer-test/railway.json",
       "environments": ["preview", "production"],
-      "description": "A/B 'latest' remote signer DMZ, deployed in both preview and production. Same webhook/OIDC/Kafka and signing identity as pymthouse (the 'stable' signer); LIVEPEER_IMAGE pins a newer go-livepeer build. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name. Apps opt in via LATEST_SIGNER_APPS on the Next app.",
-      "livepeerImage": "livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5",
+      "description": "A/B 'latest' remote signer DMZ, deployed in both preview and production. Same webhook/OIDC/Kafka and signing identity as pymthouse (the 'stable' signer); LIVEPEER_IMAGE matches the prod Dockerfile default. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name. Apps opt in via LATEST_SIGNER_APPS on the Next app.",
+      "livepeerImage": "livepeer/go-livepeer:sha-264fc6ba8c67c03cd53824d55b13a53721f07577",
+      "byocPerCapPricing": true
+    },
+    "pymthouse-signer-test-preview-only": {
+      "kind": "repo",
+      "manifest": "deploy/pymthouse-signer-test-preview-only/railway.json",
+      "environments": ["preview"],
+      "description": "Preview-only A/B signer DMZ. Shares pymthouse signing identity; must receive the same ETH_RPC_URL / OIDC / webhook env as other signers via railway-apply-stack-env.sh. Never deploy to production.",
+      "livepeerImage": "livepeer/go-livepeer:sha-264fc6ba8c67c03cd53824d55b13a53721f07577",
       "byocPerCapPricing": true
     }
   }

@@ -1,0 +1,105 @@
+# Keep security updates flowing even when other Dependabot PRs are open:
+# - Group security updates into one PR per ecosystem (security PR limit is ~10)
+# - Raise version-update PR limit so version bumps do not starve the queue
+# Pre-releases: Dependabot already skips canary/rc/beta when the lockfile is on a
+# stable release. npm `ignore.versions` only accepts semver ranges (^1.0.0, 4.x),
+# not globs like "*-canary*" (those fail config validation).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 25
+    commit-message:
+      prefix: "build"
+      include: scope
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-production-minor-patch:
+        applies-to: version-updates
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      npm-development-minor-patch:
+        applies-to: version-updates
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      npm-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /docker/signer-dmz/turnkey-bootstrap
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 15
+    commit-message:
+      prefix: "build"
+      include: scope
+    # Nested module lives at a pseudo-version. Dependabot tries
+    # github.com/tkhq/go-sdk@v0.17.0 which does not contain this package
+    # and marks the whole gomod update job failed.
+    ignore:
+      - dependency-name: github.com/tkhq/go-sdk/pkg/enclave_encrypt
+    groups:
+      go-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      go-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      go-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      actions-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"

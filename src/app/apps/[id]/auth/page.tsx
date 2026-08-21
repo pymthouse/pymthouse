@@ -1,14 +1,4 @@
-import { redirect } from "next/navigation";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
-/**
- * Auth & scopes now lives on the App profile tab (Capabilities section).
- * Keep this URL for deep links.
- */
-export default async function AppAuthRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}?tab=profile`);
-}
+/** Auth settings live under App profile. */
+export default AppSettingsSegmentPage;

@@ -4,10 +4,22 @@ import assert from "node:assert/strict";
 import {
   ADMIN_SCOPES,
   assertSignJobNotMixedWithAdmin,
+  ensureConfidentialWebIdentityScopes,
   SignJobScopeExclusivityError,
   SIGN_MINT_USER_TOKEN_SCOPE,
   toProviderScopeMetadata,
 } from "./scopes";
+
+test("ensureConfidentialWebIdentityScopes adds email and profile", () => {
+  assert.equal(
+    ensureConfidentialWebIdentityScopes("openid sign:job"),
+    "openid sign:job email profile",
+  );
+  assert.equal(
+    ensureConfidentialWebIdentityScopes("email openid profile"),
+    "email openid profile",
+  );
+});
 
 test("ADMIN_SCOPES includes admin paths but not sign:job or openid", () => {
   assert.ok(ADMIN_SCOPES.has("users:write"));
@@ -15,6 +27,14 @@ test("ADMIN_SCOPES includes admin paths but not sign:job or openid", () => {
   assert.ok(ADMIN_SCOPES.has("device:approve"));
   assert.equal(ADMIN_SCOPES.has("sign:job"), false);
   assert.equal(ADMIN_SCOPES.has("openid"), false);
+  assert.equal(ADMIN_SCOPES.has("email"), false);
+  assert.equal(ADMIN_SCOPES.has("profile"), false);
+});
+
+test("assertSignJobNotMixedWithAdmin allows sign:job with identity scopes", () => {
+  assert.doesNotThrow(() =>
+    assertSignJobNotMixedWithAdmin(["openid", "email", "profile", "sign:job"]),
+  );
 });
 
 test("assertSignJobNotMixedWithAdmin allows sign:job alone", () => {

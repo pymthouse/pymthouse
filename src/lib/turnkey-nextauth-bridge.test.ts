@@ -12,12 +12,12 @@ test("safeCallbackUrl keeps same-origin relative paths", () => {
 });
 
 test("safeCallbackUrl rejects open redirects and empty values", () => {
-  assert.equal(safeCallbackUrl(null), "/apps");
-  assert.equal(safeCallbackUrl(undefined), "/apps");
-  assert.equal(safeCallbackUrl(""), "/apps");
-  assert.equal(safeCallbackUrl("//evil.example"), "/apps");
-  assert.equal(safeCallbackUrl("https://evil.example"), "/apps");
-  assert.equal(safeCallbackUrl("evil.example"), "/apps");
+  assert.equal(safeCallbackUrl(null), "/onboarding");
+  assert.equal(safeCallbackUrl(undefined), "/onboarding");
+  assert.equal(safeCallbackUrl(""), "/onboarding");
+  assert.equal(safeCallbackUrl("//evil.example"), "/onboarding");
+  assert.equal(safeCallbackUrl("https://evil.example"), "/onboarding");
+  assert.equal(safeCallbackUrl("evil.example"), "/onboarding");
   assert.equal(safeCallbackUrl(null, "/login"), "/login");
 });
 

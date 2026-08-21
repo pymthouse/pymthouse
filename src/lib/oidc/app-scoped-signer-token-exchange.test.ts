@@ -6,8 +6,13 @@ import {
   AppScopedSignerTokenExchangeError,
   GRANT_TYPE_TOKEN_EXCHANGE,
   handleAppScopedSignerTokenExchange,
+  handleIssuerApiKeySignerTokenExchange,
+  isAcceptedApiKeySubjectTokenType,
+  isApiKeySubjectTokenType,
+  looksLikeAppApiKeySubjectToken,
   resolveAppScopedSubjectToken,
   SUBJECT_ACCESS_TOKEN_TYPE,
+  SUBJECT_API_KEY_TOKEN_TYPE,
   validateOptionalM2mClient,
   validateRequestedTokenType,
   validateSignerTarget,
@@ -199,7 +204,8 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
         signerUrlAppId = appClientId ?? undefined;
         return "https://signer.example";
       },
-      getSignerDiscoveryUrl: () => "https://discovery.example/v1/discovery",
+      getSignerDiscoveryUrl: () =>
+        "https://signer.example/discover-orchestrators",
     },
   );
 
@@ -208,10 +214,62 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
   assert.equal(session.correlation_id, "corr-1");
   assert.equal(session.balanceUsdMicros, "1000000");
   assert.equal(session.signer_url, "https://signer.example");
-  assert.equal(session.discovery_url, "https://discovery.example/v1/discovery");
+  assert.equal(
+    session.discovery_url,
+    "https://signer.example/discover-orchestrators",
+  );
   // Signer version is selected per app: the subject's public client id must flow
   // into getClientSignerApiUrl so LATEST_SIGNER_APPS routing applies.
   assert.equal(signerUrlAppId, PUBLIC_ID);
+});
+
+test("handleAppScopedSignerTokenExchange accepts discovery_url and caps overrides", async () => {
+  const session = await handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: PUBLIC_ID,
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: "pmth_abc123",
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-override",
+      discovery_url: "https://custom.example/discover-orchestrators",
+      caps: [" live-video-to-video/streamdiffusion ", "text-to-image/flux"],
+    },
+    {
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async () => ({
+        access_token: "eyJ.signer.jwt",
+        token_type: "Bearer" as const,
+        expires_in: 300,
+        scope: "sign:job",
+        balanceUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      }),
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () =>
+        "https://signer.example/discover-orchestrators",
+    },
+  );
+
+  assert.equal(
+    session.discovery_url,
+    "https://custom.example/discover-orchestrators",
+  );
+  assert.deepEqual(session.caps, [
+    "live-video-to-video/streamdiffusion",
+    "text-to-image/flux",
+  ]);
 });
 
 test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope", async () => {
@@ -250,4 +308,269 @@ test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope
   );
 
   assert.equal(session.access_token, "eyJ.signer.jwt");
+});
+
+test("looksLikeAppApiKeySubjectToken accepts bare pmth_ and composite", () => {
+  assert.equal(looksLikeAppApiKeySubjectToken("pmth_abc"), true);
+  assert.equal(
+    looksLikeAppApiKeySubjectToken(`${PUBLIC_ID}_${"a".repeat(64)}`),
+    true,
+  );
+  assert.equal(looksLikeAppApiKeySubjectToken("a".repeat(64)), true);
+  assert.equal(looksLikeAppApiKeySubjectToken("pmth_cs_secret"), false);
+  assert.equal(looksLikeAppApiKeySubjectToken("header.payload.sig"), false);
+});
+
+test("handleIssuerApiKeySignerTokenExchange resolves app from bare pmth_ subject", async () => {
+  const bare = "pmth_7c3d2ae03dcca8cfa04223523301b8b29f81a883294492c7e07a2333cb3d24d5";
+  const session = await handleIssuerApiKeySignerTokenExchange(
+    {
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: bare,
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-issuer",
+    },
+    {
+      resolveActiveAppApiKeyFromBearer: async (token) => {
+        assert.equal(token, bare);
+        return {
+          apiKeyId: "key-1",
+          developerAppId: "dev-app-1",
+          publicClientId: PUBLIC_ID,
+          appUserId: "au-1",
+          externalUserId: "ext-1",
+          label: null,
+        };
+      },
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async (input) => {
+        assert.equal(input.publicClientId, PUBLIC_ID);
+        assert.equal(input.externalUserId, "ext-1");
+        return {
+          access_token: "eyJ.personal.signer",
+          token_type: "Bearer" as const,
+          expires_in: 300,
+          scope: "sign:job",
+          balanceUsdMicros: "0",
+          lifetimeGrantedUsdMicros: "0",
+        };
+      },
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () => undefined,
+    },
+  );
+
+  assert.equal(session.access_token, "eyJ.personal.signer");
+  assert.equal(session.token_type, "Bearer");
+  assert.equal(session.issued_token_type, SUBJECT_ACCESS_TOKEN_TYPE);
+  assert.equal(session.correlation_id, "corr-issuer");
+  assert.equal(
+    session.discovery_url,
+    "https://signer.example/discover-orchestrators",
+  );
+});
+
+test("handleIssuerApiKeySignerTokenExchange rejects unknown bare key", async () => {
+  await assert.rejects(
+    () =>
+      handleIssuerApiKeySignerTokenExchange(
+        {
+          clientId: "",
+          clientSecret: "",
+          grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+          subjectToken: "pmth_deadbeef",
+          subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+          requestedTokenType: "",
+          resource: "",
+          audiences: [],
+          correlationId: "corr-miss",
+        },
+        {
+          resolveActiveAppApiKeyFromBearer: async () => null,
+        },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
+});
+
+test("isApiKeySubjectTokenType recognizes canonical URI only", () => {
+  assert.equal(isApiKeySubjectTokenType(SUBJECT_API_KEY_TOKEN_TYPE), true);
+  assert.equal(isApiKeySubjectTokenType(SUBJECT_ACCESS_TOKEN_TYPE), false);
+  assert.equal(isAcceptedApiKeySubjectTokenType(SUBJECT_API_KEY_TOKEN_TYPE), true);
+  assert.equal(isAcceptedApiKeySubjectTokenType(SUBJECT_ACCESS_TOKEN_TYPE), true);
+  assert.equal(
+    isAcceptedApiKeySubjectTokenType("urn:ietf:params:oauth:token-type:jwt"),
+    false,
+  );
+});
+
+test("handleAppScopedSignerTokenExchange accepts canonical api_key type", async () => {
+  const session = await handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: PUBLIC_ID,
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: "pmth_abc123",
+      subjectTokenType: SUBJECT_API_KEY_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-api-key-type",
+    },
+    {
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async () => ({
+        access_token: "eyJ.signer.jwt",
+        token_type: "Bearer" as const,
+        expires_in: 300,
+        scope: "sign:job",
+        balanceUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      }),
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () => undefined,
+    },
+  );
+
+  assert.equal(session.access_token, "eyJ.signer.jwt");
+  assert.equal(session.correlation_id, "corr-api-key-type");
+});
+
+test("handleAppScopedSignerTokenExchange rejects api_key type with JWT-shaped subject", async () => {
+  await assert.rejects(
+    () =>
+      handleAppScopedSignerTokenExchange({
+        publicClientId: PUBLIC_ID,
+        clientId: "",
+        clientSecret: "",
+        grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+        subjectToken: "header.payload.sig",
+        subjectTokenType: SUBJECT_API_KEY_TOKEN_TYPE,
+        requestedTokenType: "",
+        resource: "",
+        audiences: [],
+        correlationId: "corr-jwt-as-key",
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
+});
+
+test("handleAppScopedSignerTokenExchange rejects unknown subject_token_type", async () => {
+  await assert.rejects(
+    () =>
+      handleAppScopedSignerTokenExchange({
+        publicClientId: PUBLIC_ID,
+        clientId: "",
+        clientSecret: "",
+        grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+        subjectToken: "pmth_abc123",
+        subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+        requestedTokenType: "",
+        resource: "",
+        audiences: [],
+        correlationId: "corr-bad-type",
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "unsupported_token_type");
+      return true;
+    },
+  );
+});
+
+test("handleIssuerApiKeySignerTokenExchange accepts canonical api_key type", async () => {
+  const bare = "pmth_7c3d2ae03dcca8cfa04223523301b8b29f81a883294492c7e07a2333cb3d24d5";
+  const session = await handleIssuerApiKeySignerTokenExchange(
+    {
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: bare,
+      subjectTokenType: SUBJECT_API_KEY_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-issuer-canonical",
+    },
+    {
+      resolveActiveAppApiKeyFromBearer: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async () => ({
+        access_token: "eyJ.personal.signer",
+        token_type: "Bearer" as const,
+        expires_in: 300,
+        scope: "sign:job",
+        balanceUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      }),
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () => undefined,
+    },
+  );
+
+  assert.equal(session.access_token, "eyJ.personal.signer");
+});
+
+test("handleIssuerApiKeySignerTokenExchange rejects unsupported subject_token_type", async () => {
+  await assert.rejects(
+    () =>
+      handleIssuerApiKeySignerTokenExchange({
+        clientId: "",
+        clientSecret: "",
+        grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+        subjectToken: "pmth_abc",
+        subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+        requestedTokenType: "",
+        resource: "",
+        audiences: [],
+        correlationId: "corr-issuer-bad-type",
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "unsupported_token_type");
+      return true;
+    },
+  );
 });

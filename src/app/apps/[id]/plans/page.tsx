@@ -1,14 +1,3 @@
-import { redirect } from "next/navigation";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
-/**
- * Plans now live as a tab in the main app settings page.
- * Redirect old bookmarks and links.
- */
-export default async function AppPlansRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}?tab=plans`);
-}
+export default AppSettingsSegmentPage;

@@ -10,8 +10,11 @@ import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import {
   demotePublicClientWhenM2mSiblingExists,
+  ensureConfidentialWebClient,
   ensureM2mBackendClient,
+  loadConfidentialWebOidcClientSummary,
   loadM2mOidcClientSummary,
+  removeConfidentialWebClient,
   removeM2mBackendClient,
   syncBackendM2mAllowedScopesFromPublicApp,
   updateClientConfig,
@@ -25,9 +28,14 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { syncPublicClientGrantTypes } from "@/lib/oidc/grants";
+import {
+  syncConfidentialWebGrantTypes,
+  validateConfidentialWebShape,
+} from "@/lib/oidc/confidential-web";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { authenticateAppClient } from "@/lib/auth";
+import { resolveAppActivation } from "@/lib/activation/app-activation";
 import {
   listAvailableFiatOracleProviders,
   resolveBillingOracleProviderKey,
@@ -95,8 +103,8 @@ export async function GET(
         allowedScopes: client.allowedScopes,
         grantTypes: client.grantTypes,
         tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
-        // Public app_ row must never report a secret when a confidential m2m_ sibling exists.
-        hasSecret: app.m2mOidcClientId
+        // Public app_ row must never report a secret when a confidential sibling exists.
+        hasSecret: app.m2mOidcClientId || app.webOidcClientId
           ? false
           : client.tokenEndpointAuthMethod !== "none" &&
             !!client.clientSecretHash,
@@ -128,6 +136,8 @@ export async function GET(
     }
   }
 
+  const webOidcClient = await loadConfidentialWebOidcClientSummary(app.id);
+
   const domains = await db
     .select()
     .from(appAllowedDomains)
@@ -147,6 +157,28 @@ export async function GET(
         clientInfo.allowedScopes ?? DEFAULT_OIDC_SCOPES,
       )
     : "app_level";
+
+  let activation = null;
+  try {
+    // Soft budget so a slow OpenMeter spendable lookup cannot stall the
+    // dashboard detail response. Failures stay null (activation is advisory here).
+    activation = await Promise.race([
+      resolveAppActivation(app.id),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("resolveAppActivation timed out")),
+          2_500,
+        );
+      }),
+    ]);
+  } catch (err) {
+    console.warn(
+      "apps/[id] GET: activation lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    activation = null;
+  }
+
   return NextResponse.json({
     ...appWithoutOidcClientId,
     billingPattern,
@@ -155,6 +187,7 @@ export async function GET(
     canEdit: await canEditProviderApp(auth),
     canDeleteApp: auth.app.ownerId === auth.userId,
     canManageBilling: auth.app.ownerId === auth.userId || auth.role === "admin",
+    activation,
     oidcClient: clientInfo
       ? {
           ...clientInfo,
@@ -162,6 +195,7 @@ export async function GET(
         }
       : null,
     m2mOidcClient,
+    webOidcClient,
     domains,
     usagePricing: {
       billingDisplayCurrency: pricing?.billingDisplayCurrency ?? "USD",
@@ -276,7 +310,8 @@ export async function PUT(
     if (client) {
       const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
       if (body.name) clientUpdates.displayName = body.name;
-      if (body.redirectUris) clientUpdates.redirectUris = body.redirectUris;
+      // Public app_ never stores redirect URIs (authorization_code is on web_).
+      clientUpdates.redirectUris = [];
       if (body.tokenEndpointAuthMethod)
         clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
       if (body.allowedScopes) {
@@ -289,16 +324,11 @@ export async function PUT(
       }
       if (body.grantTypes) clientUpdates.grantTypes = body.grantTypes;
 
-      // Resolve the final redirect URIs (updated or unchanged) and enforce the
-      // authorization_code ↔ redirect_uris invariant on every write.
-      const finalRedirectUris =
-        clientUpdates.redirectUris ??
-        (JSON.parse(client.redirectUris) as string[]);
       const baseGrants =
         clientUpdates.grantTypes ?? client.grantTypes.split(",").filter(Boolean);
       clientUpdates.grantTypes = syncPublicClientGrantTypes(
         baseGrants,
-        finalRedirectUris,
+        [],
         client.clientId,
       );
 
@@ -325,7 +355,7 @@ export async function PUT(
         resetProvider();
       }
 
-      if (app.m2mOidcClientId && (await demotePublicClientWhenM2mSiblingExists(app.id))) {
+      if (await demotePublicClientWhenM2mSiblingExists(app.id)) {
         resetProvider();
       }
     }
@@ -348,13 +378,72 @@ export async function PUT(
     }
   }
 
+  if (body.confidentialWebHelper === false) {
+    if (await removeConfidentialWebClient(app.id)) {
+      resetProvider();
+    }
+  } else if (body.confidentialWebHelper === true) {
+    const webRedirects = Array.isArray(body.confidentialWebRedirectUris)
+      ? body.confidentialWebRedirectUris
+          .filter((u: unknown): u is string => typeof u === "string" && u.trim().length > 0)
+          .map((u: string) => u.trim())
+      : undefined;
+    await ensureConfidentialWebClient({
+      appInternalId: app.id,
+      appDisplayName:
+        typeof body.name === "string" && body.name.trim()
+          ? body.name.trim()
+          : app.name,
+      redirectUris: webRedirects,
+    });
+    if (await demotePublicClientWhenM2mSiblingExists(app.id)) {
+      resetProvider();
+    }
+  }
+
+  // Update confidential web sibling redirect URIs independently of the toggle.
+  if (
+    Array.isArray(body.confidentialWebRedirectUris) &&
+    body.confidentialWebHelper !== false
+  ) {
+    const webSummary = await loadConfidentialWebOidcClientSummary(app.id);
+    if (webSummary) {
+      const webRedirects = body.confidentialWebRedirectUris
+        .filter((u: unknown): u is string => typeof u === "string" && u.trim().length > 0)
+        .map((u: string) => u.trim());
+      const grantTypes = syncConfidentialWebGrantTypes(
+        ["refresh_token"],
+        webRedirects,
+      );
+      const shapeError = validateConfidentialWebShape({
+        tokenEndpointAuthMethod: "client_secret_post",
+        redirectUris: webRedirects,
+        grantTypes,
+      });
+      if (shapeError && webRedirects.length === 0 && grantTypes.includes("authorization_code")) {
+        return NextResponse.json(shapeError, { status: 400 });
+      }
+      // Allow empty redirects while configuring; auth_code is stripped until a URI is added.
+      await updateClientConfig(webSummary.clientId, {
+        redirectUris: webRedirects,
+        grantTypes,
+      });
+      resetProvider();
+    }
+  }
+
   if (await syncBackendM2mAllowedScopesFromPublicApp(app.id)) {
     resetProvider();
   }
 
   const m2mAfter = await loadM2mOidcClientSummary(app.id);
+  const webAfter = await loadConfidentialWebOidcClientSummary(app.id);
 
-  return NextResponse.json({ success: true, m2mOidcClient: m2mAfter });
+  return NextResponse.json({
+    success: true,
+    m2mOidcClient: m2mAfter,
+    webOidcClient: webAfter,
+  });
 }
 
 export async function DELETE(

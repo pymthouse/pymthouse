@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
-import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
-import { listTenantInvoices } from "./invoices";
+import { buildBillingProfileSupplier } from "./billing-profiles";
+import {
+  ensureOpenMeterCustomer,
+  ensureOwnerCustomerWireSubjects,
+  resetEnsuredCustomerCacheForTests,
+} from "./customers";
+import { listOwnerWalletInvoices, listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
   isMintUserSignerTokenRequest,
@@ -59,29 +64,81 @@ test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
 });
 
+test("buildBillingProfileSupplier includes required country on address", () => {
+  process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY = "de";
+  const supplier = buildBillingProfileSupplier("Acme Corp");
+  assert.equal(supplier.name, "Acme Corp");
+  assert.equal(supplier.addresses[0]?.country, "DE");
+  delete process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY;
+});
+
 test("owner customer key helpers use bare user id", async () => {
   const {
     buildOwnerCustomerKey,
     buildOwnerWireSubject,
+    buildEndUserCustomerKey,
+    buildSandboxEndUserCustomerKey,
     isOwnerCustomerKey,
+    isEndUserCustomerKey,
     isOwnerWireSubject,
+    isSandboxEndUserCustomerKey,
     parseOwnerCustomerKey,
+    parseEndUserCustomerKey,
+    parseCustomerKey,
     normalizePlatformUserId,
     buildOwnerMeterSubjects,
   } = await import("./customer-key");
   assert.equal(buildOwnerCustomerKey("uuid-1"), "uuid-1");
   assert.equal(buildOwnerCustomerKey("owner:uuid-1"), "uuid-1");
   assert.equal(buildOwnerWireSubject("uuid-1"), "owner:uuid-1");
+  assert.equal(buildEndUserCustomerKey("eu-id-1"), "eu_eu-id-1");
+  assert.equal(buildEndUserCustomerKey("eu_eu-id-1"), "eu_eu-id-1");
+  assert.equal(
+    buildSandboxEndUserCustomerKey("eu-id-1"),
+    "sbx_eu_eu-id-1",
+  );
+  assert.equal(
+    buildSandboxEndUserCustomerKey("eu_eu-id-1"),
+    "sbx_eu_eu-id-1",
+  );
+  assert.equal(isSandboxEndUserCustomerKey("sbx_eu_eu-id-1"), true);
+  assert.equal(isSandboxEndUserCustomerKey("eu_eu-id-1"), false);
+  assert.equal(isEndUserCustomerKey("sbx_eu_eu-id-1"), true);
+  assert.equal(isOwnerCustomerKey("sbx_eu_eu-id-1"), false);
+  assert.equal(parseEndUserCustomerKey("sbx_eu_eu-id-1"), "eu-id-1");
+  assert.deepEqual(parseCustomerKey("sbx_eu_eu-id-1"), {
+    kind: "end_user",
+    endUserId: "eu-id-1",
+  });
   assert.equal(isOwnerCustomerKey("uuid-1"), true);
   assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
   assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);
+  assert.equal(isOwnerCustomerKey("eu_eu-id-1"), false);
+  assert.equal(isEndUserCustomerKey("eu_eu-id-1"), true);
+  assert.equal(isEndUserCustomerKey("uuid-1"), false);
   assert.equal(isOwnerWireSubject("owner:uuid-1"), true);
   assert.equal(isOwnerWireSubject("uuid-1"), false);
   assert.equal(parseOwnerCustomerKey("owner:uuid-1"), "uuid-1");
   assert.equal(parseOwnerCustomerKey("uuid-1"), "uuid-1");
+  assert.equal(parseOwnerCustomerKey("eu_eu-id-1"), null);
+  assert.equal(parseEndUserCustomerKey("eu_eu-id-1"), "eu-id-1");
+  assert.deepEqual(parseCustomerKey("uuid-1"), {
+    kind: "platform_user",
+    userId: "uuid-1",
+  });
+  assert.deepEqual(parseCustomerKey("eu_eu-id-1"), {
+    kind: "end_user",
+    endUserId: "eu-id-1",
+  });
+  assert.deepEqual(parseCustomerKey("app_x:ext-1"), {
+    kind: "legacy_compound",
+    clientId: "app_x",
+    externalUserId: "ext-1",
+  });
   assert.equal(normalizePlatformUserId("owner:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("user:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("eu_eu-id-1"), "eu_eu-id-1");
   assert.deepEqual(
     buildOwnerMeterSubjects("uuid-1", ["app_aaa"]).sort(),
     ["app_aaa:owner:uuid-1", "app_aaa:uuid-1", "owner:uuid-1", "uuid-1"].sort(),
@@ -145,6 +202,197 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
+  const feeRows = [
+    {
+      value: 1000,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-a",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+    {
+      value: 9000,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-b",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+  ] as never;
+  const countRows = [
+    {
+      value: 1,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-a",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+    {
+      value: 3,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-b",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+  ] as never;
+
+  const forA = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows,
+    countRows,
+    filterExternalUserId: "viewer-a",
+  });
+  assert.equal(forA.length, 1);
+  assert.equal(forA[0]?.networkFeeUsdMicros, "1000");
+  assert.equal(forA[0]?.requestCount, 1);
+
+  const forB = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows,
+    countRows,
+    filterExternalUserId: "viewer-b",
+  });
+  assert.equal(forB.length, 1);
+  assert.equal(forB[0]?.networkFeeUsdMicros, "9000");
+  assert.equal(forB[0]?.requestCount, 3);
+
+  const unfiltered = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows,
+    countRows,
+  });
+  assert.equal(unfiltered.length, 1);
+  assert.equal(unfiltered[0]?.networkFeeUsdMicros, "10000");
+  assert.equal(unfiltered[0]?.requestCount, 4);
+});
+
+test("owner_rollup actors cannot see each other's daily_pipeline rows", () => {
+  const feeRows = [
+    {
+      value: 100,
+      windowStart: new Date("2026-05-01T00:00:00Z"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-a",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+    {
+      value: 200,
+      windowStart: new Date("2026-05-01T00:00:00Z"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-b",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+  ] as never;
+  const countRows = [
+    {
+      value: 1,
+      windowStart: new Date("2026-05-01T00:00:00Z"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-a",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+    {
+      value: 2,
+      windowStart: new Date("2026-05-01T00:00:00Z"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-b",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+      },
+    },
+  ] as never;
+
+  const forA = aggregateDailyPipelineModelRows({
+    clientId: "app_1",
+    feeRows,
+    countRows,
+    filterExternalUserId: "viewer-a",
+  });
+  assert.equal(forA.length, 1);
+  assert.equal(forA[0]?.networkFeeUsdMicros, "100");
+  assert.equal(forA[0]?.requestCount, 1);
+
+  const forB = aggregateDailyPipelineModelRows({
+    clientId: "app_1",
+    feeRows,
+    countRows,
+    filterExternalUserId: "viewer-b",
+  });
+  assert.equal(forB.length, 1);
+  assert.equal(forB[0]?.networkFeeUsdMicros, "200");
+  assert.equal(forB[0]?.requestCount, 2);
+});
+
+test("aggregateManifestRows isolates rollup actors by external_user_id", () => {
+  const feeMicrosRows = [
+    {
+      value: 50,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-a",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+        manifest_id: "mid-a",
+      },
+    },
+    {
+      value: 75,
+      windowStart: new Date("2026-05-01"),
+      groupBy: {
+        client_id: "app_1",
+        external_user_id: "viewer-b",
+        pipeline: "byoc",
+        model_id: "ffmpeg",
+        manifest_id: "mid-b",
+      },
+    },
+  ] as never;
+
+  const forA = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows,
+    feeWeiRows: [],
+    billableSecsRows: [],
+    filterExternalUserId: "viewer-a",
+  });
+  assert.equal(forA.length, 1);
+  assert.equal(forA[0]?.manifestId, "mid-a");
+  assert.equal(forA[0]?.networkFeeUsdMicros, "50");
+
+  const forB = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows,
+    feeWeiRows: [],
+    billableSecsRows: [],
+    filterExternalUserId: "viewer-b",
+  });
+  assert.equal(forB.length, 1);
+  assert.equal(forB[0]?.manifestId, "mid-b");
 });
 
 test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id", () => {
@@ -458,12 +706,12 @@ test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", (
     const meter = bySlug.get(slug);
     assert.ok(meter, `missing meter ${slug}`);
     assert.equal(meter.aggregation, "SUM");
-    assert.ok(meter.groupBy?.manifest_id);
+    assert.ok(meter.groupBy && "manifest_id" in meter.groupBy);
+    assert.equal(meter.groupBy.manifest_id, "$.manifest_id");
   }
-  assert.equal(
-    bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy?.manifest_id,
-    undefined,
-  );
+  const billingGroupBy = bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy;
+  assert.ok(billingGroupBy);
+  assert.equal("manifest_id" in billingGroupBy, false);
 });
 
 test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
@@ -644,7 +892,8 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
   assert.equal(rows.length, 2);
   const first = rows[0];
   const second = rows[1];
-  assert.ok(first && second);
+  assert.ok(first);
+  assert.ok(second);
   assert.equal(first.date, "2026-06-02");
   assert.equal(first.requestCount, 5);
   assert.equal(second.date, "2026-06-03");
@@ -722,6 +971,7 @@ test("buildOpenMeterUsageResponse does not copy network fee into endUserBillable
 });
 
 test("ensureOpenMeterCustomer returns existing id and key", async () => {
+  resetEnsuredCustomerCacheForTests();
   const client = {
     customers: {
       get: async (key: string) => ({
@@ -747,6 +997,7 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
 });
 
 test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updatedSubjectKeys: string[] | undefined;
   const client = {
     customers: {
@@ -755,6 +1006,7 @@ test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", asy
         key,
         usageAttribution: { subjectKeys: [] },
       }),
+      listSubscriptions: async () => ({ items: [] }),
       update: async (_id: string, input: { usageAttribution: { subjectKeys: string[] } }) => {
         updatedSubjectKeys = input.usageAttribution.subjectKeys;
         return { id: "om-cust-1", key: "app_1:user-1" };
@@ -772,6 +1024,46 @@ test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", asy
   );
   assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
   assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
+});
+
+test("ensureOpenMeterCustomer preserves settlement metadata on subject-key repair", async () => {
+  resetEnsuredCustomerCacheForTests();
+  let updatedMetadata: Record<string, string> | undefined;
+  const settlement = {
+    stripe_charge_model: "direct",
+    stripe_connect_account_id: "acct_1U1ELc06T9MFDxzI",
+  };
+  const customerRecord = {
+    id: "om-cust-1",
+    key: "app_1:user-1",
+    name: "app_1:user-1",
+    usageAttribution: { subjectKeys: [] as string[] },
+    // After Konnect normalize, labels land here as metadata.
+    metadata: { ...settlement },
+  };
+  const client = {
+    customers: {
+      get: async () => customerRecord,
+      list: async () => ({ items: [customerRecord] }),
+      listSubscriptions: async () => ({ items: [] }),
+      update: async (
+        _id: string,
+        input: {
+          usageAttribution?: { subjectKeys: string[] };
+          metadata?: Record<string, string>;
+        },
+      ) => {
+        updatedMetadata = input.metadata;
+        return customerRecord;
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-1");
+  assert.deepEqual(updatedMetadata, settlement);
 });
 
 test("ensureOpenMeterCustomer creates customer when missing", async () => {
@@ -792,6 +1084,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
 });
 
 test("ensureOwnerCustomer attaches transitional keys only on create", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updatedSubjectKeys: string[] | undefined;
   let createdBody: {
     key?: string;
@@ -853,6 +1146,7 @@ test("ensureOwnerCustomer attaches transitional keys only on create", async () =
 });
 
 test("ensureOwnerCustomer keeps settlement subject only on existing customers", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updateCalls = 0;
   let updatedSubjectKeys: string[] | undefined;
   const ownerKey = "uuid-1";
@@ -867,6 +1161,7 @@ test("ensureOwnerCustomer keeps settlement subject only on existing customers", 
     customers: {
       get: async () => customerRecord,
       list: async () => ({ items: [customerRecord] }),
+      listSubscriptions: async () => ({ items: [] }),
       update: async (
         _id: string,
         input: {
@@ -899,7 +1194,8 @@ test("ensureOwnerCustomer keeps settlement subject only on existing customers", 
   // Bare settlement key already present; update re-sends the same set (Konnect
   // PUT is a full replace, so omitting it would wipe subject_keys).
   assert.deepEqual(updatedSubjectKeys, [ownerKey]);
-  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
+  assert.equal(customerRecord.metadata.pymthouse_owner_user_id, "uuid-1");
+  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, undefined);
   assert.ok(updateCalls >= 1);
 });
 
@@ -1041,6 +1337,7 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
         items: [
           { id: "cust-a", key: "app_1:alpha" },
           { id: "cust-b", key: "app_1:beta" },
+          { id: "cust-other", key: "app_2:gamma" },
         ],
         page: input.page,
         pageSize: input.pageSize,
@@ -1076,6 +1373,94 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
   assert.equal(result.totalCount, 2);
 });
 
+test("listTenantInvoices returns empty when no customers match", async () => {
+  let invoiceListCalls = 0;
+  const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+    },
+    billing: {
+      invoices: {
+        list: async () => {
+          invoiceListCalls += 1;
+          return { items: [] };
+        },
+      },
+    },
+  };
+
+  const result = await listTenantInvoices({
+    client: client as never,
+    clientId: "app_missing",
+    includeOwnerWallet: false,
+  });
+
+  assert.deepEqual(result.items, []);
+  assert.equal(result.totalCount, 0);
+  assert.equal(invoiceListCalls, 0);
+});
+
+test("listOwnerWalletInvoices lists bare and owner: wire customer ids", async () => {
+  const listedKeys: string[] = [];
+  const listedCustomers: string[][] = [];
+  const client = {
+    customers: {
+      list: async (input: { key: string }) => {
+        listedKeys.push(input.key);
+        if (input.key === "uuid-owner") {
+          return { items: [{ id: "cust-bare", key: "uuid-owner" }] };
+        }
+        if (input.key === "owner:uuid-owner") {
+          return { items: [{ id: "cust-wire", key: "owner:uuid-owner" }] };
+        }
+        return { items: [] };
+      },
+    },
+    billing: {
+      invoices: {
+        list: async (input: { customers: string[] }) => {
+          listedCustomers.push([...input.customers].sort());
+          return {
+            items: input.customers.map((customerId) => ({
+              id: `inv-${customerId}`,
+              number: `N-${customerId}`,
+              status: "issued",
+              currency: "USD",
+              totals: { total: "5.00" },
+              customer: { id: customerId, key: customerId },
+              issuedAt: new Date("2026-07-01T00:00:00.000Z"),
+            })),
+          };
+        },
+      },
+    },
+  };
+
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "uuid-owner",
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.deepEqual(listedKeys.sort(), ["owner:uuid-owner", "uuid-owner"]);
+  assert.deepEqual(listedCustomers, [["cust-bare", "cust-wire"].sort()]);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.totalCount, 2);
+});
+
+test("listOwnerWalletInvoices returns empty for blank owner id", async () => {
+  const client = {
+    customers: { list: async () => ({ items: [{ id: "x", key: "y" }] }) },
+    billing: { invoices: { list: async () => ({ items: [] }) } },
+  };
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "   ",
+  });
+  assert.deepEqual(result.items, []);
+});
+
 test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included allowance", async () => {
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
     clientId: "app_1",
@@ -1087,10 +1472,13 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
       priceAmount: "29.00",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: "5000000",
       overageRateUsd: "0.0000015",
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: false,
@@ -1120,10 +1508,77 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   assert.equal(phaseCards.length, 2);
   const flatFee = phaseCards[0];
   const usage = phaseCards[1];
-  assert.ok(flatFee && usage);
+  assert.ok(flatFee);
+  assert.ok(usage);
   assert.equal(flatFee.type, "flat_fee");
   assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
   assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+  assert.equal(
+    (flatFee as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+      (flatFee as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+});
+
+test("mapPymthousePlanToOpenMeterCreate uses weekly billing cadence", async () => {
+  const omPlan = await mapPymthousePlanToOpenMeterCreate({
+    clientId: "app_1",
+    plan: {
+      id: "plan-weekly",
+      clientId: "app_1",
+      name: "Weekly Pro",
+      type: "subscription",
+      priceAmount: "7.00",
+      priceCurrency: "USD",
+      status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
+      includedUsdMicros: "1000000",
+      overageRateUsd: "0.000001",
+      includedUnits: null,
+      billingCycle: "weekly",
+      chargeThresholdUsdMicros: null,
+      discoveryProfileId: null,
+      isNetworkDefault: false,
+      isStarterDefault: false,
+      discoveryExcludedCapabilities: null,
+      openmeterPlanId: null,
+      openmeterPlanVersion: null,
+      lastSyncedAt: null,
+      syncError: null,
+      createdAt: "",
+      updatedAt: "",
+    },
+    capabilities: [],
+    client: {
+      features: {
+        list: async () => [],
+        create: async () => ({}),
+      },
+    } as never,
+  });
+
+  assert.ok(omPlan);
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1W",
+  );
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  const phaseCards = rateCardsFromPlanPhase(phase);
+  for (const card of phaseCards) {
+    assert.equal(
+      (card as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+        (card as { billing_cadence?: string }).billing_cadence,
+      "P1W",
+    );
+  }
 });
 
 test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", async () => {
@@ -1138,10 +1593,13 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: null,
       overageRateUsd: "0.000001",
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: false,
@@ -1210,6 +1668,42 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
 });
 
+test("describeOpenMeterError recovers reasons the SDK drops as undefined", async () => {
+  const { describeOpenMeterError } = await import("./plan-errors");
+
+  // Konnect problem body without `detail` — the SDK renders "[409]: undefined".
+  const conflict = new Error(
+    "Request failed (https://us.api.konghq.com/v3/openmeter/subscriptions) [409]: undefined",
+  );
+  Object.assign(conflict, {
+    title: "Conflict",
+    type: "about:blank",
+    __raw: { title: "Conflict", status: 409, extra: "customer already has a subscription" },
+  });
+  const described = describeOpenMeterError(conflict);
+  assert.ok(described.includes("[409]: undefined"));
+  assert.ok(described.includes("title=Conflict"));
+  assert.ok(described.includes("type=about:blank"));
+  assert.ok(described.includes("customer already has a subscription"));
+
+  // A plain Error still describes as its message, with nothing appended.
+  assert.equal(describeOpenMeterError(new Error("boom")), "boom");
+
+  // Non-serializable __raw is skipped without throwing.
+  const circularErr = new Error("wrapped");
+  const circularRaw: { self?: unknown } = {};
+  circularRaw.self = circularRaw;
+  Object.assign(circularErr, { title: "T", type: "U", __raw: circularRaw });
+  const circularDescribed = describeOpenMeterError(circularErr);
+  assert.ok(circularDescribed.includes("wrapped"));
+  assert.ok(circularDescribed.includes("title=T"));
+  assert.ok(circularDescribed.includes("type=U"));
+  assert.ok(!circularDescribed.includes("raw="));
+
+  // Non-Error values stringify as the primary message.
+  assert.equal(describeOpenMeterError("plain-string"), "plain-string");
+});
+
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
   const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
   const stripeErr = new Error(
@@ -1220,9 +1714,14 @@ test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409"
   assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
   assert.equal(isOpenMeterConflictError(stripeErr), true);
 
-  const stripeMessageOnly = new Error(stripeErr.message);
-  (stripeMessageOnly as unknown as { status: number }).status = 500;
-  assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
+  // Konnect often omits .status on the thrown Error; message alone must still match.
+  const messageOnly = new Error(stripeErr.message);
+  assert.equal(isOpenMeterConflictError(messageOnly), true);
+  assert.equal(isOpenMeterStripeBillingError(messageOnly), true);
+
+  const unrelated500 = new Error("validation failed");
+  (unrelated500 as unknown as { status: number }).status = 500;
+  assert.equal(isOpenMeterStripeBillingError(unrelated500), false);
 });
 
 test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () => {
@@ -1236,10 +1735,13 @@ test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () =
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: null,
       overageRateUsd: null,
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: true,
       isStarterDefault: false,
@@ -1267,10 +1769,13 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: "5000000",
       overageRateUsd: null,
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: true,
@@ -1324,6 +1829,7 @@ test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
   assert.deepEqual(view, {
     id: "sub-1",
     status: "active",
+    customerId: null,
     planKey: "app_1:plan_starter",
     planId: null,
     activeFrom: "2026-01-01T00:00:00.000Z",

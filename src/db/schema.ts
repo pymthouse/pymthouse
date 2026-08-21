@@ -25,6 +25,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("developer"), // admin | operator | developer
   walletAddress: text("wallet_address"),
   turnkeyUserId: text("turnkey_user_id").unique(),
+  /** Onboarding persona: explorer | builder. Null until the user picks a path. */
+  persona: text("persona"),
+  /** ISO timestamp when onboarding finished (Explorer join or Builder app create). */
+  onboardingCompletedAt: text("onboarding_completed_at"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -236,6 +240,8 @@ export const developerApps = pgTable("developer_apps", {
   oidcClientId: text("oidc_client_id").references(() => oidcClients.id),
   /** Confidential sibling used for Builder API + device approval (RFC 8693); public interactive client stays in oidcClientId. */
   m2mOidcClientId: text("m2m_oidc_client_id").references(() => oidcClients.id),
+  /** Confidential web RP sibling (authorization_code + secret + redirects); public interactive client stays in oidcClientId. */
+  webOidcClientId: text("web_oidc_client_id").references(() => oidcClients.id),
   name: text("name").notNull(),
   subtitle: text("subtitle"), // 30 char max
   description: text("description"),
@@ -278,6 +284,11 @@ export const developerApps = pgTable("developer_apps", {
   publishedAt: text("published_at"),
   /** 1 = show on homepage featured strip (admin-curated); 0 = not featured */
   marketplaceFeatured: integer("marketplace_featured").notNull().default(0),
+  /**
+   * 1 = platform-wide default app for Explorers (usage/keys only).
+   * Config is platform-admin only; at most one row may be 1.
+   */
+  isPlatformDefault: integer("is_platform_default").notNull().default(0),
 });
 
 // Provider-managed application users for the MVP runtime path.
@@ -293,6 +304,10 @@ export const appUsers = pgTable(
     depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
+    /** Off-session prepaid reload when live spendable hits $0. Merchant end-users. */
+    autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
+    /** Reload amount in USD micros; null falls back to $10 when enabling. */
+    autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -370,22 +385,41 @@ export const plans = pgTable(
   "plans",
   {
     id: text("id").primaryKey(),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => developerApps.id),
+    /**
+     * Owning app, or NULL for a platform-scoped plan (the Owner Starter that
+     * developers subscribe to PymtHouse on). Platform plans belong to no app,
+     * so before this was nullable owner subscriptions had to borrow the
+     * requesting app's Starter row. See docs/adr-owner-vs-app-billing.md.
+     */
+    clientId: text("client_id").references(() => developerApps.id),
     name: text("name").notNull(),
     type: text("type").notNull().default("free"),
     priceAmount: text("price_amount").notNull().default("0"),
     priceCurrency: text("price_currency").notNull().default("USD"),
+    /**
+     * draft | active | phase_out
+     * phase_out: existing subscribers keep working; new subscribe/change-to blocked.
+     */
     status: text("status").notNull().default("draft"),
+    /** ISO timestamp when forced migration should complete (typically next cycle). */
+    phaseOutAt: text("phase_out_at"),
+    /** Suggested replacement plan id when status is phase_out. */
+    replacementPlanId: text("replacement_plan_id"),
     /** Pixel-unit quota included per billing cycle (legacy; optional). */
     includedUnits: bigint("included_units", { mode: "bigint" }),
     /** Retail USD per network USD-micro for plan-level usage (decimal string). */
     overageRateUsd: text("overage_rate_usd"),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
-    /** Billing period length; currently only "monthly" is supported. */
+    /** Billing period length: daily | weekly | monthly (maps to OpenMeter P1D/P1W/P1M). */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
+    /**
+     * Pay-Per-Use (`type = "usage"`) only: invoice/charge when accrued usage
+     * reaches this many USD micros — credits first, then auto-debit (#398).
+     * The stored billingCycle stays a nominal internal cycle for OpenMeter's
+     * required billingCadence; it is never the primary charge trigger.
+     */
+    chargeThresholdUsdMicros: text("charge_threshold_usd_micros"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
     }),
@@ -457,9 +491,12 @@ export const planCapabilityBundles = pgTable(
 export const subscriptions = pgTable("subscriptions", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
-  clientId: text("client_id")
-    .notNull()
-    .references(() => developerApps.id),
+  /**
+   * Owning app, or NULL for the owner's platform subscription. App-scoped
+   * queries filter on `eq(clientId, appId)`, which never matches NULL, so
+   * platform rows are naturally excluded from them.
+   */
+  clientId: text("client_id").references(() => developerApps.id),
   planId: text("plan_id")
     .notNull()
     .references(() => plans.id),
@@ -535,9 +572,78 @@ export const appBillingConfig = pgTable(
     stripeConnectStatus: text("stripe_connect_status").notNull().default("disconnected"),
     openmeterStripeAppId: text("openmeter_stripe_app_id"),
     openmeterBillingProfileId: text("openmeter_billing_profile_id"),
+    /** Merchant-plane Custom Invoicing billing profile (never org default). */
+    openmeterMerchantBillingProfileId: text("openmeter_merchant_billing_profile_id"),
     defaultCurrency: text("default_currency").notNull().default("USD"),
     checkoutSuccessUrl: text("checkout_success_url"),
     checkoutCancelUrl: text("checkout_cancel_url"),
+    /**
+     * When true, OpenMeter may create mid-cycle invoices (progressive billing).
+     * Synced to the tenant billing profile workflow.invoicing.progressiveBilling.
+     */
+    progressiveBilling: boolean("progressive_billing").notNull().default(true),
+    /**
+     * Max unbilled debt (USD micros) allowed while spendable ≤ 0 before
+     * mint/signer deny. App-wide; same for all end users. Null reads as
+     * DEFAULT_SOFT_NEGATIVE_USD_MICROS ($2), 0 means no ceiling, otherwise
+     * at least MIN_SOFT_NEGATIVE_USD_MICROS.
+     */
+    softNegativeUsdMicros: text("soft_negative_usd_micros"),
+    /**
+     * Debt level (USD micros) at which the amount-based invoice raise fires.
+     * Null derives it from the ceiling: half, capped at $5.
+     */
+    invoiceLeadUsdMicros: text("invoice_lead_usd_micros"),
+    /** Merchant Stripe Connected Account id (`acct_…`). */
+    stripeConnectedAccountId: text("stripe_connected_account_id"),
+    /**
+     * When true, Merchant Connect uses the live platform key.
+     * When false (default for new rows), Connect uses STRIPE_SANDBOX_SECRET_KEY.
+     * Existing live merchant apps stay true. Locked once stripeConnectedAccountId
+     * is set — disconnect to switch.
+     */
+    stripeLivemode: boolean("stripe_livemode").notNull().default(false),
+    /** How the merchant linked: account_link | oauth */
+    stripeOnboardingMethod: text("stripe_onboarding_method"),
+    stripeChargesEnabled: boolean("stripe_charges_enabled").notNull().default(false),
+    stripePayoutsEnabled: boolean("stripe_payouts_enabled").notNull().default(false),
+    stripeDetailsSubmitted: boolean("stripe_details_submitted").notNull().default(false),
+    /** Platform application fee in basis points (0 = none). */
+    applicationFeeBps: integer("application_fee_bps").notNull().default(0),
+    /** After hard cutover: refuse OM Stripe checkout fallback. */
+    connectPaymentsOnly: boolean("connect_payments_only").notNull().default(false),
+    /**
+     * owner_rollup — end-user usage rolls to the owner wallet (default).
+     * merchant — Builder charges end users via Stripe Connect.
+     */
+    billingMode: text("billing_mode").notNull().default("owner_rollup"),
+    /** Max *active* app_users before provisioning / reactivation is blocked. */
+    endUserCap: integer("end_user_cap").notNull().default(10_000),
+    /** ISO timestamp of first cost-rail denial notification. */
+    activationNotifiedAt: text("activation_notified_at"),
+    /**
+     * Merchant supplier identity — who is legally selling on this app's invoices.
+     * Synced from the Stripe connected account; tax id is developer-supplied.
+     */
+    /** ISO 3166-1 alpha-2, from the connected account. Immutable at Stripe. */
+    supplierCountry: text("supplier_country"),
+    /** Registered entity name, or the individual's name for sole traders. */
+    supplierName: text("supplier_name"),
+    /** individual | company | non_profit | government_entity */
+    supplierBusinessType: text("supplier_business_type"),
+    supplierAddressLine1: text("supplier_address_line1"),
+    supplierAddressLine2: text("supplier_address_line2"),
+    supplierAddressCity: text("supplier_address_city"),
+    supplierAddressState: text("supplier_address_state"),
+    supplierAddressPostalCode: text("supplier_address_postal_code"),
+    /** Developer-supplied VAT/tax number — Stripe exposes only a boolean. */
+    supplierTaxId: text("supplier_tax_id"),
+    /** Stripe reported company.tax_id_provided / vat_id_provided. */
+    supplierTaxIdOnFileAtStripe: boolean("supplier_tax_id_on_file_at_stripe")
+      .notNull()
+      .default(false),
+    /** ISO timestamp of the last successful sync from the connected account. */
+    supplierSyncedAt: text("supplier_synced_at"),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()
@@ -547,6 +653,147 @@ export const appBillingConfig = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [uniqueIndex("idx_app_billing_config_client_id").on(t.clientId)],
+);
+
+/**
+ * Per-owner cost-rail overrides, set by PymtHouse admins.
+ *
+ * The cost rail is account-level: a developer subscribes to PymtHouse once and
+ * every app they own bills against it. These values constrain the owner, so
+ * they are admin-set, never Builder-editable. A missing row means the owner is
+ * on platform defaults (see lib/billing/platform-billing-defaults).
+ *
+ * See docs/adr-owner-vs-app-billing.md.
+ */
+export const ownerBillingConfig = pgTable(
+  "owner_billing_config",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id),
+    /**
+     * Included usage granted per cycle on the Owner Starter plan (USD micros).
+     * NULL = platform default. Changing this requires re-syncing the owner's
+     * OpenMeter plan version, so it is applied deliberately, not on read.
+     */
+    starterIncludedUsdMicros: text("starter_included_usd_micros"),
+    /** NULL = platform default. */
+    endUserCap: integer("end_user_cap"),
+    /**
+     * Legacy unused column. Connect application fees live on app_billing_config;
+     * owner admin APIs reject writes to this field.
+     */
+    applicationFeeBps: integer("application_fee_bps"),
+    /** Free-text note for why this owner was moved off the defaults. */
+    note: text("note"),
+    /** users.id of the admin who last changed it, for attribution. */
+    updatedBy: text("updated_by").references(() => users.id),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [uniqueIndex("idx_owner_billing_config_owner").on(t.ownerUserId)],
+);
+
+/**
+ * Singleton platform cost-rail defaults (id = "default").
+ *
+ * Owner Starter included allowance is admin-editable here so changing the
+ * default for new developers (and base-key re-sync) does not require a
+ * redeploy. Env `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` is the
+ * bootstrap fallback when this row is absent.
+ */
+export const platformBillingSettings = pgTable("platform_billing_settings", {
+  id: text("id").primaryKey(),
+  ownerStarterIncludedUsdMicros: text("owner_starter_included_usd_micros").notNull(),
+  /** OpenMeter + UI display name; NULL → OWNER_STARTER_PLAN_NAME fallback. */
+  ownerStarterPlanName: text("owner_starter_plan_name"),
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+/**
+ * Platform Owner Paid subscription tiers (flat monthly fee + included usage).
+ * Sandbox Starter remains separate; these are Upgrade targets only.
+ */
+export const ownerSubscriptionTiers = pgTable(
+  "owner_subscription_tiers",
+  {
+    id: text("id").primaryKey(),
+    /** OpenMeter plan key, e.g. pymthouse_owner_paid or pymthouse_owner_paid_growth. */
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** Flat monthly fee as a decimal USD string, e.g. "20.00". */
+    monthlyFeeUsd: text("monthly_fee_usd").notNull(),
+    includedUsdMicros: text("included_usd_micros").notNull(),
+    /** NULL = platform default retail rate. */
+    overageRateUsd: text("overage_rate_usd"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: integer("active").notNull().default(1),
+    openmeterPlanId: text("openmeter_plan_id"),
+    openmeterPlanVersion: integer("openmeter_plan_version"),
+    lastSyncedAt: text("last_synced_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_owner_subscription_tiers_key").on(t.key),
+    index("idx_owner_subscription_tiers_active_sort").on(t.active, t.sortOrder),
+  ],
+);
+
+/**
+ * Durable Owner Paid Upgrade operations.
+ * Unique per (owner, plan_key). Completed claims may be reclaimed when the
+ * owner's active OpenMeter subscription is on a different plan (A→B→A), so
+ * re-selecting a prior tier is not blocked after moving away from it.
+ */
+export const ownerPaidUpgradeOperations = pgTable(
+  "owner_paid_upgrade_operations",
+  {
+    id: text("id").primaryKey(),
+    /** Stable key: `owner_paid_upgrade:{ownerUserId}:{planKey}`. */
+    idempotencyKey: text("idempotency_key").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    planKey: text("plan_key").notNull(),
+    /** pending | completed | failed */
+    status: text("status").notNull().default("pending"),
+    openmeterSubscriptionId: text("openmeter_subscription_id"),
+    openmeterPlanId: text("openmeter_plan_id"),
+    monthlyFeeUsd: text("monthly_fee_usd"),
+    alreadyPaid: integer("already_paid").notNull().default(0),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_owner_paid_upgrade_operations_idempotency_key").on(
+      t.idempotencyKey,
+    ),
+    uniqueIndex("idx_owner_paid_upgrade_operations_owner_plan").on(
+      t.ownerUserId,
+      t.planKey,
+    ),
+    index("idx_owner_paid_upgrade_operations_owner_status").on(
+      t.ownerUserId,
+      t.status,
+    ),
+  ],
 );
 
 export const appBillingOauthStates = pgTable(
@@ -566,6 +813,94 @@ export const appBillingOauthStates = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [index("idx_app_billing_oauth_states_expires").on(t.expiresAt)],
+);
+
+/** Maps end-users to merchant-owned Stripe customers on Connected Accounts. */
+/**
+ * Local registry of OpenMeter customers. Required once end-user keys drop the
+ * `app_…:` prefix — OpenMeter can no longer be enumerated by clientId key prefix.
+ */
+export const billingCustomers = pgTable(
+  "billing_customers",
+  {
+    id: text("id").primaryKey(),
+    /** Canonical OpenMeter customer key (`{users.id}` or `eu_{end_users.id}`). */
+    customerKey: text("customer_key").notNull(),
+    /** `platform_user` | `end_user` */
+    kind: text("kind").notNull(),
+    platformUserId: text("platform_user_id"),
+    endUserId: text("end_user_id").references(() => endUsers.id),
+    /** developer_apps.id — attribution only; not part of the customer key. */
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    openmeterCustomerId: text("openmeter_customer_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_billing_customers_customer_key_client").on(
+      t.customerKey,
+      t.clientId,
+    ),
+    index("idx_billing_customers_client_id").on(t.clientId),
+    index("idx_billing_customers_openmeter_id").on(t.openmeterCustomerId),
+  ],
+);
+
+export const appUserStripeCustomers = pgTable(
+  "app_user_stripe_customers",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    externalUserId: text("external_user_id").notNull(),
+    stripeConnectedAccountId: text("stripe_connected_account_id").notNull(),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    openmeterCustomerId: text("openmeter_customer_id"),
+    openmeterCustomerKey: text("openmeter_customer_key"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_app_user_stripe_customers_unique").on(
+      t.clientId,
+      t.externalUserId,
+    ),
+  ],
+);
+
+/**
+ * Durable lookup for a setup-mode Checkout session. Stripe completion webhooks
+ * use it to resolve the app user without trusting a browser return URL.
+ */
+export const appUserPaymentMethodCheckouts = pgTable(
+  "app_user_payment_method_checkouts",
+  {
+    stripeCheckoutSessionId: text("stripe_checkout_session_id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    externalUserId: text("external_user_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_app_user_payment_method_checkouts_client_user").on(
+      t.clientId,
+      t.externalUserId,
+    ),
+  ],
 );
 
 /** Idempotency audit for OpenMeter signed-ticket ingest (not balance source). */
@@ -689,6 +1024,32 @@ export const appAllowedDomains = pgTable("app_allowed_domains", {
   uniqueIndex("app_allowed_domains_app_id_domain_unique").on(table.appId, table.domain),
 ]);
 
+/** Short-lived Ed25519 registration challenges (shared across app instances). */
+export const networkAgentChallenges = pgTable(
+  "network_agent_challenges",
+  {
+    challengeId: text("challenge_id").primaryKey(),
+    fingerprint: text("fingerprint").notNull(),
+    nonce: text("nonce").notNull(),
+    expiresAtMs: bigint("expires_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    index("network_agent_challenges_fingerprint_idx").on(table.fingerprint),
+    index("network_agent_challenges_expires_idx").on(table.expiresAtMs),
+  ],
+);
+
+/** Sliding-window rate buckets for agent challenge/register (shared across instances). */
+export const networkAgentRateBuckets = pgTable(
+  "network_agent_rate_buckets",
+  {
+    bucketKey: text("bucket_key").primaryKey(),
+    count: integer("count").notNull(),
+    resetAtMs: bigint("reset_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [index("network_agent_rate_buckets_reset_idx").on(table.resetAtMs)],
+);
+
 /** Per-app billing display currency and fiat->ETH oracle provider selection. */
 export const appBillingOracleConfig = pgTable("app_billing_oracle_config", {
   id: text("id").primaryKey(),
@@ -771,6 +1132,8 @@ export type EndUser = typeof endUsers.$inferSelect;
 export type NewEndUser = typeof endUsers.$inferInsert;
 export type AppUser = typeof appUsers.$inferSelect;
 export type NewAppUser = typeof appUsers.$inferInsert;
+export type BillingCustomer = typeof billingCustomers.$inferSelect;
+export type NewBillingCustomer = typeof billingCustomers.$inferInsert;
 export type StreamSession = typeof streamSessions.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type OidcSigningKey = typeof oidcSigningKeys.$inferSelect;

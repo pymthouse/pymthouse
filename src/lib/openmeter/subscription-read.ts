@@ -2,11 +2,21 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { readKonnectSubscriptionActiveWindow } from "./konnect-subscriptions";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import { buildOpenMeterPlanKey } from "./plan-naming";
+import {
+  isLiveSubscriptionStatus,
+  isPresentSubscriptionStatus,
+  isScheduledSubscriptionStatus,
+  pickMutationTargetSubscription,
+  pickOccupyingCanceledSubscription,
+  type StarterMatcher,
+} from "./subscription-state";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
   "active",
@@ -17,6 +27,7 @@ const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
 export type OpenMeterSubscriptionView = {
   id: string;
   status: string;
+  customerId: string | null;
   planKey: string | null;
   planId: string | null;
   activeFrom: string | null;
@@ -26,6 +37,8 @@ export type OpenMeterSubscriptionView = {
 type OpenMeterSubscriptionSourceItem = {
   id: string;
   status: string;
+  customerId?: string | null;
+  customer_id?: string | null;
   plan?: { key?: string; id?: string } | null;
   planId?: string;
   plan_id?: string;
@@ -63,10 +76,14 @@ function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSu
   const { planKey, planId } = readPlanFields(item);
   const activeFrom = item.activeFrom ?? item.active_from ?? null;
   const activeTo = item.activeTo ?? item.active_to ?? null;
+  const customerId =
+    (typeof item.customerId === "string" ? item.customerId : null) ??
+    (typeof item.customer_id === "string" ? item.customer_id : null);
 
   return {
     id: item.id,
     status: item.status,
+    customerId: customerId?.trim() || null,
     planKey,
     planId,
     activeFrom:
@@ -75,13 +92,34 @@ function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSu
   };
 }
 
-async function resolveOpenMeterPlanKey(
+/** Plan id → key is immutable in OpenMeter; cache resolved keys aggressively. */
+let planKeyCache: ReturnType<typeof createAsyncTtlCache<string>> | null = null;
+
+function getPlanKeyCache() {
+  planKeyCache ??= createAsyncTtlCache<string>({
+    ttlSeconds: resolveCacheTtlSeconds("OPENMETER_PLAN_KEY_CACHE_TTL_SECONDS", 3600),
+  });
+  return planKeyCache;
+}
+
+export function resetPlanKeyCacheForTests(): void {
+  planKeyCache = null;
+}
+
+export async function resolveOpenMeterPlanKey(
   client: OpenMeter,
   planId: string,
 ): Promise<string | null> {
   try {
-    const plan = await client.plans.get(planId);
-    return plan?.key?.trim() || null;
+    // Failed lookups reject inside the loader so they are never cached.
+    return await getPlanKeyCache().get(planId, async () => {
+      const plan = await client.plans.get(planId);
+      const key = plan?.key?.trim();
+      if (!key) {
+        throw new Error(`OpenMeter plan ${planId} has no key`);
+      }
+      return key;
+    });
   } catch {
     return null;
   }
@@ -117,18 +155,70 @@ export async function verifyOpenMeterSubscriptionId(
     if (!sub?.id) {
       return null;
     }
-    return mapSubscriptionItem(sub);
+    return await enrichSubscriptionPlanKey(client, mapSubscriptionItem(sub));
   } catch {
     return null;
   }
+}
+
+/**
+ * Konnect list/get payloads often expose `plan_id` without `plan.key`.
+ * Resolve the key so callers (billing UI, upgrade eligibility) can classify
+ * Owner Paid tiers correctly.
+ */
+async function enrichSubscriptionPlanKey(
+  client: OpenMeter,
+  item: OpenMeterSubscriptionView,
+): Promise<OpenMeterSubscriptionView> {
+  if (item.planKey || !item.planId) {
+    return item;
+  }
+  const planKey = await resolveOpenMeterPlanKey(client, item.planId);
+  if (!planKey) {
+    return item;
+  }
+  return { ...item, planKey };
+}
+
+/**
+ * Fill the billing window on rows that arrive without one.
+ *
+ * Konnect Metering & Billing v3 sends neither activeFrom nor activeTo, which is
+ * why `currentPeriodStart`/`currentPeriodEnd` and `pendingCancel.effectiveAt`
+ * came back null. Self-hosted OpenMeter always sends activeFrom, so it never
+ * takes the extra round trip and keeps the dates it already reports.
+ * @internal Exported for unit tests.
+ */
+export async function enrichSubscriptionActiveWindow(
+  item: OpenMeterSubscriptionView,
+): Promise<OpenMeterSubscriptionView> {
+  if (item.activeFrom || item.activeTo || !item.id.trim()) {
+    return item;
+  }
+  const window = await readKonnectSubscriptionActiveWindow({
+    subscriptionId: item.id,
+  });
+  if (!window.activeFrom && !window.activeTo) {
+    return item;
+  }
+  return { ...item, activeFrom: window.activeFrom, activeTo: window.activeTo };
 }
 
 export async function listOpenMeterSubscriptionsForCustomer(
   client: OpenMeter,
   customerId: string,
 ): Promise<OpenMeterSubscriptionView[]> {
-  const listed = await client.customers.listSubscriptions(customerId, { pageSize: 100 });
-  return (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
+  // Explicit statuses: cancel-at-period-end rows (`canceled`/`inactive` with a
+  // future `activeTo`) still block Konnect `subscriptions.create` and must be
+  // visible to checkout recovery + pendingCancel UI.
+  const listed = await client.customers.listSubscriptions(customerId, {
+    pageSize: 100,
+    status: ["active", "scheduled", "canceled", "inactive"],
+  });
+  const mapped = (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
+  return Promise.all(
+    mapped.map((item) => enrichSubscriptionPlanKey(client, item)),
+  );
 }
 
 export async function findOpenMeterSubscriptionByPlanKey(
@@ -201,7 +291,13 @@ function pickPrimarySubscription(
   if (subscriptions.length === 0) {
     return null;
   }
-  return [...subscriptions].sort(compareSubscriptionsByActiveFromDesc)[0];
+  // Prefer live (active/trialing) over scheduled — scheduled rows must never be
+  // Konnect `/change` or `/cancel` targets.
+  const live = subscriptions.filter((s) =>
+    isLiveSubscriptionStatus(s.status),
+  );
+  const pool = live.length > 0 ? live : subscriptions;
+  return [...pool].sort(compareSubscriptionsByActiveFromDesc)[0];
 }
 
 function isStarterOpenMeterSubscription(
@@ -256,8 +352,7 @@ export async function resolveLocalPlanIdFromOpenMeterSubscription(
   return null;
 }
 
-/** Prefer an active paid plan subscription over the app starter plan when both exist. */
-export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
+async function selectPrimaryOpenMeterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
 }): Promise<OpenMeterSubscriptionView | null> {
@@ -273,26 +368,103 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   });
   const starter = await getOrCreateStarterPlan(input.clientId);
   const starterPlanKey = buildOpenMeterPlanKey(input.clientId, starter.id);
+  const starterOpenMeterPlanId = starter.openmeterPlanId?.trim() || null;
 
-  const active = (await listOpenMeterSubscriptionsForCustomer(client, customer.id)).filter(
-    (item) => isOpenMeterSubscriptionActive(item.status),
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    client,
+    customer.id,
   );
-  if (active.length === 0) {
-    return null;
+  return pickAppUserSubscriptionToReport(listed, (sub) =>
+    isStarterOpenMeterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  );
+}
+
+/**
+ * Choose the one subscription a customer's GET/checkout should report.
+ * @internal Exported for unit tests.
+ */
+export function pickAppUserSubscriptionToReport(
+  listed: OpenMeterSubscriptionView[],
+  isStarter: StarterMatcher,
+): OpenMeterSubscriptionView | null {
+  // Mutation-safe: never return a scheduled row when a live one exists.
+  const mutationTarget = pickMutationTargetSubscription(listed, isStarter);
+  if (mutationTarget) {
+    return mutationTarget;
   }
 
-  const paid = active.filter(
-    (item) => !isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
+  // Cancel-at-period-end still runs until activeTo. Prefer it over a scheduled
+  // successor — otherwise GET/overage/debt report the not-yet-live plan (e.g.
+  // scheduled PPU) while included usage still belongs to the occupying Starter.
+  const occupyingCanceled = pickOccupyingCanceledSubscription(listed);
+  if (occupyingCanceled) {
+    return occupyingCanceled;
+  }
+
+  // Display fallback: scheduled-only wallets (no live or occupying row yet).
+  const present = listed.filter((item) =>
+    isPresentSubscriptionStatus(item.status),
   );
+
+  const paid = present.filter((item) => !isStarter(item));
   const primaryPaid = pickPrimarySubscription(paid);
   if (primaryPaid) {
     return primaryPaid;
   }
 
-  const starters = active.filter((item) =>
-    isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
+  const starters = present.filter((item) => isStarter(item));
+  const primaryPresent =
+    pickPrimarySubscription(starters) ?? pickPrimarySubscription(present);
+  if (primaryPresent) {
+    return primaryPresent;
+  }
+
+  return null;
+}
+
+/** Prefer an active paid plan subscription over the app starter plan when both exist.
+ * Live rows win over scheduled (mutation-safe for change/cancel).
+ */
+export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<OpenMeterSubscriptionView | null> {
+  const primary = await selectPrimaryOpenMeterSubscriptionForAppUser(input);
+  return primary ? enrichSubscriptionActiveWindow(primary) : null;
+}
+
+/**
+ * Scheduled successor for an app end-user (e.g. next-cycle plan change), if any.
+ * Excludes the live primary row.
+ */
+export async function getPendingOpenMeterSubscriptionForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<OpenMeterSubscriptionView | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const customer = await ensureOpenMeterCustomerForAppUser({
+    client: getHostedAdminClient(),
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  }).catch(() => null);
+  if (!customer?.id) {
+    return null;
+  }
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    getHostedAdminClient(),
+    customer.id,
   );
-  return pickPrimarySubscription(starters) ?? pickPrimarySubscription(active);
+  const primary = await selectPrimaryOpenMeterSubscriptionForAppUser(input);
+  const pending =
+    listed.find(
+      (s) =>
+        Boolean(s.id) &&
+        isScheduledSubscriptionStatus(s.status) &&
+        s.id !== primary?.id,
+    ) ?? null;
+  return pending ? enrichSubscriptionActiveWindow(pending) : null;
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

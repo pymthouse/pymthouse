@@ -1,12 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import {
   formatExactUsdMicrosString,
   formatUsdFromWei,
   formatUsdMicrosString,
+  formatUsdMicrosSummary,
 } from "@/lib/format-usd-micros";
+import {
+  buildRequestsCsv,
+  buildRequestsCsvFilename,
+  sumRequestFeeUsdMicros,
+} from "@/lib/usage/requests-csv";
 import type {
   SignedTicketRequestRow,
   SignedTicketSessionRow,
@@ -67,28 +81,24 @@ function normalizeClientIds(
 
 function historyCopy(scope: HistoryScope): {
   title: string;
-  subtitle: string;
+  /** Scope shown as a chip beside the title, not as prose. */
+  scopeChip: string;
   emptySessions: string;
   emptyRequests: string;
 } {
   if (scope === "all") {
     return {
-      title: "Signed ticket requests",
-      subtitle:
-        "Platform-wide signed ticket sessions (and requests), newest first. Filtered by the application selector when a subset is selected.",
-      emptySessions:
-        "No signed ticket sessions for the selected apps in this billing cycle.",
-      emptyRequests:
-        "No signed ticket requests for the selected apps in this billing cycle.",
+      title: "Requests",
+      scopeChip: "All identities",
+      emptySessions: "No sessions for the selected apps in this billing cycle.",
+      emptyRequests: "No requests for the selected apps in this billing cycle.",
     };
   }
   return {
-    title: "Your signed ticket requests",
-    subtitle: "Only sessions and requests billed to your usage identity.",
-    emptySessions:
-      "No signed ticket sessions for your usage identity in this billing cycle.",
-    emptyRequests:
-      "No signed ticket requests for your usage identity in this billing cycle.",
+    title: "Requests",
+    scopeChip: "Your usage identity",
+    emptySessions: "No sessions for your usage identity in this billing cycle.",
+    emptyRequests: "No requests for your usage identity in this billing cycle.",
   };
 }
 
@@ -115,7 +125,12 @@ function requestFeeTitle(row: SignedTicketRequestRow): string {
 function RequestRow({
   row,
   compact,
-}: Readonly<{ row: SignedTicketRequestRow; compact?: boolean }>) {
+  showIdentity,
+}: Readonly<{
+  row: SignedTicketRequestRow;
+  compact?: boolean;
+  showIdentity?: boolean;
+}>) {
   const feeLabel = requestFeeLabel(row);
   const pipelineLabel = pipelineModelLabel(row.pipeline, row.modelId);
   return (
@@ -128,6 +143,21 @@ function RequestRow({
           <div className="truncate max-w-[10rem]" title={row.appName || row.clientId}>
             {row.appName || row.clientId}
           </div>
+        </td>
+      ) : null}
+      {showIdentity ? (
+        <td className="px-2 py-3 align-top">
+          {row.externalUserId ? (
+            <Link
+              href={`/apps/${encodeURIComponent(row.clientId)}/identities/${encodeURIComponent(row.externalUserId)}`}
+              className="block max-w-[10rem] truncate font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
+              title={row.externalUserId}
+            >
+              {row.externalUserId}
+            </Link>
+          ) : (
+            <span className="text-xs text-zinc-600">—</span>
+          )}
         </td>
       ) : null}
       <td className="px-2 py-3 font-mono text-xs text-zinc-400 align-top">
@@ -149,18 +179,27 @@ function RequestRow({
   );
 }
 
-function RequestTable({
+/** Columns before Request ID, so the footer can span them correctly. */
+function leadingColumnCount(compact?: boolean, showIdentity?: boolean): number {
+  // Time is always present; App and Identity are conditional.
+  return 1 + (compact ? 0 : 1) + (showIdentity ? 1 : 0);
+}
+
+export function RequestTable({
   items,
   nextCursor,
   loadingMore,
   onLoadMore,
   compact,
+  showIdentity,
 }: Readonly<{
   items: SignedTicketRequestRow[];
   nextCursor: string | null;
   loadingMore: boolean;
   onLoadMore: () => void;
   compact?: boolean;
+  /** Render the identity column (hidden when every row is one known identity). */
+  showIdentity?: boolean;
 }>) {
   return (
     <>
@@ -170,6 +209,9 @@ function RequestTable({
             <tr className="border-b border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
               <th className="px-2 py-2 font-medium">Time</th>
               {!compact ? <th className="px-2 py-2 font-medium">App</th> : null}
+              {showIdentity ? (
+                <th className="px-2 py-2 font-medium">Identity</th>
+              ) : null}
               <th className="px-2 py-2 font-medium">Request ID</th>
               <th className="px-2 py-2 font-medium">Pipeline / Model</th>
               <th className="px-2 py-2 font-medium text-right">Network fee</th>
@@ -177,9 +219,36 @@ function RequestTable({
           </thead>
           <tbody>
             {items.map((row) => (
-              <RequestRow key={row.eventId} row={row} compact={compact} />
+              <RequestRow
+                key={row.eventId}
+                row={row}
+                compact={compact}
+                showIdentity={showIdentity}
+              />
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t border-zinc-700 text-xs">
+              <th
+                scope="row"
+                className="px-2 py-2.5 text-left font-medium text-zinc-400"
+                colSpan={leadingColumnCount(compact, showIdentity) + 2}
+              >
+                {items.length.toLocaleString("en-US")} request
+                {items.length === 1 ? "" : "s"}
+                {nextCursor ? (
+                  <span className="ml-1.5 text-zinc-600">
+                    loaded — load more to include the rest of the cycle
+                  </span>
+                ) : (
+                  <span className="ml-1.5 text-zinc-600">· complete for this range</span>
+                )}
+              </th>
+              <td className="px-2 py-2.5 text-right font-mono tabular-nums text-zinc-200">
+                {formatUsdMicrosSummary(sumRequestFeeUsdMicros(items))}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -460,6 +529,226 @@ function SessionTable({
   );
 }
 
+type HistoryPageResult = {
+  openMeterConfigured: boolean;
+  nextCursor: string | null;
+  items: SignedTicketSessionRow[] | SignedTicketRequestRow[];
+  mode: ViewMode;
+};
+
+function applyHistoryPage(
+  page: HistoryPageResult,
+  append: boolean,
+  setOpenMeterConfigured: (value: boolean) => void,
+  setNextCursor: (value: string | null) => void,
+  setSessions: Dispatch<SetStateAction<SignedTicketSessionRow[]>>,
+  setRequests: Dispatch<SetStateAction<SignedTicketRequestRow[]>>,
+): void {
+  setOpenMeterConfigured(page.openMeterConfigured);
+  setNextCursor(page.nextCursor);
+  if (page.mode === "session") {
+    const rows = page.items as SignedTicketSessionRow[];
+    setSessions((prev) => (append ? [...prev, ...rows] : rows));
+    return;
+  }
+  const rows = page.items as SignedTicketRequestRow[];
+  setRequests((prev) => (append ? [...prev, ...rows] : rows));
+}
+
+function downloadRequestsCsv(requests: SignedTicketRequestRow[]): void {
+  const csv = buildRequestsCsv(requests);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = buildRequestsCsvFilename();
+  anchor.click();
+  // Revoke after the click task so the browser can start the download first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function HistoryToolbar({
+  copy,
+  fromDate,
+  toDate,
+  rangeActive,
+  viewMode,
+  requests,
+  onFromDateChange,
+  onToDateChange,
+  onClearRange,
+  onDownloadCsv,
+  onViewModeChange,
+}: Readonly<{
+  copy: ReturnType<typeof historyCopy>;
+  fromDate: string;
+  toDate: string;
+  rangeActive: boolean;
+  viewMode: ViewMode;
+  requests: SignedTicketRequestRow[];
+  onFromDateChange: (value: string) => void;
+  onToDateChange: (value: string) => void;
+  onClearRange: () => void;
+  onDownloadCsv: () => void;
+  onViewModeChange: (mode: ViewMode) => void;
+}>) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
+            title="Rows are limited to this identity scope. Change it with the identity filter above."
+          >
+            <span className="text-zinc-600">Scope</span>
+            {copy.scopeChip}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+            <span className="sr-only">From date</span>
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => onFromDateChange(e.target.value)}
+              className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+            />
+          </label>
+          <span className="text-[11px] text-zinc-600">→</span>
+          <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+            <span className="sr-only">To date</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => onToDateChange(e.target.value)}
+              className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+            />
+          </label>
+          {rangeActive ? (
+            <button
+              type="button"
+              onClick={onClearRange}
+              className="text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+            >
+              Clear range
+            </button>
+          ) : null}
+          {viewMode === "request" && requests.length > 0 ? (
+            <button
+              type="button"
+              onClick={onDownloadCsv}
+              className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+            >
+              Export CSV
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="inline-flex rounded-lg border border-zinc-700 p-0.5 self-start">
+        <button
+          type="button"
+          onClick={() => onViewModeChange("session")}
+          className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
+            viewMode === "session"
+              ? "bg-zinc-700 text-zinc-100"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewModeChange("request")}
+          className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
+            viewMode === "request"
+              ? "bg-zinc-700 text-zinc-100"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          All requests
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HistoryBody({
+  openMeterConfigured,
+  loading,
+  error,
+  itemsEmpty,
+  emptyCopy,
+  viewMode,
+  sessions,
+  requests,
+  nextCursor,
+  loadingMore,
+  onLoadMore,
+  historyScope,
+  resolvedClientIds,
+}: Readonly<{
+  openMeterConfigured: boolean;
+  loading: boolean;
+  error: string | null;
+  itemsEmpty: boolean;
+  emptyCopy: string;
+  viewMode: ViewMode;
+  sessions: SignedTicketSessionRow[];
+  requests: SignedTicketRequestRow[];
+  nextCursor: string | null;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  historyScope: HistoryScope;
+  resolvedClientIds: string[];
+}>) {
+  if (!openMeterConfigured) {
+    return (
+      <p className="text-sm text-zinc-500 py-6 text-center">
+        Usage metering is not configured, so per-request history is unavailable.
+      </p>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="animate-pulse space-y-3 py-2">
+        {["a", "b", "c"].map((key) => (
+          <div key={key} className="h-10 rounded-lg bg-zinc-800/80" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return <p className="text-sm text-rose-400 py-4 text-center">{error}</p>;
+  }
+  if (itemsEmpty) {
+    return <p className="text-sm text-zinc-500 py-6 text-center">{emptyCopy}</p>;
+  }
+  if (viewMode === "session") {
+    return (
+      <SessionTable
+        items={sessions}
+        nextCursor={nextCursor}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+        historyScope={historyScope}
+        resolvedClientIds={resolvedClientIds}
+      />
+    );
+  }
+  return (
+    <RequestTable
+      items={requests}
+      nextCursor={nextCursor}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
+      showIdentity
+    />
+  );
+}
+
 export default function SignedTicketRequestHistory({
   clientId,
   clientIds,
@@ -483,8 +772,12 @@ export default function SignedTicketRequestHistory({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   const copy = historyCopy(historyScope);
+  // Both bounds are required together; the API rejects a half-open range.
+  const rangeActive = Boolean(fromDate && toDate);
 
   const resolvedClientIds = useMemo(
     () => normalizeClientIds(clientId, clientIds),
@@ -492,14 +785,22 @@ export default function SignedTicketRequestHistory({
   );
   const clientIdsKey = resolvedClientIds.join(",");
 
+  const downloadCsv = useCallback(() => {
+    downloadRequestsCsv(requests);
+  }, [requests]);
+
   const fetchPage = useCallback(
-    async (cursor: string | null, mode: ViewMode) => {
+    async (cursor: string | null, mode: ViewMode): Promise<HistoryPageResult> => {
       const params = new URLSearchParams();
       params.set("limit", "25");
       params.set("scope", historyScope);
       params.set("groupBy", mode);
       if (cursor) {
         params.set("cursor", cursor);
+      }
+      if (fromDate && toDate) {
+        params.set("from", fromDate);
+        params.set("to", toDate);
       }
       for (const id of resolvedClientIds) {
         params.append("clientId", id);
@@ -526,7 +827,7 @@ export default function SignedTicketRequestHistory({
         mode,
       };
     },
-    [resolvedClientIds, historyScope],
+    [resolvedClientIds, historyScope, fromDate, toDate],
   );
 
   useEffect(() => {
@@ -540,13 +841,14 @@ export default function SignedTicketRequestHistory({
     fetchPage(null, viewMode)
       .then((page) => {
         if (cancelled) return;
-        setOpenMeterConfigured(page.openMeterConfigured);
-        setNextCursor(page.nextCursor);
-        if (page.mode === "session") {
-          setSessions(page.items as SignedTicketSessionRow[]);
-        } else {
-          setRequests(page.items as SignedTicketRequestRow[]);
-        }
+        applyHistoryPage(
+          page,
+          false,
+          setOpenMeterConfigured,
+          setNextCursor,
+          setSessions,
+          setRequests,
+        );
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -562,7 +864,7 @@ export default function SignedTicketRequestHistory({
     return () => {
       cancelled = true;
     };
-  }, [fetchPage, clientIdsKey, historyScope, viewMode]);
+  }, [fetchPage, clientIdsKey, historyScope, viewMode, fromDate, toDate]);
 
   async function onLoadMore() {
     if (!nextCursor || loadingMore) {
@@ -572,19 +874,14 @@ export default function SignedTicketRequestHistory({
     setError(null);
     try {
       const page = await fetchPage(nextCursor, viewMode);
-      setOpenMeterConfigured(page.openMeterConfigured);
-      setNextCursor(page.nextCursor);
-      if (page.mode === "session") {
-        setSessions((prev) => [
-          ...prev,
-          ...(page.items as SignedTicketSessionRow[]),
-        ]);
-      } else {
-        setRequests((prev) => [
-          ...prev,
-          ...(page.items as SignedTicketRequestRow[]),
-        ]);
-      }
+      applyHistoryPage(
+        page,
+        true,
+        setOpenMeterConfigured,
+        setNextCursor,
+        setSessions,
+        setRequests,
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
@@ -599,73 +896,38 @@ export default function SignedTicketRequestHistory({
 
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
-          <p className="text-xs text-zinc-500 mt-1">{copy.subtitle}</p>
-        </div>
-        <div className="inline-flex rounded-lg border border-zinc-700 p-0.5 self-start">
-          <button
-            type="button"
-            onClick={() => setViewMode("session")}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
-              viewMode === "session"
-                ? "bg-zinc-700 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            Sessions
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("request")}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
-              viewMode === "request"
-                ? "bg-zinc-700 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            All requests
-          </button>
-        </div>
-      </div>
+      <HistoryToolbar
+        copy={copy}
+        fromDate={fromDate}
+        toDate={toDate}
+        rangeActive={rangeActive}
+        viewMode={viewMode}
+        requests={requests}
+        onFromDateChange={setFromDate}
+        onToDateChange={setToDate}
+        onClearRange={() => {
+          setFromDate("");
+          setToDate("");
+        }}
+        onDownloadCsv={downloadCsv}
+        onViewModeChange={setViewMode}
+      />
 
-      {!openMeterConfigured ? (
-        <p className="text-sm text-zinc-500 py-6 text-center">
-          OpenMeter is not configured, so per-request history is unavailable.
-        </p>
-      ) : null}
-      {openMeterConfigured && loading ? (
-        <div className="animate-pulse space-y-3 py-2">
-          {["a", "b", "c"].map((key) => (
-            <div key={key} className="h-10 rounded-lg bg-zinc-800/80" />
-          ))}
-        </div>
-      ) : null}
-      {openMeterConfigured && !loading && error ? (
-        <p className="text-sm text-rose-400 py-4 text-center">{error}</p>
-      ) : null}
-      {openMeterConfigured && !loading && !error && itemsEmpty ? (
-        <p className="text-sm text-zinc-500 py-6 text-center">{emptyCopy}</p>
-      ) : null}
-      {openMeterConfigured && !loading && !error && !itemsEmpty && viewMode === "session" ? (
-        <SessionTable
-          items={sessions}
-          nextCursor={nextCursor}
-          loadingMore={loadingMore}
-          onLoadMore={() => void onLoadMore()}
-          historyScope={historyScope}
-          resolvedClientIds={resolvedClientIds}
-        />
-      ) : null}
-      {openMeterConfigured && !loading && !error && !itemsEmpty && viewMode === "request" ? (
-        <RequestTable
-          items={requests}
-          nextCursor={nextCursor}
-          loadingMore={loadingMore}
-          onLoadMore={() => void onLoadMore()}
-        />
-      ) : null}
+      <HistoryBody
+        openMeterConfigured={openMeterConfigured}
+        loading={loading}
+        error={error}
+        itemsEmpty={itemsEmpty}
+        emptyCopy={emptyCopy}
+        viewMode={viewMode}
+        sessions={sessions}
+        requests={requests}
+        nextCursor={nextCursor}
+        loadingMore={loadingMore}
+        onLoadMore={() => void onLoadMore()}
+        historyScope={historyScope}
+        resolvedClientIds={resolvedClientIds}
+      />
     </section>
   );
 }

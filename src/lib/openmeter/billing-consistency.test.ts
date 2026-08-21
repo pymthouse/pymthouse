@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  classifyOwnerPaidPlanRemoteConsistency,
   classifyOwnerSubscriptionMapping,
+  classifyPhaseOutPastDeadline,
   classifySpendableGateConsistency,
   classifyStarterPlanRemoteConsistency,
+  classifyUsageAttributionConsistency,
   readUsageDiscountUsdMicrosFromPlanBody,
   summarizeFindings,
   type LocalStarterPlanRef,
 } from "./billing-consistency";
+import { OWNER_PAID_PLAN_KEY } from "./owner-paid-key";
 import { includedDiscountUsdMicrosForPlan } from "./spendable-allowance";
 import { mintAllowanceGateDecision } from "@/lib/oidc/mint-user-signer-token";
 
@@ -43,6 +47,40 @@ test("readUsageDiscountUsdMicrosFromPlanBody reads SDK camelCase rateCards", () 
     ],
   });
   assert.equal(micros, "2500000");
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency is quiet when published matches default", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "5000000",
+    remote: {
+      id: "plan_paid",
+      key: OWNER_PAID_PLAN_KEY,
+      usageDiscountUsdMicros: "5000000",
+    },
+  });
+  assert.equal(findings.length, 0);
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency warns on allowance drift", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "10000000",
+    remote: {
+      id: "plan_paid",
+      key: OWNER_PAID_PLAN_KEY,
+      usageDiscountUsdMicros: "5000000",
+    },
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.code, "owner_paid_plan_allowance_drift");
+  assert.equal(findings[0]?.severity, "warn");
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency warns when Paid plan is missing", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "5000000",
+    remote: null,
+  });
+  assert.equal(findings[0]?.code, "owner_paid_plan_missing");
 });
 
 test("includedDiscountUsdMicrosForPlan uses plan micros then starter default", () => {
@@ -231,7 +269,7 @@ test("mintAllowanceGateDecision rejects zero spendable like the live 483 path", 
     true,
   );
   assert.equal(decision?.code, "trial_credits_exhausted");
-  assert.equal(decision?.message, "Starter allowance exhausted");
+  assert.equal(decision?.message, "Payment method required");
 });
 
 test("summarizeFindings counts severities", () => {
@@ -255,4 +293,128 @@ test("summarizeFindings counts severities", () => {
     ]),
     { errors: 1, warns: 1, infos: 1 },
   );
+});
+
+test("classifyPhaseOutPastDeadline errors when past deadline with subscribers", () => {
+  const findings = classifyPhaseOutPastDeadline({
+    clientId: "app_x",
+    planId: "plan_1",
+    planName: "Pro",
+    status: "phase_out",
+    phaseOutAt: "2020-01-01T00:00:00.000Z",
+    openmeterPlanId: "01PLAN",
+    activeSubscriberCount: 3,
+    nowIso: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.code, "phase_out_subscribers_past_deadline");
+  assert.equal(findings[0]?.severity, "error");
+  assert.match(
+    findings[0]?.remediation ?? "",
+    /openmeter:migrate-plan-subscribers/,
+  );
+});
+
+test("classifyPhaseOutPastDeadline ignores before deadline or zero subscribers", () => {
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "phase_out",
+      phaseOutAt: "2099-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 3,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
+  );
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "phase_out",
+      phaseOutAt: "2020-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 0,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
+  );
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "active",
+      phaseOutAt: "2020-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 3,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
+  );
+});
+
+test("usage on a subject the customer is not attributed is an error", () => {
+  // OpenMeter invoices per customer over subjectKeys, so usage on any other
+  // subject is metered, shown in the UI, and never charged.
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1"],
+    subjectsWithUsage: ["user-1", "owner:user-1", "app_x:user-1"],
+  });
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "usage_on_unattributed_subject");
+  assert.equal(findings[0].severity, "error");
+  assert.deepEqual(findings[0].details?.unattributed, [
+    "owner:user-1",
+    "app_x:user-1",
+  ]);
+});
+
+test("attributed subjects carrying all the usage produce no findings", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1", "owner:user-1"],
+    subjectsWithUsage: ["user-1", "owner:user-1"],
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("attributed but idle subjects are harmless", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1", "owner:user-1", "app_x:user-1"],
+    subjectsWithUsage: ["user-1"],
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("a customer with no attribution at all cannot be billed", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: [],
+    subjectsWithUsage: ["user-1"],
+  });
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "customer_has_no_usage_attribution");
+  assert.equal(findings[0].severity, "error");
+});
+
+test("usage attribution comparison ignores whitespace and duplicates", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: [" user-1 ", "user-1", ""],
+    subjectsWithUsage: ["user-1", " user-1"],
+  });
+  assert.deepEqual(findings, []);
 });

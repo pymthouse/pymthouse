@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { apiKeys, appUsers, developerApps, oidcClients } from "@/db/schema";
@@ -29,6 +29,17 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   }
   return raw.slice(-4);
 }
+
+/** Shown once at mint time for personal / network bare `pmth_*` keys. */
+export const PERSONAL_API_KEY_STORE_MESSAGE =
+  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/user/usage* (or /api/v1/apps/{clientId}/me/usage*), and as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/oidc/token or POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
+
+/**
+ * Shown once at mint time for Builder-issued app-user keys (composite
+ * `app_<24hex>_<secret>` presentation).
+ */
+export const BUILDER_API_KEY_STORE_MESSAGE =
+  "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer, as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/apps/{clientId}/oidc/token (or the bare pmth_… segment), or use sdkToken as --token with livepeer-python-sdk.";
 
 /** Presented composite: `app_<24hex>_<secret>` (underscore separator for copy UX). */
 const COMPOSITE_API_KEY_RE = /^(app_[a-f0-9]{24})_(.+)$/;
@@ -101,16 +112,11 @@ function rehydrateStoredApiKey(secret: string): string | null {
   return `pmth_${trimmed}`;
 }
 
-export async function resolveActiveAppApiKey(
-  bearerToken: string,
-  publicClientId: string,
+async function resolveActiveAppApiKeyByStoredToken(
+  storedToken: string,
+  expectedPublicClientId?: string | null,
 ): Promise<ResolvedAppApiKey | null> {
-  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
-  if (!token) {
-    return null;
-  }
-
-  const keyHash = hashToken(token);
+  const keyHash = hashToken(storedToken);
   const keyRows = await db
     .select({
       id: apiKeys.id,
@@ -141,13 +147,18 @@ export async function resolveActiveAppApiKey(
       and(
         eq(appUsers.id, row.appUserId),
         eq(developerApps.id, row.clientId),
-        eq(oidcClients.clientId, publicClientId),
         eq(appUsers.status, "active"),
       ),
     )
     .limit(1);
   const binding = bindingRows[0];
   if (!binding) {
+    return null;
+  }
+  if (
+    expectedPublicClientId?.trim() &&
+    binding.publicClientId !== expectedPublicClientId.trim()
+  ) {
     return null;
   }
 
@@ -159,6 +170,36 @@ export async function resolveActiveAppApiKey(
     externalUserId: binding.externalUserId,
     label: row.label,
   };
+}
+
+export async function resolveActiveAppApiKey(
+  bearerToken: string,
+  publicClientId: string,
+): Promise<ResolvedAppApiKey | null> {
+  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
+  if (!token) {
+    return null;
+  }
+  return resolveActiveAppApiKeyByStoredToken(token, publicClientId);
+}
+
+/**
+ * Resolve a Bearer API key without a path `clientId`.
+ * Supports composite `app_*_*` (client id from the token) and bare `pmth_*` keys.
+ */
+export async function resolveActiveAppApiKeyFromBearer(
+  bearerToken: string,
+): Promise<ResolvedAppApiKey | null> {
+  const trimmed = bearerToken.trim();
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
+  }
+  const stored = rehydrateStoredApiKey(trimmed);
+  if (!stored) {
+    return null;
+  }
+  return resolveActiveAppApiKeyByStoredToken(stored);
 }
 
 export async function listAppUserApiKeys(input: {
@@ -196,7 +237,11 @@ export async function listAppUserApiKeys(input: {
 export async function createAppUserApiKey(input: {
   developerAppId: string;
   appUserId: string;
-  /** Public OIDC client id (`app_*`); when set, returned `apiKey` is composite. */
+  /**
+   * Public OIDC client id (`app_*`). When set, returned `apiKey` is the
+   * composite `app_<24hex>_<secret>` for Builder / pathless signer use.
+   * Omit for personal keys (bare `pmth_*`).
+   */
   publicClientId?: string | null;
   label?: string | null;
 }) {
@@ -254,4 +299,119 @@ export async function revokeAppUserApiKey(input: {
     .returning({ id: apiKeys.id });
 
   return revoked.length > 0;
+}
+
+export type SessionUserApiKey = {
+  id: string;
+  label: string | null;
+  prefix: string;
+  suffix: string;
+  status: string;
+  createdAt: string;
+  revokedAt: string | null;
+  clientId: string;
+  appName: string;
+  isPlatformDefault: boolean;
+};
+
+/**
+ * Keys the signed-in platform user may manage via /api/v1/me/keys.
+ *
+ * Authorization requires both:
+ * - app_users.external_user_id = sessionUserId (the key is bound to this user)
+ * - and either the canonical platform-default app, or an app owned by the
+ *   session user. An app-controlled external_user_id match alone is never
+ *   enough (cross-tenant spoofing).
+ */
+function sessionUserKeyOwnership(sessionUserId: string) {
+  return and(
+    eq(appUsers.externalUserId, sessionUserId),
+    or(
+      eq(developerApps.isPlatformDefault, 1),
+      eq(developerApps.ownerId, sessionUserId),
+    ),
+  );
+}
+
+/**
+ * List API keys the signed-in platform user may manage: personal keys on the
+ * platform default app, plus owner keys on apps they own.
+ */
+export async function listSessionUserApiKeys(
+  sessionUserId: string,
+): Promise<SessionUserApiKey[]> {
+  const rows = await db
+    .select({
+      id: apiKeys.id,
+      label: apiKeys.label,
+      keyPrefix: apiKeys.keyPrefix,
+      status: apiKeys.status,
+      createdAt: apiKeys.createdAt,
+      revokedAt: apiKeys.revokedAt,
+      clientId: oidcClients.clientId,
+      developerAppId: developerApps.id,
+      appName: developerApps.name,
+      isPlatformDefault: developerApps.isPlatformDefault,
+    })
+    .from(apiKeys)
+    .innerJoin(appUsers, eq(apiKeys.appUserId, appUsers.id))
+    .innerJoin(developerApps, eq(apiKeys.clientId, developerApps.id))
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(sessionUserKeyOwnership(sessionUserId));
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      label: row.label,
+      prefix: maskApiKeyPrefix(row.keyPrefix),
+      suffix: maskApiKeySuffix(row.keyPrefix),
+      status: row.status,
+      createdAt: row.createdAt,
+      revokedAt: row.revokedAt,
+      clientId: row.clientId?.trim() || row.developerAppId,
+      appName: row.appName,
+      isPlatformDefault: row.isPlatformDefault === 1,
+    }))
+    .sort((a, b) => {
+      // Active first, then newest created.
+      if (a.status === "active" && b.status !== "active") return -1;
+      if (a.status !== "active" && b.status === "active") return 1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
+/**
+ * Revoke a key only if it is a personal/default-app or owned-app key for the
+ * signed-in platform user.
+ */
+export async function revokeSessionUserApiKey(input: {
+  sessionUserId: string;
+  keyId: string;
+}): Promise<{ developerAppId: string } | null> {
+  const owned = await db
+    .select({
+      id: apiKeys.id,
+      developerAppId: apiKeys.clientId,
+      appUserId: apiKeys.appUserId,
+    })
+    .from(apiKeys)
+    .innerJoin(appUsers, eq(apiKeys.appUserId, appUsers.id))
+    .innerJoin(developerApps, eq(apiKeys.clientId, developerApps.id))
+    .where(
+      and(
+        eq(apiKeys.id, input.keyId),
+        sessionUserKeyOwnership(input.sessionUserId),
+      ),
+    )
+    .limit(1);
+
+  const row = owned[0];
+  if (!row?.appUserId) return null;
+
+  const ok = await revokeAppUserApiKey({
+    developerAppId: row.developerAppId,
+    appUserId: row.appUserId,
+    keyId: row.id,
+  });
+  return ok ? { developerAppId: row.developerAppId } : null;
 }

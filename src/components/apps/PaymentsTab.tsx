@@ -1,13 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { previewOverageCeiling } from "@/lib/billing/billing-state";
+import {
+  sanitizeUsdCentsInput,
+  usdCentsDisplayToMicros,
+  usdMicrosToCentsDisplay,
+} from "@/lib/format-usd-micros";
+import { paymentsTabErrorMessage } from "@/lib/stripe/payments-tab-errors";
+
+type ActivationInfo = {
+  clientId: string;
+  billingMode: "owner_rollup" | "merchant";
+  connectReady: boolean;
+  canProvisionEndUsers: boolean;
+  canSellPaidPlans: boolean;
+  reason: string | null;
+  endUserCap: number;
+  appUserCount: number;
+};
 
 type StripeStatus = {
   status: string;
+  billingReady?: boolean;
   openmeterStripeAppId: string | null;
   openmeterBillingProfileId: string | null;
   defaultCurrency: string;
   connectedAt: string | null;
+  progressiveBilling?: boolean;
+  invoiceLeadUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
+  stripeConnectedAccountId?: string | null;
+  stripeOnboardingMethod?: string | null;
+  /** When false, Merchant Connect uses the sandbox platform. Defaults true. */
+  stripeLivemode?: boolean;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  stripeDetailsSubmitted?: boolean;
+  applicationFeeBps?: number;
+  connectPaymentsOnly?: boolean;
+  billingMode?: "owner_rollup" | "merchant";
+  endUserCap?: number;
+  activation?: ActivationInfo | null;
+  supplierCountry?: string | null;
+  supplierName?: string | null;
+  supplierGaps?: string[];
+  supplierComplete?: boolean;
 };
 
 type InvoiceRow = {
@@ -17,6 +56,7 @@ type InvoiceRow = {
   currency: string;
   totalAmount: string;
   issuedAt?: string;
+  customerKey?: string;
 };
 
 type Props = {
@@ -24,12 +64,430 @@ type Props = {
   canManageBilling: boolean;
 };
 
+/** Only allow redirect to Stripe-hosted Connect / Account Link URLs. */
+function redirectToStripeConnectUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Invalid Connect URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Invalid Connect URL");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== "connect.stripe.com" && !host.endsWith(".stripe.com")) {
+    throw new Error("Connect URL must be a Stripe host");
+  }
+  // Rebuild from validated host + URL-parser path/query (no open redirect).
+  globalThis.location.assign(
+    `https://${host}${parsed.pathname}${parsed.search}${parsed.hash}`,
+  );
+}
+
+/** Primary action styling for this tab's save buttons. */
+const BUTTON_CLASS =
+  "inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/30 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-emerald-500/15";
+
+const BILLING_MODE_OPTION_CLASS =
+  "flex w-full max-w-md items-start gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:cursor-not-allowed disabled:opacity-40";
+
+function CapabilityValue({ allowed }: Readonly<{ allowed: boolean }>) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-sm ${
+        allowed ? "text-emerald-400" : "text-zinc-400"
+      }`}
+    >
+      <span aria-hidden>{allowed ? "✓" : "—"}</span>
+      {allowed ? "Allowed" : "Blocked"}
+    </span>
+  );
+}
+
+/**
+ * Activation status as a neutral definition grid (dark UI).
+ * Warning styling is reserved for blocked cases that need an action.
+ */
+function PaymentsActivationCard({
+  activation,
+  appId,
+}: Readonly<{ activation: ActivationInfo; appId: string }>) {
+  const modeLabel =
+    activation.billingMode === "merchant" ? "Merchant" : "Owner roll-up";
+  const blocked = !activation.canProvisionEndUsers || !activation.canSellPaidPlans;
+  const sellHint = activation.connectReady
+    ? "Switch billing mode to merchant to unlock paid plan checkout."
+    : "Connect Stripe and complete onboarding to sell paid plans.";
+  const provisionHint =
+    activation.reason === "end_user_cap_reached"
+      ? "Active end-user cap reached — deactivate unused identities to free slots, switch to merchant mode, or contact support for a higher limit."
+      : "Owner wallet has no spendable balance — top up credits to provision more users.";
+
+  return (
+    <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <h3 className="text-sm font-semibold text-zinc-200">Activation</h3>
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Billing mode</dt>
+          <dd className="text-sm text-zinc-200">{modeLabel}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Active end users</dt>
+          <dd className="font-mono text-sm tabular-nums text-zinc-200">
+            <Link
+              href={`/apps/${encodeURIComponent(appId)}/identities`}
+              className="text-zinc-200 transition-colors hover:text-emerald-400"
+              title="Manage identities"
+            >
+              {activation.appUserCount.toLocaleString("en-US")} /{" "}
+              {activation.endUserCap.toLocaleString("en-US")}
+            </Link>
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Provision end users</dt>
+          <dd>
+            <CapabilityValue allowed={activation.canProvisionEndUsers} />
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Sell paid plans</dt>
+          <dd>
+            <CapabilityValue allowed={activation.canSellPaidPlans} />
+          </dd>
+        </div>
+      </dl>
+
+      {blocked ? (
+        <div className="mt-3 space-y-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+          {!activation.canProvisionEndUsers ? (
+            <p className="text-xs text-amber-300">
+              {provisionHint}{" "}
+              {activation.reason === "end_user_cap_reached" ? (
+                <Link
+                  href={`/apps/${encodeURIComponent(appId)}/identities`}
+                  className="font-medium text-amber-200 underline-offset-2 hover:underline"
+                >
+                  Open identities
+                </Link>
+              ) : null}
+            </p>
+          ) : null}
+          {!activation.canSellPaidPlans ? (
+            <p className="text-xs text-amber-300">{sellHint}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function applyStatusToForm(
+  nextStatus: StripeStatus,
+  set: {
+    progressiveBilling: (v: boolean) => void;
+    billingMode: (v: "owner_rollup" | "merchant") => void;
+    thresholdDisplay: (v: string) => void;
+  },
+): void {
+  set.progressiveBilling(nextStatus.progressiveBilling ?? true);
+  set.billingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
+  set.thresholdDisplay(
+    nextStatus.softNegativeUsdMicros
+      ? usdMicrosToCentsDisplay(nextStatus.softNegativeUsdMicros)
+      : "",
+  );
+}
+
+function parseThresholdMicros(display: string): string | null {
+  const trimmed = display.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const micros = usdCentsDisplayToMicros(trimmed);
+  if (micros == null) {
+    throw new Error("Overage limit must be a valid dollar amount");
+  }
+  return micros;
+}
+
+/** Preview-safe variant: a half-typed amount previews as the default, not a throw. */
+function thresholdMicrosForPreview(display: string): string | null {
+  const trimmed = display.trim();
+  if (trimmed === "") return null;
+  return usdCentsDisplayToMicros(trimmed);
+}
+
+function connectUiFlags(status: StripeStatus | null) {
+  const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
+  // Match backend isConnectReady: charges + details submitted.
+  const merchantReady =
+    hasAccount &&
+    Boolean(status?.stripeChargesEnabled) &&
+    Boolean(status?.stripeDetailsSubmitted);
+  const pendingOnboarding = hasAccount && !merchantReady;
+  const hasLegacyOmLink = Boolean(
+    status?.openmeterStripeAppId || status?.openmeterBillingProfileId,
+  );
+  return {
+    hasAccount,
+    merchantReady,
+    pendingOnboarding,
+    hasLegacyOmLink,
+    canDisconnect: hasAccount || hasLegacyOmLink,
+  };
+}
+
+function connectBadgeClass(flags: ReturnType<typeof connectUiFlags>): string {
+  if (flags.merchantReady) return "bg-emerald-500/15 text-emerald-300";
+  if (flags.pendingOnboarding) return "bg-amber-500/15 text-amber-300";
+  return "bg-white/10 text-zinc-400";
+}
+
+function connectBadgeLabel(
+  flags: ReturnType<typeof connectUiFlags>,
+  fallbackStatus: string | undefined,
+): string {
+  if (flags.hasAccount) {
+    return flags.merchantReady ? "connected" : "pending";
+  }
+  if (flags.hasLegacyOmLink) {
+    return "needs merchant connect";
+  }
+  return fallbackStatus ?? "disconnected";
+}
+
+type BusySetters = {
+  setBusy: (v: boolean) => void;
+  setError: (v: string | null) => void;
+};
+
+async function postConnectRedirect(
+  url: string,
+  init: RequestInit,
+  setters: BusySetters,
+  failLabel: string,
+): Promise<void> {
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(url, init);
+    const body = await res.json();
+    if (!res.ok || !body.url) {
+      throw new Error(body.error || failLabel);
+    }
+    redirectToStripeConnectUrl(body.url);
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+    setters.setBusy(false);
+  }
+}
+
+async function requestDisconnectStripe(
+  appId: string,
+  setters: BusySetters,
+  reload: () => Promise<void>,
+): Promise<void> {
+  if (!globalThis.confirm("Disconnect Stripe from this app?")) {
+    return;
+  }
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.error || "Disconnect failed");
+    }
+    await reload();
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+async function requestSaveBillingSettings(input: {
+  appId: string;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  billingMode: "owner_rollup" | "merchant";
+  setters: BusySetters & {
+    setSettingsSaved: (v: string | null) => void;
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}): Promise<void> {
+  const { setters } = input;
+  setters.setBusy(true);
+  setters.setError(null);
+  setters.setSettingsSaved(null);
+  try {
+    const softNegativeUsdMicros = parseThresholdMicros(input.thresholdDisplay);
+    const payload: Record<string, unknown> = {
+      progressiveBilling: input.progressiveBilling,
+      softNegativeUsdMicros,
+      billingMode: input.billingMode,
+    };
+    const res = await fetch(`/api/v1/apps/${input.appId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      const gaps =
+        Array.isArray(body.supplierGaps) && body.supplierGaps.length > 0
+          ? ` Missing: ${body.supplierGaps.join(", ")}.`
+          : "";
+      throw new Error(`${body.error || "Failed to save billing settings"}${gaps}`);
+    }
+    setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
+    setters.setSettingsSaved("Saved");
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+async function requestSetStripeLivemode(input: {
+  appId: string;
+  stripeLivemode: boolean;
+  setters: BusySetters & {
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}): Promise<void> {
+  const { setters } = input;
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(`/api/v1/apps/${input.appId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stripeLivemode: input.stripeLivemode }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(body.error || "Failed to update Stripe mode");
+    }
+    setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+function PaymentsLivemodeToggle(props: Readonly<{
+  appId: string;
+  busy: boolean;
+  locked: boolean;
+  stripeLivemode: boolean;
+  setters: BusySetters & {
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}>) {
+  const { appId, busy, locked, stripeLivemode, setters } = props;
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-zinc-200">Stripe platform</p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {locked
+              ? "Locked while a Connected Account is linked. Disconnect to switch."
+              : "Defaults to sandbox (test cards, no real money). Switch to Live before onboarding for live charges."}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy || locked || stripeLivemode}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              stripeLivemode
+                ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
+            }`}
+            onClick={() =>
+              void requestSetStripeLivemode({
+                appId,
+                stripeLivemode: true,
+                setters,
+              })
+            }
+          >
+            Live
+          </button>
+          <button
+            type="button"
+            disabled={busy || locked || !stripeLivemode}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              !stripeLivemode
+                ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+                : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
+            }`}
+            onClick={() =>
+              void requestSetStripeLivemode({
+                appId,
+                stripeLivemode: false,
+                setters,
+              })
+            }
+          >
+            Sandbox
+          </button>
+        </div>
+      </div>
+      {!stripeLivemode ? (
+        <p className="mt-2 text-xs text-amber-300/90">
+          Sandbox mode: Connect onboarding and end-user charges use Stripe test
+          mode. Owner network billing stays on the live platform.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PaymentsInvoicesList({ invoices }: Readonly<{ invoices: InvoiceRow[] }>) {
+  if (invoices.length === 0) {
+    return <p className="text-sm text-zinc-500">No customer invoices yet.</p>;
+  }
+  return (
+    <ul className="divide-y divide-white/[0.06] text-sm">
+      {invoices.map((inv) => (
+        <li key={inv.id} className="py-2 flex justify-between gap-4">
+          <div className="min-w-0">
+            <span className="font-mono text-zinc-200">{inv.number ?? inv.id}</span>
+            {inv.customerKey ? (
+              <p className="mt-0.5 truncate font-mono text-xs text-zinc-500">
+                {inv.customerKey}
+              </p>
+            ) : null}
+          </div>
+          <span className="shrink-0 text-zinc-400">
+            {inv.totalAmount} {inv.currency} · {inv.status}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>) {
   const [status, setStatus] = useState<StripeStatus | null>(null);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progressiveBilling, setProgressiveBilling] = useState(true);
+  const [thresholdDisplay, setThresholdDisplay] = useState("");
+  const [billingMode, setBillingMode] = useState<"owner_rollup" | "merchant">(
+    "owner_rollup",
+  );
+  const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +500,13 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!statusRes.ok) {
         throw new Error("Failed to load billing status");
       }
-      setStatus(await statusRes.json());
+      const nextStatus = (await statusRes.json()) as StripeStatus;
+      setStatus(nextStatus);
+      applyStatusToForm(nextStatus, {
+        progressiveBilling: setProgressiveBilling,
+        billingMode: setBillingMode,
+        thresholdDisplay: setThresholdDisplay,
+      });
       if (invoicesRes.ok) {
         const body = await invoicesRes.json();
         setInvoices(body.items ?? []);
@@ -55,133 +519,544 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   }, [appId]);
 
   useEffect(() => {
-    load().catch(() => undefined);
-  }, [load]);
-
-  async function connectStripe() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
-        method: "POST",
-      });
-      const body = await res.json();
-      if (!res.ok || !body.url) {
-        throw new Error(body.error || "Connect failed");
-      }
-      globalThis.location.href = body.url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
-    }
-  }
-
-  async function disconnectStripe() {
-    if (!globalThis.confirm("Disconnect Stripe from this app?")) {
+    if (globalThis.window === undefined) {
+      void load().catch(() => undefined);
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error || "Disconnect failed");
-      }
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
+    const params = new URLSearchParams(globalThis.location.search);
+    const errorCode = params.get("error");
+    if (errorCode) {
+      setError(
+        paymentsTabErrorMessage(errorCode) ??
+          "Stripe Connect returned an error. Try again.",
+      );
     }
-  }
+    // Single load: return-from-onboarding and initial mount share one fetch.
+    void load().catch(() => undefined);
+  }, [load]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading payments…</p>;
+    return <p className="text-sm text-zinc-500">Loading payments…</p>;
   }
 
-  const connected = status?.status === "connected";
+  return (
+    <PaymentsTabLoaded
+      appId={appId}
+      canManageBilling={canManageBilling}
+      status={status}
+      invoices={invoices}
+      error={error}
+      busy={busy}
+      progressiveBilling={progressiveBilling}
+      thresholdDisplay={thresholdDisplay}
+      billingMode={billingMode}
+      settingsSaved={settingsSaved}
+      setBusy={setBusy}
+      setError={setError}
+      setStatus={setStatus}
+      setSettingsSaved={setSettingsSaved}
+      setBillingMode={setBillingMode}
+      setProgressiveBilling={setProgressiveBilling}
+      setThresholdDisplay={setThresholdDisplay}
+      reload={load}
+    />
+  );
+}
+
+function PaymentsConnectActions(props: Readonly<{
+  appId: string;
+  busy: boolean;
+  flags: ReturnType<typeof connectUiFlags>;
+  busySetters: BusySetters;
+  reload: () => Promise<void>;
+}>) {
+  const { appId, busy, flags, busySetters, reload } = props;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {!flags.hasAccount && (
+        <button
+          type="button"
+          className="rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
+          disabled={busy}
+          onClick={() =>
+            void postConnectRedirect(
+              `/api/v1/apps/${appId}/billing/stripe/connect`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "account_link" }),
+              },
+              busySetters,
+              "Connect failed",
+            )
+          }
+        >
+          Complete onboarding
+        </button>
+      )}
+      {flags.pendingOnboarding && (
+        <button
+          type="button"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50"
+          disabled={busy}
+          onClick={() =>
+            void postConnectRedirect(
+              `/api/v1/apps/${appId}/billing/stripe/account-link`,
+              { method: "POST" },
+              busySetters,
+              "Account Link failed",
+            )
+          }
+        >
+          Refresh Account Link
+        </button>
+      )}
+      {flags.canDisconnect && (
+        <button
+          type="button"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void requestDisconnectStripe(appId, busySetters, reload)}
+        >
+          Disconnect
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PaymentsBillingModeForm(props: Readonly<{
+  busy: boolean;
+  billingMode: "owner_rollup" | "merchant";
+  connectReadyForMerchant: boolean;
+  settingsSaved: string | null;
+  setBillingMode: (v: "owner_rollup" | "merchant") => void;
+  onSave: () => void;
+}>) {
+  const {
+    busy,
+    billingMode,
+    connectReadyForMerchant,
+    settingsSaved,
+    setBillingMode,
+    onSave,
+  } = props;
+  return (
+    <div className="pt-2 border-t border-white/[0.06] space-y-3">
+      <fieldset className="block text-sm" disabled={busy}>
+        <legend className="text-zinc-500">Billing mode</legend>
+        <div
+          role="radiogroup"
+          aria-label="Billing mode"
+          className="mt-1.5 flex flex-col gap-2"
+        >
+          {(
+            [
+              {
+                value: "owner_rollup" as const,
+                title: "Owner roll-up",
+                detail:
+                  "End-user usage meters to your owner wallet; default for most apps",
+                disabled: false,
+              },
+              {
+                value: "merchant" as const,
+                title: "Merchant",
+                detail: connectReadyForMerchant
+                  ? "Charges end users on your Connected Account; network cost still settles on your owner wallet"
+                  : "Requires Stripe Connect to be ready",
+                disabled: !connectReadyForMerchant,
+              },
+            ] as const
+          ).map((option) => {
+            const selected = billingMode === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={busy || option.disabled}
+                onClick={() => setBillingMode(option.value)}
+                className={`${BILLING_MODE_OPTION_CLASS} ${
+                  selected
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-zinc-100"
+                    : "border-white/10 bg-zinc-950/60 text-zinc-300 hover:border-white/20 hover:bg-zinc-900/80"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                    selected
+                      ? "border-emerald-400 bg-emerald-500/20"
+                      : "border-zinc-600 bg-transparent"
+                  }`}
+                  aria-hidden
+                >
+                  {selected ? (
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  ) : null}
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-medium text-zinc-100">
+                    {option.title}
+                    {option.value === "owner_rollup" ? (
+                      <span className="ml-1.5 text-xs font-normal text-zinc-500">
+                        default
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {option.detail}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+      <p className="text-xs text-zinc-500">
+        Switching billing mode affects{" "}
+        <span className="text-zinc-400">new</span> signer and M2M sessions only
+        (after identity cache expiry, typically within a few minutes). Usage
+        already ingested stays on the OpenMeter customer it was billed to;
+        tokens already issued keep their current cost rail until they expire.
+      </p>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className={BUTTON_CLASS}
+          disabled={busy}
+          onClick={onSave}
+        >
+          Save billing settings
+        </button>
+        {settingsSaved ? (
+          <span className="text-xs text-emerald-400">{settingsSaved}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PaymentsProgressiveBillingForm(props: Readonly<{
+  canManageBilling: boolean;
+  busy: boolean;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  settingsSaved: string | null;
+  setProgressiveBilling: (v: boolean) => void;
+  setThresholdDisplay: (v: string) => void;
+  setSettingsSaved: (v: string | null) => void;
+  onSave: () => void;
+}>) {
+  const {
+    canManageBilling,
+    busy,
+    progressiveBilling,
+    thresholdDisplay,
+    settingsSaved,
+    setProgressiveBilling,
+    setThresholdDisplay,
+    setSettingsSaved,
+    onSave,
+  } = props;
+  const preview = previewOverageCeiling(
+    thresholdMicrosForPreview(thresholdDisplay),
+  );
+  return (
+    <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
+      <div>
+        <h3 className="text-base font-semibold text-zinc-100">Overage limit</h3>
+        <p className="mt-1 text-xs text-zinc-500">
+          How much unbilled usage an end user may run up once their credits are
+          gone. Usage past credits is invoiced automatically; settlement
+          (merchant Connect) or the OpenMeter Stripe app (owner) collects
+          asynchronously, and this limit is the headroom that keeps requests
+          flowing meanwhile.
+        </p>
+      </div>
+      <label className="flex items-start gap-2 text-sm text-zinc-200">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={progressiveBilling}
+          disabled={!canManageBilling || busy}
+          onChange={(e) => {
+            setProgressiveBilling(e.target.checked);
+            setSettingsSaved(null);
+          }}
+        />
+        <span>
+          Enable progressive billing{/* */}
+          <span className="block text-xs text-zinc-500">
+            Synced to this app&apos;s OpenMeter billing profile.
+          </span>
+        </span>
+      </label>
+      <div>
+        <label htmlFor="soft-negative" className="block text-xs text-zinc-500 mb-1">
+          Overage limit (USD)
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-zinc-500">$</span>
+          <input
+            id="soft-negative"
+            type="text"
+            inputMode="decimal"
+            placeholder="e.g. 5.00 (blank = $2.00 default, 0 = no limit)"
+            disabled={!canManageBilling || busy}
+            value={thresholdDisplay}
+            onChange={(e) => {
+              setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
+              setSettingsSaved(null);
+            }}
+            aria-invalid={preview.error != null}
+            aria-describedby="overage-limit-preview"
+            className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
+          />
+        </div>
+      </div>
+      <div id="overage-limit-preview" aria-live="polite" className="text-xs">
+        {preview.error ? (
+          <p className="text-amber-400">{preview.error}</p>
+        ) : (
+          <>
+            <p className="text-zinc-300">{preview.summary}</p>
+            <ul className="mt-1 space-y-0.5 text-zinc-500">
+              {preview.bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+      {canManageBilling && (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className={BUTTON_CLASS}
+            disabled={busy || preview.error != null}
+            onClick={onSave}
+          >
+            Save invoicing settings
+          </button>
+          {settingsSaved ? (
+            <span className="text-xs text-emerald-400">{settingsSaved}</span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaymentsStatusDetails({ status }: Readonly<{ status: StripeStatus | null }>) {
+  return (
+    <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div>
+        <dt className="text-zinc-500">Connected account</dt>
+        <dd className="font-mono text-xs break-all text-zinc-300">
+          {status?.stripeConnectedAccountId ?? "—"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Stripe mode</dt>
+        <dd className="text-zinc-300">
+          {status?.stripeLivemode === false ? (
+            <span className="text-amber-300">Sandbox (test charges only)</span>
+          ) : (
+            "Live"
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Onboarding</dt>
+        <dd className="text-zinc-300">{status?.stripeOnboardingMethod ?? "—"}</dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Charges</dt>
+        <dd className="text-zinc-300">
+          {status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Payouts</dt>
+        <dd className="text-zinc-300">
+          {status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Invoice supplier</dt>
+        <dd className="text-zinc-300">
+          {[status?.supplierName, status?.supplierCountry].filter(Boolean).join(" · ") ||
+            "—"}
+          {status?.supplierComplete === false ? (
+            <span className="ml-1 text-amber-300">
+              (incomplete
+              {status.supplierGaps?.length
+                ? `: ${status.supplierGaps.join(", ")}`
+                : ""}
+              )
+            </span>
+          ) : null}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">OM billing profile</dt>
+        <dd className="font-mono text-xs break-all text-zinc-300">
+          {status?.openmeterBillingProfileId ?? "—"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-zinc-500">Connected</dt>
+        <dd className="text-zinc-300">{status?.connectedAt ?? "—"}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function PaymentsTabLoaded(props: Readonly<{
+  appId: string;
+  canManageBilling: boolean;
+  status: StripeStatus | null;
+  invoices: InvoiceRow[];
+  error: string | null;
+  busy: boolean;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  billingMode: "owner_rollup" | "merchant";
+  settingsSaved: string | null;
+  setBusy: (v: boolean) => void;
+  setError: (v: string | null) => void;
+  setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  setSettingsSaved: (v: string | null) => void;
+  setBillingMode: (v: "owner_rollup" | "merchant") => void;
+  setProgressiveBilling: (v: boolean) => void;
+  setThresholdDisplay: (v: string) => void;
+  reload: () => Promise<void>;
+}>) {
+  const {
+    appId,
+    canManageBilling,
+    status,
+    invoices,
+    error,
+    busy,
+    progressiveBilling,
+    thresholdDisplay,
+    billingMode,
+    settingsSaved,
+    setBusy,
+    setError,
+    setStatus,
+    setSettingsSaved,
+    setBillingMode,
+    setProgressiveBilling,
+    setThresholdDisplay,
+    reload,
+  } = props;
+
+  const flags = connectUiFlags(status);
+  const busySetters = { setBusy, setError };
+  const connectReadyForMerchant = flags.merchantReady;
+  const save = () =>
+    void requestSaveBillingSettings({
+      appId,
+      progressiveBilling,
+      thresholdDisplay,
+      billingMode,
+      setters: { setBusy, setError, setSettingsSaved, setStatus },
+    });
+  const showDetails =
+    flags.hasAccount || flags.hasLegacyOmLink || Boolean(status?.connectedAt);
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border p-4 space-y-3">
+      {status?.activation && (
+        <PaymentsActivationCard activation={status.activation} appId={appId} />
+      )}
+
+      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold">Stripe Connect</h3>
-            <p className="text-sm text-muted-foreground">
-              Connect your Stripe account to bill end users via OpenMeter.
+            <h3 className="text-base font-semibold text-zinc-100">Merchant Stripe Connect</h3>
+            <p className="text-sm text-zinc-500">
+              Collect from your end users on a Stripe Connected Account (Plane B).
+              OpenMeter Stripe billing (Plane A) meters usage and invoices you for
+              network cost separately. Complete Stripe-hosted onboarding (Account Links)
+              to create and verify your Connected Account.
             </p>
           </div>
           <span
-            className={`text-xs font-medium px-2 py-1 rounded ${
-              connected ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"
-            }`}
+            className={`text-xs font-medium px-2 py-1 rounded ${connectBadgeClass(flags)}`}
           >
-            {status?.status ?? "disconnected"}
+            {connectBadgeLabel(flags, status?.status)}
           </span>
         </div>
 
-        {connected && (
-          <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
-              <dt className="text-muted-foreground">Billing profile</dt>
-              <dd className="font-mono text-xs break-all">
-                {status?.openmeterBillingProfileId ?? "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Connected</dt>
-              <dd>{status?.connectedAt ?? "—"}</dd>
-            </div>
-          </dl>
+        {showDetails && <PaymentsStatusDetails status={status} />}
+
+        {canManageBilling && (
+          <PaymentsLivemodeToggle
+            appId={appId}
+            busy={busy}
+            locked={flags.hasAccount}
+            stripeLivemode={status?.stripeLivemode === true}
+            setters={{ setBusy, setError, setStatus }}
+          />
         )}
 
         {canManageBilling && (
-          <div className="flex gap-2">
-            {connected ? (
-              <button
-                type="button"
-                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void disconnectStripe()}
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void connectStripe()}
-              >
-                Connect Stripe
-              </button>
-            )}
-          </div>
+          <PaymentsConnectActions
+            appId={appId}
+            busy={busy}
+            flags={flags}
+            busySetters={busySetters}
+            reload={reload}
+          />
+        )}
+
+        {canManageBilling && (
+          <PaymentsBillingModeForm
+            busy={busy}
+            billingMode={billingMode}
+            connectReadyForMerchant={connectReadyForMerchant}
+            settingsSaved={settingsSaved}
+            setBillingMode={setBillingMode}
+            onSave={save}
+          />
         )}
       </div>
 
-      <div className="rounded-lg border p-4 space-y-3">
-        <h3 className="text-base font-semibold">Recent invoices</h3>
-        {invoices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No invoices yet.</p>
-        ) : (
-          <ul className="divide-y text-sm">
-            {invoices.map((inv) => (
-              <li key={inv.id} className="py-2 flex justify-between gap-4">
-                <span className="font-mono">{inv.number ?? inv.id}</span>
-                <span>
-                  {inv.totalAmount} {inv.currency} · {inv.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+      {flags.merchantReady && (
+        <PaymentsProgressiveBillingForm
+          canManageBilling={canManageBilling}
+          busy={busy}
+          progressiveBilling={progressiveBilling}
+          thresholdDisplay={thresholdDisplay}
+          settingsSaved={settingsSaved}
+          setProgressiveBilling={setProgressiveBilling}
+          setThresholdDisplay={setThresholdDisplay}
+          setSettingsSaved={setSettingsSaved}
+          onSave={save}
+        />
+      )}
+
+      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
+        <div>
+          <h3 className="text-base font-semibold text-zinc-100">Customer invoices</h3>
+          <p className="mt-1 text-xs text-zinc-500">
+            End users billed through this app&apos;s Stripe Connect account. Platform invoices
+            for your developer prepaid wallet are on{" "}
+            <a href="/billing" className="text-emerald-400 hover:text-emerald-300">
+              Billing
+            </a>
+            {"."}
+          </p>
+        </div>
+        <PaymentsInvoicesList invoices={invoices} />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-rose-400">{error}</p>}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import { OAuthErrorSchema } from "@/lib/openapi/schemas/common";
 import { z } from "@/lib/openapi/zod";
 
-export const genericJsonObject = z.object({}).passthrough().openapi("GenericJsonObject");
+export const genericJsonObject = z.looseObject({}).openapi("GenericJsonObject");
 
 export const jsonSuccess = {
   description: "Success",
@@ -16,6 +16,38 @@ export const builderErrorResponses = {
   401: { description: "Unauthorized", content: { "application/json": { schema: OAuthErrorSchema } } },
   403: { description: "Forbidden", content: { "application/json": { schema: OAuthErrorSchema } } },
   404: { description: "Not found", content: { "application/json": { schema: OAuthErrorSchema } } },
+} as const;
+
+/** Shared usage date + retail include flags (Builder and End-user OpenAPI). */
+export const usageDateRangeQueryParams = {
+  startDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "startDate", in: "query" },
+      description: "Inclusive lower bound (ISO 8601).",
+    }),
+  endDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "endDate", in: "query" },
+      description: "Inclusive upper bound (ISO 8601).",
+    }),
+  include: z
+    .literal("retail")
+    .optional()
+    .openapi({
+      param: { name: "include", in: "query" },
+      description: "Set to `retail` to include retail billable micros.",
+    }),
+  includeRetail: z
+    .enum(["1", "true"])
+    .optional()
+    .openapi({
+      param: { name: "includeRetail", in: "query" },
+      description: "Alternate flag for retail breakdown (`1` or `true`).",
+    }),
 } as const;
 
 type HttpMethod = RouteConfig["method"];

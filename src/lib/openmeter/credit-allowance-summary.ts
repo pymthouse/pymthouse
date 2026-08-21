@@ -4,7 +4,12 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { isHostedAdminClientAvailable, getHostedAdminClient } from "@/lib/openmeter/admin-client";
 import { listTenantCustomers, ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
-import { getKonnectCreditBalance } from "@/lib/openmeter/konnect-credits";
+import {
+  decimalDollarsToUsdMicros,
+  getKonnectCreditBalance,
+  konnectGrantTimestamp,
+  listKonnectCreditGrants,
+} from "@/lib/openmeter/konnect-credits";
 import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { buildOwnerCustomerKey, isOwnerCustomerKey } from "@/lib/openmeter/customer-key";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
@@ -263,6 +268,78 @@ export async function getOwnerPrepaidCreditBalance(
       err instanceof Error ? err.message : String(err),
     );
     return null;
+  }
+}
+
+/** Dated prepaid credit grant for the transactions ledger. */
+export type OwnerCreditGrant = {
+  id: string;
+  amountUsdMicros: string;
+  /** Null when the grant carries no usable timestamp. */
+  date: string | null;
+  name: string | null;
+};
+
+/**
+ * Dated credit grants on the owner prepaid wallet.
+ * Returns [] when metering is unconfigured or the lookup fails — the ledger
+ * degrades to usage and invoice rows rather than failing the page.
+ */
+export async function listOwnerCreditGrants(
+  ownerUserId: string,
+): Promise<OwnerCreditGrant[]> {
+  if (!isHostedAdminClientAvailable()) {
+    return [];
+  }
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  if (!shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
+    return [];
+  }
+
+  const client = getHostedAdminClient();
+  const customerKey = buildOwnerCustomerKey(trimmed);
+  try {
+    const customer = await ensureOpenMeterCustomer(client, customerKey);
+    const grants = await listKonnectCreditGrants({
+      customerId: customer.id,
+      apiKey,
+    });
+    // decimalDollarsToUsdMicros throws on a malformed amount. Parsing inside
+    // the shared try would let one bad row discard every valid grant, so each
+    // is parsed independently and only the bad row is dropped.
+    return grants.flatMap((grant, index) => {
+      let amountUsdMicros: string;
+      try {
+        amountUsdMicros = decimalDollarsToUsdMicros(grant.amount || "0").toString();
+      } catch (err) {
+        console.warn(
+          "credit-allowance-summary: skipping grant with unparseable amount",
+          grant.id || grant.key || `grant-${index}`,
+          err instanceof Error ? err.message : String(err),
+        );
+        return [];
+      }
+      return [
+        {
+          id: grant.id || grant.key || `grant-${index}`,
+          amountUsdMicros,
+          date: konnectGrantTimestamp(grant),
+          name: grant.name?.trim() || null,
+        },
+      ];
+    });
+  } catch (err) {
+    console.warn(
+      "credit-allowance-summary: owner grant list failed",
+      trimmed,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
   }
 }
 

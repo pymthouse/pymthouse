@@ -13,7 +13,7 @@ export default function CreateEndUserForm() {
     email: "",
   });
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setCreating(true);
     setError(null);

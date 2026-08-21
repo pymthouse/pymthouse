@@ -24,6 +24,10 @@ export interface AppFormData {
   grantTypes: string[];
   /** Provisions the confidential M2M sibling (Builder API + device approval via token exchange); keeps the public client unauthenticated. */
   backendDeviceHelper: boolean;
+  /** Provisions the confidential web RP sibling (auth code + secret + redirects) for portal SSO. */
+  confidentialWebHelper: boolean;
+  /** Initial redirect URIs for the confidential web sibling (portal SSO callback). */
+  confidentialWebRedirectUris: string[];
   /** OIDC initiate_login_uri for third-party device login. */
   initiateLoginUri: string;
   /** Whether to redirect unauthenticated device verification to initiateLoginUri. */
@@ -37,6 +41,12 @@ export interface AppState {
   hasSecret: boolean;
   /** Confidential backend helper client (null until provisioned). */
   backendHelper: { clientId: string; hasSecret: boolean } | null;
+  /** Confidential web RP sibling (null until provisioned). */
+  webHelper: {
+    clientId: string;
+    hasSecret: boolean;
+    redirectUris: string[];
+  } | null;
   pendingRevisionSubmittedAt?: string | null;
 }
 
@@ -55,6 +65,8 @@ export const defaultAppFormData: AppFormData = {
   allowedScopes: `${DEFAULT_OIDC_SCOPES} users:token`.trim(),
   grantTypes: [...DEFAULT_GRANT_TYPES_WITH_DEVICE],
   backendDeviceHelper: true,
+  confidentialWebHelper: false,
+  confidentialWebRedirectUris: [],
   initiateLoginUri: "",
   deviceThirdPartyInitiateLogin: false,
 };
@@ -89,7 +101,14 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
       initialData?.redirectUris !== undefined
         ? [...initialData.redirectUris]
         : [...defaultAppFormData.redirectUris],
+    confidentialWebRedirectUris:
+      initialData?.confidentialWebRedirectUris !== undefined
+        ? [...initialData.confidentialWebRedirectUris]
+        : [...defaultAppFormData.confidentialWebRedirectUris],
   });
+  const [webRedirectDraft, setWebRedirectDraft] = useState(
+    () => initialData?.confidentialWebRedirectUris?.[0] ?? "",
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,6 +146,24 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
     });
   };
 
+  const toggleConfidentialWeb = (checked: boolean) => {
+    if (!checked) {
+      setFormData((prev) => ({
+        ...prev,
+        confidentialWebHelper: false,
+        confidentialWebRedirectUris: [],
+      }));
+      setWebRedirectDraft("");
+      return;
+    }
+    const uri = webRedirectDraft.trim();
+    setFormData((prev) => ({
+      ...prev,
+      confidentialWebHelper: true,
+      confidentialWebRedirectUris: uri ? [uri] : [],
+    }));
+  };
+
   const toggleDeviceCode = () => {
     if (!formData.backendDeviceHelper) return;
     if (hasDeviceCode) {
@@ -150,17 +187,23 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
     set("allowedScopes", ensureOpenIdScope(joinScopes(next)));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      // Let the server enforce the authorization_code ↔ redirect_uris coupling.
-      // We submit the grant list as-is; syncPublicClientGrantTypes on the server
-      // will add/remove authorization_code based on whether redirectUris is non-empty.
+      let webRedirects: string[] = [];
+      if (formData.confidentialWebHelper) {
+        const trimmed = webRedirectDraft.trim();
+        webRedirects = trimmed ? [trimmed] : [];
+      }
+
       const payload: AppFormData = {
         ...formData,
+        redirectUris: [],
         allowedScopes: ensureOpenIdScope(formData.allowedScopes),
+        confidentialWebRedirectUris: webRedirects,
+        tokenEndpointAuthMethod: "none",
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",
@@ -173,7 +216,9 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
         try {
           const data = text ? JSON.parse(text) : {};
           if (data && typeof data === "object") {
-            if (typeof (data as { message?: unknown }).message === "string") {
+            if (typeof (data as { error_description?: unknown }).error_description === "string") {
+              msg = (data as { error_description: string }).error_description;
+            } else if (typeof (data as { message?: unknown }).message === "string") {
               msg = (data as { message: string }).message;
             } else if (typeof (data as { error?: unknown }).error === "string") {
               msg = (data as { error: string }).error;
@@ -208,7 +253,6 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
           </div>
         )}
 
-        {/* Application name */}
         <div>
           <label htmlFor="wizard-app-name" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Application name <span className="text-red-400">*</span>
@@ -225,7 +269,6 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
           <p className="text-xs text-zinc-500 mt-1.5">Something users will recognize and trust.</p>
         </div>
 
-        {/* Developer / organization name */}
         <div>
           <label htmlFor="wizard-developer-name" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Developer / organization name
@@ -240,7 +283,6 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
           />
         </div>
 
-        {/* Homepage URL (optional) */}
         <div>
           <label htmlFor="wizard-homepage-url" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Homepage URL <span className="text-zinc-500 font-normal">(optional)</span>
@@ -253,12 +295,8 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             placeholder="https://"
             className={fieldClass}
           />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            Shown on consent and in marketplace listings when set.
-          </p>
         </div>
 
-        {/* Description */}
         <div>
           <label htmlFor="wizard-description" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Application description
@@ -271,22 +309,19 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             placeholder="Application description is optional"
             className={`${fieldClass} resize-none`}
           />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            This is displayed to all users of your application.
-          </p>
         </div>
 
-        {/* OAuth capabilities */}
         <div className="rounded-xl border border-zinc-700/80 bg-zinc-800/20 p-4 space-y-4">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-100">OAuth capabilities</h2>
+            <h2 className="text-sm font-semibold text-zinc-100">Capabilities</h2>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Device flow depends on a confidential (M2M) companion client in this product.
+              Your app&apos;s public <code className="font-mono text-zinc-400">app_</code>{" "}
+              client handles user sign-in. Add server-side capabilities as needed.
             </p>
           </div>
 
           <label
-            aria-label="Confidential client"
+            aria-label="Server API access (M2M)"
             className="flex items-start gap-3 cursor-pointer"
           >
             <input
@@ -297,23 +332,22 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             />
             <span>
               <span className="block text-sm font-medium text-zinc-200">
-                Confidential client{" "}
+                Server API access (M2M){" "}
                 <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
                   (client credentials)
                 </span>
               </span>
               <span className="block text-xs text-zinc-500 mt-1">
-                Provisions a confidential{" "}
-                <code className="font-mono text-zinc-400">m2m_</code> client for
-                server-to-server Builder APIs. Your public client stays unauthenticated for SDK
-                / CLI device login.
+                Lets your backend call the Builder API. Creates a confidential{" "}
+                <code className="font-mono text-zinc-400">m2m_</code> client with a
+                secret.
               </span>
             </span>
           </label>
 
           <div>
             <label
-              aria-label="Enable Device Flow"
+              aria-label="CLI and device sign-in"
               className={`flex items-start gap-3 ${
                 formData.backendDeviceHelper ? "cursor-pointer" : "cursor-not-allowed opacity-60"
               }`}
@@ -326,9 +360,9 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
                 className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
               />
               <span>
-                <span className="block text-sm font-medium text-zinc-200">Enable Device Flow</span>
+                <span className="block text-sm font-medium text-zinc-200">CLI &amp; device sign-in</span>
                 <span className="block text-xs text-zinc-500 mt-0.5">
-                  Allow CLI tools, SDKs, and headless clients to authorize via a user code.{" "}
+                  Users sign in to CLI tools, SDKs, and headless apps by entering a short code in their browser.{" "}
                   <a
                     href={docsDeviceFlowUrl()}
                     target="_blank"
@@ -340,11 +374,6 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
                 </span>
               </span>
             </label>
-            {!formData.backendDeviceHelper && (
-              <p className="text-xs text-zinc-600 mt-1.5 ml-[26px]">
-                Turn on Confidential client first.
-              </p>
-            )}
           </div>
 
           {formData.backendDeviceHelper && (
@@ -365,16 +394,61 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             </label>
           )}
 
-          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/40 px-3 py-2.5 text-xs text-zinc-400 leading-relaxed">
-            <strong className="text-zinc-300">Custom login for device approval:</strong> after you
-            register, open{" "}
-            <strong className="text-zinc-400">App settings → Auth &amp; scopes → Device login</strong>{" "}
-            and set <strong className="text-zinc-400">Initiate login URI</strong> so users complete
-            sign-in on your site instead of the default PymtHouse device page.
-          </div>
+          <label
+            aria-label="Web single sign-on"
+            className="flex items-start gap-3 cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(formData.confidentialWebHelper)}
+              onChange={(e) => toggleConfidentialWeb(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0"
+            />
+            <span>
+              <span className="block text-sm font-medium text-zinc-200">
+                Web single sign-on (SSO){" "}
+                <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
+                  (auth code + secret)
+                </span>
+              </span>
+              <span className="block text-xs text-zinc-500 mt-1">
+                Sign users into a web portal with redirect-based login (e.g. Kong Dev
+                Portal). Creates a confidential{" "}
+                <code className="font-mono text-zinc-400">web_</code> client.
+              </span>
+            </span>
+          </label>
+
+          {formData.confidentialWebHelper && (
+            <div className="ml-[26px]">
+              <label
+                htmlFor="wizard-web-redirect-uri"
+                className="block text-sm font-medium text-zinc-200 mb-1.5"
+              >
+                Portal redirect URI{" "}
+                <span className="text-zinc-500 font-normal">(optional now)</span>
+              </label>
+              <input
+                id="wizard-web-redirect-uri"
+                type="url"
+                value={webRedirectDraft}
+                onChange={(e) => {
+                  setWebRedirectDraft(e.target.value);
+                  const uri = e.target.value.trim();
+                  set("confidentialWebRedirectUris", uri ? [uri] : []);
+                }}
+                placeholder="https://….kongportals.com/login"
+                className={fieldClass}
+              />
+              <p className="text-xs text-zinc-500 mt-1.5">
+                Add the exact SSO callback. Generate the{" "}
+                <code className="font-mono text-zinc-400">web_</code> secret on Credentials
+                &amp; URLs after create.
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-4 pt-2">
           <button
             type="submit"

@@ -4,8 +4,11 @@
  * Replaces the 7 custom OIDC route files with a single certified provider.
  */
 
-import { Provider, interactionPolicy } from "oidc-provider";
+import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
+import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
+import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
+import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
@@ -195,32 +198,17 @@ function buildInteractionPolicy() {
         "consent required for third-party clients",
         async (ctx) => {
           const oidc = ctx.oidc;
-          const requestedScopes = Array.from(oidc.requestParamScopes ?? []);
-          const grantId = oidc.session?.grantIdFor(oidc.client!.clientId);
-          if (!grantId) {
-            return Check.REQUEST_PROMPT;
-          }
-
-          const grant = await ctx.oidc.provider.Grant.find(grantId);
-          if (!grant) {
-            return Check.REQUEST_PROMPT;
-          }
-
-          const grantedScopeSet = new Set(
-            (grant
-              .getOIDCScope()
-              .split(/\s+/)
-              .map((scope) => scope.trim())
-              .filter(Boolean)),
-          );
-
-          const allRequestedScopesCovered = requestedScopes.every((scope) =>
-            grantedScopeSet.has(scope),
-          );
-
-          return allRequestedScopesCovered
-            ? Check.NO_NEED_TO_PROMPT
-            : Check.REQUEST_PROMPT;
+          const clientId = oidc.client?.clientId;
+          const needed = await consentPromptNeeded({
+            requestedScopes: oidc.requestParamScopes,
+            resultConsentGrantId: oidc.result?.consent?.grantId,
+            sessionGrantId: clientId
+              ? oidc.session?.grantIdFor(clientId)
+              : undefined,
+            findGrant: async (grantId) =>
+              oidc.provider.Grant.find(grantId),
+          });
+          return needed ? Check.REQUEST_PROMPT : Check.NO_NEED_TO_PROMPT;
         },
         (ctx) => ({ scopes: ctx.oidc.requestParamScopes }),
       ),
@@ -265,6 +253,7 @@ async function buildCorsSnapshot(): Promise<{
         or(
           eq(developerApps.oidcClientId, oc.id),
           eq(developerApps.m2mOidcClientId, oc.id),
+          eq(developerApps.webOidcClientId, oc.id),
         ),
       )
       .limit(1);
@@ -344,6 +333,8 @@ export async function getProvider(): Promise<Provider> {
 
     scopes: [
       "openid",
+      "email",
+      "profile",
       "sign:job",
       "users:read",
       "users:write",
@@ -354,6 +345,8 @@ export async function getProvider(): Promise<Provider> {
 
     claims: {
       openid: ["sub"],
+      email: ["email", "email_verified"],
+      profile: ["name"],
       "sign:job": ["sub"],
       "users:read": ["sub"],
       "users:write": ["sub"],
@@ -428,10 +421,12 @@ export async function getProvider(): Promise<Provider> {
         },
         getResourceServerInfo: async (_ctx, resourceIndicator, _client) => {
           if (resourceIndicator !== issuer) {
-            throw new Error(`Unknown resource indicator: ${resourceIndicator}`);
+            throw new oidcErrors.InvalidTarget(
+              `Unknown resource indicator: ${resourceIndicator}`,
+            );
           }
           return {
-            scope: "openid sign:job users:read users:write users:token device:approve admin",
+            scope: "openid email profile sign:job users:read users:write users:token device:approve admin",
             audience: issuer,
             accessTokenFormat: "jwt" as const,
             accessTokenTTL: 3600,
@@ -451,7 +446,7 @@ export async function getProvider(): Promise<Provider> {
       DeviceCode: 600,            // 10 minutes
       IdToken: 3600,              // 1 hour
       RefreshToken: 30 * 24 * 3600, // 30 days
-      Interaction: 600,           // 10 minutes
+      Interaction: 1800,          // 30 minutes — gives users time to complete login without timing out
       Session: 14 * 24 * 3600,   // 14 days
       Grant: 14 * 24 * 3600,     // 14 days
     },
@@ -459,10 +454,12 @@ export async function getProvider(): Promise<Provider> {
     // Interaction URL — redirect to our custom consent/login pages
     interactions: {
       policy: buildInteractionPolicy(),
-      url: async (ctx: KoaContextWithOIDC, interaction) => {
-        // Always route through a single interaction page so login and consent
-        // share one cookie-bound interaction lifecycle.
-        return `/oidc/interaction?uid=${interaction.uid}`;
+      url: async (_ctx: KoaContextWithOIDC, interaction) => {
+        const clientId = interaction.params?.client_id;
+        return oidcInteractionPath(
+          interaction.uid,
+          typeof clientId === "string" ? clientId : null,
+        );
       },
     },
 
@@ -486,6 +483,11 @@ export async function getProvider(): Promise<Provider> {
         sameSite: "lax" as const,
         path: "/",
       },
+      long: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+      },
     },
 
     // Conformant id_token claims (only include sub by default, rest via userinfo)
@@ -497,23 +499,20 @@ export async function getProvider(): Promise<Provider> {
       idTokenSigningAlgValues: ["RS256"],
     },
 
-    // Load existing grants for returning users
-    loadExistingGrant: async (ctx) => {
-      const grantId =
-        ctx.oidc.result?.consent?.grantId ||
-        ctx.oidc.session!.grantIdFor(ctx.oidc.client!.clientId);
-
-      if (grantId) {
-        const grant = await ctx.oidc.provider.Grant.find(grantId);
-        if (grant) return grant;
-      }
-
-      return undefined;
-    },
+    loadExistingGrant,
   };
 
   _provider = new Provider(issuer, configuration);
   patchHashedClientSecretComparison(_provider);
+  _provider.on("server_error", (ctx, err) => {
+    const clientId = (ctx as { oidc?: { client?: { clientId?: string } } })
+      .oidc?.client?.clientId;
+    console.error("[OIDC] server_error", {
+      path: (ctx as { path?: string }).path,
+      clientId,
+      err,
+    });
+  });
 
   // Trust the proxy (Next.js + reverse proxy)
   _provider.proxy = true;

@@ -101,6 +101,7 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
       <ApiKeyCredentialSwitcher
         apiKey={mintState.apiKey}
         sdkToken={mintState.sdkToken}
+        defaultFormat="bearer"
       />
 
       <details className="text-[11px] text-sky-300/70">

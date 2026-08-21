@@ -14,9 +14,7 @@ export function loadDotenvFiles(cwd: string = process.cwd()) {
     parseEnvInto(readFileSync(p, "utf-8"), merged);
   }
   for (const [k, v] of Object.entries(merged)) {
-    if (process.env[k] === undefined) {
-      process.env[k] = v;
-    }
+    process.env[k] ??= v;
   }
 }
 

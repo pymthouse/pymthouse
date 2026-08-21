@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { formatUsdMicrosDisplay } from "@/lib/format-usd-micros";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 
 type CreditPayload = {
   creditAllowance: {
@@ -12,6 +12,11 @@ type CreditPayload = {
     consumedUsdMicros: string;
     hasAccess: boolean;
   } | null;
+  /**
+   * Owner billing pressure for the sidebar nudge. Omitted on older responses.
+   * `blocked` means spendable is zero without a payment method.
+   */
+  billingPressure?: "solvent" | "blocked" | "chargeable";
 };
 
 function hasDisplayableCredit(allowance: CreditPayload["creditAllowance"]): boolean {
@@ -28,9 +33,11 @@ function hasDisplayableCredit(allowance: CreditPayload["creditAllowance"]): bool
 /**
  * Quiet credit balance line for the dashboard sidebar user panel.
  * Fetches the shared owner wallet via GET /api/v1/me/credits.
+ * When Starter spendable is exhausted without a card, surfaces a blocked nudge.
  */
 export default function SidebarCreditPreview() {
   const [balanceLabel, setBalanceLabel] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,9 +51,16 @@ export default function SidebarCreditPreview() {
         });
         if (!res.ok) return;
         const body = (await res.json()) as CreditPayload;
-        if (cancelled || !hasDisplayableCredit(body.creditAllowance)) return;
+        if (cancelled) return;
+        if (body.billingPressure === "blocked") {
+          setBlocked(true);
+          setBalanceLabel(null);
+          return;
+        }
+        if (!hasDisplayableCredit(body.creditAllowance)) return;
+        setBlocked(false);
         setBalanceLabel(
-          formatUsdMicrosDisplay(body.creditAllowance!.balanceUsdMicros),
+          formatUsdMicrosSummary(body.creditAllowance!.balanceUsdMicros),
         );
       } catch {
         // Non-blocking preview — ignore abort/network/OpenMeter failures.
@@ -58,6 +72,18 @@ export default function SidebarCreditPreview() {
       controller.abort();
     };
   }, []);
+
+  if (blocked) {
+    return (
+      <Link
+        href="/billing"
+        className="block text-[11px] text-amber-400/90 hover:text-amber-300 transition-colors"
+        title="Add a payment method to continue on Owner Paid"
+      >
+        Payment method required
+      </Link>
+    );
+  }
 
   if (!balanceLabel) return null;
 

@@ -127,7 +127,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
     liveAICapReportInterval: config.liveAICapReportInterval || "5m",
   });
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (saveStateResetTimerRef.current !== null) {
       clearTimeout(saveStateResetTimerRef.current);

@@ -162,6 +162,53 @@ Redeploy Vercel. Usage, balance, and allowances return **503** without `OPENMETE
 
 Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMeter directly.
 
+### Stripe billing (dual plane)
+
+See [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-webhooks.md).
+
+**Plane A — OpenMeter Stripe app (platform cost rail):** Owners start on
+**Owner Sandbox Starter** (sandbox/free billing profile, no payment method,
+hard balance gate). Attaching a chargeable payment method
+(`POST /api/v1/me/billing/payment-method`) is required first and does **not**
+subscribe. Explicit **Upgrade** on `/billing` then picks an admin-defined
+Owner Paid tier (`POST /api/v1/me/billing/upgrade-paid` with
+`{ planKey, confirm: true }`): flat monthly fee + included usage + overage.
+Without a chargeable PM, Upgrade returns `payment_method_required` and does
+not change the tier. That path provisions a Stripe Customer (`cus_…`) via
+`STRIPE_SECRET_KEY`, pins the owners Stripe billing profile, starts a new
+billing cycle, and invoices overage `charge_automatically`.
+
+Sandbox is intentional for Sandbox Starter. Owners with a card who remain on
+sandbox should Upgrade to a Paid tier (consistency audit warns). M2M end-user
+sandbox pin / Paid upgrade is a follow-up.
+
+**Plane B — Merchant Stripe Connect:** app **Settings → Payments → Merchant Stripe
+Connect** uses Account Links + `/webhooks/stripe` for end-user retail collection.
+Never charges through the OM Stripe app.
+
+**MoonPay:** admin-only signer-refill tooling (`POST …/onramp/sessions` requires
+platform admin). Not shown on owner `/billing` for non-admins.
+
+**Konnect (production):**
+
+1. Install Stripe once in [Konnect → Metering & Billing → Settings → Stripe](https://developer.konghq.com/metering-and-billing/stripe-integration/) (API key + billing profile wizard).
+2. Set `OPENMETER_URL`, `OPENMETER_API_KEY`, and `STRIPE_SECRET_KEY` (same Stripe account) on Vercel.
+3. Bootstrap should log `Konnect Stripe app is ready` (not a missing-app warning).
+4. Starter provision auto-creates the per-app Stripe billing profile when missing.
+5. Optional: `OPENMETER_STRIPE_APP_ID` when multiple Stripe apps exist in the org.
+6. Configure a Connect webhook (connected-account events) → `/webhooks/stripe` with `STRIPE_WEBHOOK_SECRET`.
+
+**Self-hosted (Railway/OSS):**
+
+1. Ensure `OPENMETER_APPS_BASE_URL` is set on Railway OpenMeter (see §3) and redeploy **openmeter**.
+2. Bootstrap should log `Stripe marketplace OAuth is available` (not a 501 warning).
+3. Set `STRIPE_SECRET_KEY` for customer provisioning. Install the OM Stripe app via marketplace API key or OAuth so a Stripe app exists in OpenMeter.
+4. After the Stripe app exists, Starter provision auto-ensures the per-app billing profile; owner PM attach and invoices use that profile.
+5. Publish paid plans (OpenMeter plan sync). Merchant end-user checkout uses Connect (Plane B), not OM Checkout on the platform account.
+
+Legacy OM Stripe app OAuth callback (self-hosted install): `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/callback`.
+Merchant Connect Account Links use `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/…` Account Link routes.
+
 ## 8. Signer (`pymthouse` Railway service)
 
 The **`pymthouse`** service runs the signer DMZ ([`deploy/pymthouse/railway.json`](../deploy/pymthouse/railway.json) → `docker/signer-dmz/Dockerfile`). Point the **Vercel** app at its public domain:

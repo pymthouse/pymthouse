@@ -1,0 +1,99 @@
+import { timingSafeEqual } from "node:crypto";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  clearCookieOptions,
+  GITHUB_OAUTH_STATE_COOKIE,
+  GITHUB_SESSION_HANDOFF_COOKIE,
+  githubSessionHandoffCookieOptions,
+  openGithubOauthState,
+} from "@/lib/turnkey-github-cookies";
+import {
+  exchangeGithubOAuthCode,
+  fetchGithubUserProfile,
+  isGithubTurnkeyLoginConfigured,
+  loginTurnkeyWithGithub,
+} from "@/lib/turnkey-github-auth";
+import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+
+export const dynamic = "force-dynamic";
+
+function redirectToLogin(error: string): NextResponse {
+  const url = new URL("/login", getPublicOrigin());
+  url.searchParams.set("error", error);
+  const response = NextResponse.redirect(url);
+  response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+  return response;
+}
+
+function safeEqualString(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+function parseGithubCallbackOrThrow(request: NextRequest): {
+  state: NonNullable<ReturnType<typeof openGithubOauthState>>;
+  code: string;
+} {
+  const rawState = request.nextUrl.searchParams.get("state");
+  if (!rawState) {
+    throw new Error("InvalidOauthState");
+  }
+  const state = openGithubOauthState(rawState.trim());
+  if (!state) {
+    throw new Error("InvalidOauthState");
+  }
+  const csrfCookie = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
+  if (!csrfCookie || !safeEqualString(csrfCookie, state.csrf)) {
+    throw new Error("InvalidOauthState");
+  }
+
+  const rawCode = request.nextUrl.searchParams.get("code");
+  if (!rawCode) {
+    throw new Error("InvalidGithubCallback");
+  }
+  const code = rawCode.trim();
+  if (!code) {
+    throw new Error("InvalidGithubCallback");
+  }
+
+  return {
+    state,
+    code,
+  };
+}
+
+/** GitHub OAuth callback → Turnkey oauthLogin → handoff cookie → complete page. */
+export async function GET(request: NextRequest) {
+  if (!isGithubTurnkeyLoginConfigured()) {
+    return redirectToLogin("GitHubLoginNotConfigured");
+  }
+
+  try {
+    // Validate state/CSRF + code before any OAuth exchange side effects.
+    const { state, code } = parseGithubCallbackOrThrow(request);
+    const { accessToken } = await exchangeGithubOAuthCode(code);
+    const profile = await fetchGithubUserProfile(accessToken);
+    const { sessionToken } = await loginTurnkeyWithGithub({
+      publicKey: state.publicKey,
+      nonce: state.nonce,
+      profile,
+    });
+
+    const completeUrl = new URL("/auth/github/complete", getPublicOrigin());
+    completeUrl.searchParams.set("callbackUrl", state.callbackUrl);
+
+    const response = NextResponse.redirect(completeUrl);
+    response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+    response.cookies.set(
+      GITHUB_SESSION_HANDOFF_COOKIE,
+      sessionToken,
+      githubSessionHandoffCookieOptions(),
+    );
+    return response;
+  } catch (err) {
+    console.error("GitHub Turnkey login failed:", err);
+    return redirectToLogin("GitHubTurnkeyLoginFailed");
+  }
+}

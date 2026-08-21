@@ -1,4 +1,4 @@
-import { formatUsdMicrosDisplay } from "@/lib/format-usd-micros";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 
 /** Progress toward a plan's included usage allowance for the billing cycle. */
 export default function AllowanceProgressBar({
@@ -40,10 +40,10 @@ export default function AllowanceProgressBar({
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2 text-[12px] text-zinc-500">
         <span className="font-mono">
           <b className="font-medium text-zinc-300">
-            {formatUsdMicrosDisplay(used.toString())}
+            {formatUsdMicrosSummary(used.toString())}
           </b>
           {" / "}
-          {formatUsdMicrosDisplay(allowance.toString())} included this cycle
+          {formatUsdMicrosSummary(allowance.toString())} included this cycle
         </span>
         <span className="font-mono text-[11.5px] text-zinc-600">
           {pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}% of allowance used

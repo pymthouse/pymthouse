@@ -9,16 +9,12 @@ export default function MarketplaceLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
 
-  if (status === "loading") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-500">
-        <div className="animate-pulse">Loading...</div>
-      </div>
-    );
-  }
-
+  // No loading gate: signed-in requests get their session from the server on
+  // first paint, so only anonymous visitors ever see an unresolved session —
+  // and the public layout is already the right answer for them. Blocking on
+  // `status === "loading"` would put a spinner in front of a public page.
   if (session?.user) {
     return (
       <MarketplaceLayoutProvider insideDashboard>

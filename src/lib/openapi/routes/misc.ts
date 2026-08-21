@@ -6,7 +6,7 @@ import {
 } from "@/lib/openapi/schemas/misc";
 import { z } from "@/lib/openapi/zod";
 
-const jsonObject = z.object({}).passthrough();
+const jsonObject = z.looseObject({});
 
 defineRouteMetadata("get", "/api/v1/health", {
   tags: ["Platform"],
@@ -20,7 +20,7 @@ defineRouteMetadata("get", "/api/v1/health", {
 });
 
 defineRouteMetadata("post", "/api/v1/auth/validate", {
-  tags: ["Credentials"],
+  tags: ["Platform"],
   summary: "Validate API key (C0 POST)",
   description: "Provider-neutral validate when `BPP_VALIDATE_V2=1`.",
   request: {
@@ -63,16 +63,8 @@ defineRouteMetadata("get", "/api/v1/marketplace/{id}", {
 
 defineRouteMetadata("get", "/api/v1/pipeline-catalog", {
   tags: ["Discovery"],
-  summary: "Pipeline capability catalog",
+  summary: "Pipeline capability catalog (remote-signer discovery)",
   responses: {
     200: { description: "Catalog", content: { "application/json": { schema: jsonObject } } },
-  },
-});
-
-defineRouteMetadata("get", "/api/v1/pipeline-pricing", {
-  tags: ["Discovery"],
-  summary: "Pipeline pricing table",
-  responses: {
-    200: { description: "Pricing", content: { "application/json": { schema: jsonObject } } },
   },
 });

@@ -24,5 +24,6 @@ test(
     const auth = await authenticateRequestAsync(request);
     assert.ok(auth);
     assert.equal(auth.scopes, "sign:job");
+    assert.equal(auth.source, "session");
   },
 );

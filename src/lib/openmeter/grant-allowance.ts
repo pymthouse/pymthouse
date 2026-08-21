@@ -18,6 +18,37 @@ import { createKonnectCreditGrant } from "@/lib/openmeter/konnect-credits";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
+export type GrantAllowanceUsdMicros = (input: {
+  clientId: string;
+  externalUserId: string;
+  amountUsdMicros: bigint;
+  source: GrantSource;
+  featureKey?: string;
+  /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
+  idempotencyKey?: string;
+}) => Promise<{
+  externalUserId: string;
+  source: GrantSource;
+  grantedUsdMicros: string;
+  featureKey: string;
+  balance: TrialCreditBalance | null;
+}>;
+
+let grantAllowanceUsdMicrosForTests: GrantAllowanceUsdMicros | null = null;
+
+/**
+ * Test-only override for prepaid top-up settlement (Stripe webhook route).
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setGrantAllowanceUsdMicrosForTests(
+  fn: GrantAllowanceUsdMicros | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__setGrantAllowanceUsdMicrosForTests is only available in test");
+  }
+  grantAllowanceUsdMicrosForTests = fn;
+}
+
 export async function grantAllowanceUsdMicros(input: {
   clientId: string;
   externalUserId: string;
@@ -33,6 +64,10 @@ export async function grantAllowanceUsdMicros(input: {
   featureKey: string;
   balance: TrialCreditBalance | null;
 }> {
+  if (grantAllowanceUsdMicrosForTests) {
+    return grantAllowanceUsdMicrosForTests(input);
+  }
+
   const client = getHostedTrialOpenMeterClient();
   if (!client) {
     throw new Error("OpenMeter not configured");
@@ -44,7 +79,7 @@ export async function grantAllowanceUsdMicros(input: {
     externalUserId,
   });
   const provisionExternalUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
+    ? identity.payerPlatformUserId || externalUserId
     : externalUserId;
 
   await resolveOrCreateAppUser({
@@ -98,6 +133,7 @@ export async function grantAllowanceUsdMicros(input: {
     clientId: identity.publicClientId,
     externalUserId: provisionExternalUserId,
     featureKey,
+    identity,
   });
 
   return {

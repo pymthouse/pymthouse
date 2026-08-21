@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
+import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
+import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
+import { listOwnerActiveSubscriptions } from "@/lib/owner-billing-data";
 
 /**
  * Lightweight owner prepaid credit summary for the dashboard sidebar.
  * Single Konnect customer lookup (`owner:{users.id}`) — not an end-user sum.
+ * Also returns billingPressure so the sidebar can nudge cardless exhausted owners.
  */
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -16,10 +20,33 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const creditAllowance = await getOwnerPrepaidCreditBalance(userId);
+  const [creditAllowance, subscriptions, chargeable] = await Promise.all([
+    getOwnerPrepaidCreditBalance(userId),
+    listOwnerActiveSubscriptions(userId).catch((err) => {
+      console.warn(
+        "me/credits: subscription lookup failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return [];
+    }),
+    ownerHasChargeablePaymentMethod(userId).catch((err) => {
+      console.warn(
+        "me/credits: chargeability lookup failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
+    }),
+  ]);
+
+  const billingPressure = resolveOwnerBillingPressure({
+    hasPaymentMethod: chargeable === true,
+    creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
+    subscriptions,
+  });
+
   if (!creditAllowance) {
-    return NextResponse.json({ creditAllowance: null });
+    return NextResponse.json({ creditAllowance: null, billingPressure });
   }
 
-  return NextResponse.json({ creditAllowance });
+  return NextResponse.json({ creditAllowance, billingPressure });
 }

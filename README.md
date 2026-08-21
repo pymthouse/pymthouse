@@ -103,12 +103,17 @@ In another terminal:
 DATABASE_URL='postgresql://...' npm run bootstrap
 ```
 
-This creates an admin user and prints a `pmth_...` bearer token. The token is valid for 1 year.
+This creates an admin user, ensures the platform default app and the
+customer-service OIDC client (`web_customer_service`), and prints a `pmth_...`
+bearer token (valid 1 year). On first create (or `--rotate-secret`) it writes
+CS client env to `.env.customer-service-oidc` (gitignored, mode 600) — copy
+that into customer-service `.env`, do not paste the secret into logs.
 
 Optionally specify an email for the admin user:
 
 ```bash
 DATABASE_URL='postgresql://...' npm run bootstrap admin@example.com
+DATABASE_URL='postgresql://...' npm run bootstrap -- --rotate-secret
 ```
 
 If an admin already exists, the script issues a new token for the existing admin instead of creating a new user.

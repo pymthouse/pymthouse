@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
-import type { GrantSource } from "@/lib/billing/types";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
-import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
-
-const GRANT_SOURCES = new Set<GrantSource>([
-  "trial",
-  "manual",
-  "promo",
-  "plan_adjustment",
-  "onramp",
-]);
+import { readAppUserCreditBalance } from "@/lib/openmeter/entitlements";
 
 export async function GET(
   request: NextRequest,
@@ -23,75 +13,59 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const balance = await getTrialCreditBalance({
+  const currency = request.nextUrl.searchParams.get("filter[currency][eq]")?.trim();
+  const featureKey = request.nextUrl.searchParams
+    .get("filter[feature_key][eq]")
+    ?.trim();
+
+  const balance = await readAppUserCreditBalance({
     clientId: access.app.id,
     externalUserId,
+    currency: currency || undefined,
+    featureKey: featureKey || undefined,
   });
   if (!balance) {
     return NextResponse.json({ error: "OpenMeter not configured" }, { status: 503 });
   }
 
   return NextResponse.json({
-    externalUserId,
-    allowances: {
-      balanceUsdMicros: balance.balanceUsdMicros,
-      consumedUsdMicros: balance.consumedUsdMicros,
-      lifetimeGrantedUsdMicros: balance.lifetimeGrantedUsdMicros,
-      hasAccess: balance.hasAccess,
-    },
+    externalUserId: balance.externalUserId,
+    customerId: balance.customerId,
+    currency: balance.currency,
+    live: balance.live,
+    pending: balance.pending,
+    settled: balance.settled,
+    retrievedAt: balance.retrievedAt,
   });
 }
 
+/**
+ * Free prepaid grants are admin-only (customer-service /
+ * POST /api/v1/admin/billing/owners/{userId}/grants). Paid top-ups use Stripe
+ * Checkout + webhook; onramp settle remains a separate admin path.
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
-  const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const { id: clientId } = await params;
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await request.json().catch(() => ({}));
-  const amountUsdMicros = BigInt(String(body.amountUsdMicros || "0"));
-  if (amountUsdMicros <= 0n) {
-    return NextResponse.json({ error: "amountUsdMicros must be positive" }, { status: 400 });
-  }
-
-  const sourceRaw = String(body.source || "manual").trim() as GrantSource;
-  const source = GRANT_SOURCES.has(sourceRaw) ? sourceRaw : "manual";
-
-  const featureKey =
-    typeof body.featureKey === "string" && body.featureKey.trim()
-      ? body.featureKey.trim()
-      : undefined;
-
-  try {
-    const result = await grantAllowanceUsdMicros({
-      clientId: access.app.id,
-      externalUserId,
-      amountUsdMicros,
-      source,
-      featureKey,
-    });
-
-    const response: Record<string, unknown> = {
-      externalUserId: result.externalUserId,
-      source: result.source,
-      grantedUsdMicros: result.grantedUsdMicros,
-      featureKey: result.featureKey,
-    };
-    if (result.balance) {
-      Object.assign(response, result.balance);
-    }
-    return NextResponse.json(response);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Grant failed";
-    if (message.includes("OpenMeter not configured")) {
-      return NextResponse.json({ error: message }, { status: 503 });
-    }
-    console.error("[allowances] grant failed:", err);
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
+  return NextResponse.json(
+    {
+      type: "https://pymthouse.com/problems/free-grant-admin-only",
+      title: "Free credit grants are admin-only",
+      status: 403,
+      code: "free_grant_admin_only",
+      detail:
+        "Manual prepaid credit grants must use POST /api/v1/admin/billing/owners/{userId}/grants (platform admin). For paid balance top-ups use the wallet top-up / Stripe Checkout flow.",
+    },
+    {
+      status: 403,
+      headers: { "Content-Type": "application/problem+json" },
+    },
+  );
 }

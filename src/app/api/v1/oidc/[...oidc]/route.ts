@@ -41,6 +41,14 @@ import {
 } from "@/lib/oidc/scopes";
 import { handleSignerJwtTokenExchange, isSignerJwtTokenExchangeRequest } from "@/lib/oidc/signer-jwt-token-exchange";
 import { rotateProgrammaticRefreshToken } from "@/lib/oidc/programmatic-tokens";
+import { createCorrelationId } from "@/lib/audit";
+import {
+  AppScopedSignerTokenExchangeError,
+  handleIssuerApiKeySignerTokenExchange,
+  isApiKeySubjectTokenType,
+  looksLikeAppApiKeySubjectToken,
+  SUBJECT_ACCESS_TOKEN_TYPE,
+} from "@/lib/oidc/app-scoped-signer-token-exchange";
 
 const RESOURCE_REQUIRED_GRANTS = new Set([
   "urn:ietf:params:oauth:grant-type:device_code",
@@ -60,7 +68,13 @@ function requestedScopesFromParams(params: URLSearchParams): string[] {
 function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
   if (err instanceof MintUserSignerTokenError) {
     return NextResponse.json(
-      { error: err.code, error_description: err.message },
+      {
+        error: err.code,
+        error_description: err.message,
+        // Additive: `error` keeps its OAuth meaning, `reason` narrows a billing
+        // rejection to the same code GET billing/state reports.
+        ...(err.reason ? { reason: err.reason } : {}),
+      },
       { status: err.status },
     );
   }
@@ -192,6 +206,7 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         request,
         exchangeParams,
       );
+      const subjectToken = exchangeParams.get("subject_token") || "";
       const subjectTokenType = exchangeParams.get("subject_token_type") || "";
       const resourceParam = exchangeParams.get("resource");
       try {
@@ -205,11 +220,36 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           const result = await handleDeviceApprovalTokenExchange({
             clientId,
             clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
+            subjectToken,
             subjectTokenType,
             resource: resourceParam,
             requestedTokenType: exchangeParams.get("requested_token_type"),
             audience: exchangeParams.getAll("audience"),
+          });
+          return NextResponse.json(result, {
+            headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+          });
+        }
+
+        // API key → SignerSession (same envelope as app-scoped). Prefer the
+        // canonical RFC 8693 private type; keep legacy access_token + key-shape.
+        const isCanonicalApiKeyExchange = isApiKeySubjectTokenType(subjectTokenType);
+        const isLegacyApiKeyExchange =
+          subjectTokenType.trim() === SUBJECT_ACCESS_TOKEN_TYPE &&
+          looksLikeAppApiKeySubjectToken(subjectToken);
+        if (isCanonicalApiKeyExchange || isLegacyApiKeyExchange) {
+          const result = await handleIssuerApiKeySignerTokenExchange({
+            clientId,
+            clientSecret,
+            grantType,
+            subjectToken,
+            subjectTokenType,
+            requestedTokenType: exchangeParams.get("requested_token_type") || "",
+            resource: resourceParam || "",
+            audiences: exchangeParams.getAll("audience"),
+            discovery_url: exchangeParams.get("discovery_url") || undefined,
+            caps: exchangeParams.getAll("caps"),
+            correlationId: createCorrelationId(),
           });
           return NextResponse.json(result, {
             headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
@@ -227,7 +267,7 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           const result = await handleSignerJwtTokenExchange({
             clientId,
             clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
+            subjectToken,
             subjectTokenType,
             resource: resourceParam,
             audience: exchangeParams.getAll("audience"),
@@ -255,7 +295,7 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           const result = await handleGatewayTokenExchange({
             clientId,
             clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
+            subjectToken,
             subjectTokenType,
             resource: resourceParam,
             requestedTokenType: exchangeParams.get("requested_token_type"),
@@ -269,7 +309,7 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         const result = await handleTokenExchange({
           clientId,
           clientSecret,
-          subjectToken: exchangeParams.get("subject_token") || "",
+          subjectToken,
           subjectTokenType,
           scope: exchangeParams.get("scope") || undefined,
           resource: exchangeParams.get("resource") || undefined,
@@ -278,6 +318,23 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
         });
       } catch (err) {
+        if (err instanceof AppScopedSignerTokenExchangeError) {
+          console.warn("[OIDC] api-key token exchange rejected", {
+            code: err.code,
+            detail: err.message,
+          });
+          const headers: Record<string, string> = {
+            "Cache-Control": "no-store",
+            Pragma: "no-cache",
+          };
+          if (err.status === 401 && err.code === "invalid_client") {
+            headers["WWW-Authenticate"] = 'Basic realm="token"';
+          }
+          return NextResponse.json(
+            { error: err.code, error_description: err.message },
+            { status: err.status, headers },
+          );
+        }
         if (err instanceof TokenExchangeError) {
           console.warn("[OIDC] token exchange rejected", {
             code: err.code,

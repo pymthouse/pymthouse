@@ -15,5 +15,14 @@ export function sanitizeForLog(value: unknown): string {
       return "[unserializable]";
     }
   }
-  return String(value).replace(/[\n\r]/g, "");
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return String(value).replace(/[\n\r]/g, "");
+  }
+  return "";
 }

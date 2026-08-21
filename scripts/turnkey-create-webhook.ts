@@ -97,7 +97,7 @@ async function main() {
     {
       activityId: activity?.id,
       status: activity?.status,
-      webhookEndpointId: result?.webhookEndpointId,
+      webhookEndpointId: result?.endpointId,
       url: webhookUrl,
       eventType: "BALANCE_FINALIZED_UPDATES",
     },

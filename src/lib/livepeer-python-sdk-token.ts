@@ -1,28 +1,35 @@
+import {
+  buildDiscoverOrchestratorsUrl,
+  normalizeDiscoveryCaps,
+} from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export type LivepeerPythonSdkTokenPayload = {
   signer: string;
   discovery?: string;
+  caps?: string[];
   signer_headers: {
     Authorization: string;
   };
 };
 
 /**
- * Discovery URL for livepeer-python-sdk `--token` payloads.
- * Prefer DISCOVERY_URL; fall back to ORCH_WEBHOOK_URL (production orch pool).
+ * Default discovery URL for livepeer-python-sdk `--token` payloads:
+ * `{signer}/discover-orchestrators`.
  */
-export function getLivepeerPythonSdkDiscoveryUrl(): string | undefined {
-  const discovery = process.env.DISCOVERY_URL?.trim();
-  if (discovery) return discovery;
-  const orch = process.env.ORCH_WEBHOOK_URL?.trim();
-  return orch || undefined;
+export function getLivepeerPythonSdkDiscoveryUrl(
+  signerUrl?: string,
+): string | undefined {
+  const signer = (signerUrl ?? getClientSignerApiUrl()).trim();
+  if (!signer) return undefined;
+  return buildDiscoverOrchestratorsUrl(signer);
 }
 
 export function buildLivepeerPythonSdkTokenPayload(input: {
   apiKey: string;
   signer?: string;
   discovery?: string | null;
+  caps?: readonly string[] | null;
 }): LivepeerPythonSdkTokenPayload {
   const apiKey = input.apiKey.trim();
   if (!apiKey) {
@@ -36,8 +43,10 @@ export function buildLivepeerPythonSdkTokenPayload(input: {
 
   const discovery =
     input.discovery === undefined
-      ? getLivepeerPythonSdkDiscoveryUrl()
+      ? getLivepeerPythonSdkDiscoveryUrl(signer)
       : input.discovery?.trim() || undefined;
+
+  const caps = normalizeDiscoveryCaps(input.caps ?? undefined);
 
   const payload: LivepeerPythonSdkTokenPayload = {
     signer,
@@ -47,6 +56,9 @@ export function buildLivepeerPythonSdkTokenPayload(input: {
   };
   if (discovery) {
     payload.discovery = discovery;
+  }
+  if (caps) {
+    payload.caps = caps;
   }
   return payload;
 }
@@ -63,6 +75,7 @@ export function createLivepeerPythonSdkToken(input: {
   apiKey: string;
   signer?: string;
   discovery?: string | null;
+  caps?: readonly string[] | null;
 }): string {
   return encodeLivepeerPythonSdkToken(buildLivepeerPythonSdkTokenPayload(input));
 }

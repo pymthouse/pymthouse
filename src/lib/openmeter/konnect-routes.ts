@@ -57,6 +57,10 @@ export function rewriteKonnectPathname(pathname: string, method: string): string
 
   path = path.replace(/\/billing\/customers\/([^/]+)(?=\/|$)/, "/customers/$1/billing");
 
+  // Custom Invoicing completion endpoints keep `/apps/custom-invoicing/...`
+  // after the version strip (no further rewrite needed). Notification channels
+  // similarly land at `/notification/...`.
+
   const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(path);
   if (customerSubscriptions && method.toUpperCase() === "GET") {
     return path.replace(/\/customers\/[^/]+\/subscriptions$/, "/subscriptions");
@@ -66,29 +70,7 @@ export function rewriteKonnectPathname(pathname: string, method: string): string
 }
 
 /** Konnect list endpoints use deepObject filters and page[size|number] pagination. */
-export function rewriteKonnectSearchParams(
-  pathname: string,
-  method: string,
-  searchParams: URLSearchParams,
-): URLSearchParams {
-  const params = new URLSearchParams(searchParams);
-
-  const normalizedPath = pathname.replace(/\/api\/v[12](?=\/|$)/, "");
-  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(normalizedPath);
-  if (customerSubscriptions && method.toUpperCase() === "GET") {
-    params.set("filter[customer_id][eq]", decodeURIComponent(customerSubscriptions[1]));
-  }
-
-  if (params.has("key")) {
-    const key = params.get("key") ?? "";
-    params.delete("key");
-    if (key.endsWith(":")) {
-      params.set("filter[key][contains]", key);
-    } else {
-      params.set("filter[key][eq]", key);
-    }
-  }
-
+function rewriteKonnectPageParams(params: URLSearchParams): void {
   if (params.has("pageSize")) {
     const pageSize = params.get("pageSize");
     params.delete("pageSize");
@@ -104,6 +86,34 @@ export function rewriteKonnectSearchParams(
       params.set("page[number]", page);
     }
   }
+}
+
+function rewriteKonnectKeyFilter(params: URLSearchParams): void {
+  if (!params.has("key")) return;
+  const key = params.get("key") ?? "";
+  params.delete("key");
+  if (key.endsWith(":")) {
+    params.set("filter[key][contains]", key);
+  } else {
+    params.set("filter[key][eq]", key);
+  }
+}
+
+export function rewriteKonnectSearchParams(
+  pathname: string,
+  method: string,
+  searchParams: URLSearchParams,
+): URLSearchParams {
+  const params = new URLSearchParams(searchParams);
+
+  const normalizedPath = pathname.replace(/\/api\/v[12](?=\/|$)/, "");
+  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(normalizedPath);
+  if (customerSubscriptions && method.toUpperCase() === "GET") {
+    params.set("filter[customer_id][eq]", decodeURIComponent(customerSubscriptions[1]));
+  }
+
+  rewriteKonnectKeyFilter(params);
+  rewriteKonnectPageParams(params);
 
   // OpenMeter SDK events.list uses subject/limit/from/to; Konnect expects
   // filter[subject][eq], page[size], and filter[time][gte|lte]. Without this,
@@ -111,6 +121,16 @@ export function rewriteKonnectSearchParams(
   // the viewer's own signed-ticket history under busy platform traffic.
   if (method.toUpperCase() === "GET" && /\/events\/?$/.test(normalizedPath)) {
     rewriteKonnectEventsListParams(params);
+  }
+
+  // Invoice list: SDK `customers` / `statuses` are ignored by Konnect unless
+  // rewritten to deepObject filters — otherwise gathering lookups miss and
+  // soft-neg falls back to a gross meter estimate.
+  if (
+    method.toUpperCase() === "GET" &&
+    /\/billing\/invoices\/?$/.test(normalizedPath)
+  ) {
+    rewriteKonnectInvoiceListParams(params);
   }
 
   return params;
@@ -185,10 +205,49 @@ function rewriteKonnectEventsListParams(params: URLSearchParams): void {
   moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
 }
 
+function rewriteKonnectInvoiceListParams(params: URLSearchParams): void {
+  setKonnectEqOrOeqFilter(
+    params,
+    "customer.id",
+    takeTrimmedParamValues(params, "customers"),
+  );
+  setKonnectEqOrOeqFilter(
+    params,
+    "status",
+    takeTrimmedParamValues(params, "statuses"),
+  );
+}
+
+/**
+ * Invoice mutation actions 405 on Konnect `/v3/openmeter` (route exists but
+ * method is rejected). Cloud UI / settlement use `/metering/v1` for the same
+ * OpenMeter paths — same class of gap as subscription DELETE/restore.
+ *
+ * Matches:
+ * - POST …/billing/invoices/invoice  (invoicePendingLines)
+ * - POST …/billing/invoices/{id}/advance|approve|retry|snapshot-quantities
+ */
+const KONNECT_V3_INVOICE_ACTION_PATH_RE =
+  /^\/v3\/openmeter(\/billing\/invoices(?:\/invoice|\/[^/]+\/(?:advance|approve|retry|snapshot-quantities)))$/;
+
+export function rewriteKonnectInvoiceActionToMeteringV1(
+  pathname: string,
+  method: string,
+): string {
+  if (method.toUpperCase() !== "POST") {
+    return pathname;
+  }
+  const match = KONNECT_V3_INVOICE_ACTION_PATH_RE.exec(pathname);
+  if (!match) {
+    return pathname;
+  }
+  return `/metering/v1${match[1]}`;
+}
+
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
   const next = new URL(url.toString());
   const rewrittenPath = rewriteKonnectPathname(next.pathname, method);
-  next.pathname = rewrittenPath;
+  next.pathname = rewriteKonnectInvoiceActionToMeteringV1(rewrittenPath, method);
   next.search = rewriteKonnectSearchParams(url.pathname, method, next.searchParams).toString();
   return next;
 }
@@ -368,7 +427,50 @@ function isKonnectCustomerMutation(pathname: string, method: string): boolean {
   return /\/customers(?:\/[^/]+)?$/.test(normalizedPath);
 }
 
-function normalizeKonnectCustomerRecord(record: unknown): unknown {
+/** String map from Konnect `labels` / SDK `metadata` bags (drop non-strings). */
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === "string") {
+      out[key] = nested;
+    }
+  }
+  return out;
+}
+
+/**
+ * Kong customer label values: max 63 chars, must match
+ * `^[a-z0-9A-Z]{1}([a-z0-9A-Z-._]*[a-z0-9A-Z]+)?$` (no commas/spaces).
+ * Drop anything that would 400 the PUT — callers treat SDK `metadata` as soft KV.
+ */
+const KONNECT_LABEL_VALUE_RE =
+  /^[a-z0-9A-Z]{1}([a-z0-9A-Z-._]*[a-z0-9A-Z]+)?$/;
+
+export function isKonnectLabelValue(value: string): boolean {
+  return value.length > 0 && value.length <= 63 && KONNECT_LABEL_VALUE_RE.test(value);
+}
+
+export function sanitizeKonnectLabels(
+  labels: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labels)) {
+    if (isKonnectLabelValue(value)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Konnect stores customer KV under `labels` and silently discards `metadata`.
+ * The OpenMeter SDK reads/writes `metadata`, so merge labels into metadata on
+ * the way in and map metadata → labels on the way out.
+ */
+export function normalizeKonnectCustomerRecord(record: unknown): unknown {
   if (!record || typeof record !== "object") {
     return record;
   }
@@ -385,7 +487,36 @@ function normalizeKonnectCustomerRecord(record: unknown): unknown {
     };
     delete item.usage_attribution;
   }
+
+  const fromLabels = stringRecord(item.labels);
+  const fromMetadata = stringRecord(item.metadata);
+  const merged = { ...fromLabels, ...fromMetadata };
+  if (Object.keys(merged).length > 0) {
+    item.metadata = merged;
+  } else if ("metadata" in item && item.metadata == null) {
+    item.metadata = {};
+  }
+
   return item;
+}
+
+/** Map SDK customer `metadata` onto Konnect `labels` (full-replace PUT). */
+function rewriteKonnectCustomerRequestBody(body: unknown): unknown {
+  const snake = deepCamelToSnake(body);
+  if (!snake || typeof snake !== "object" || Array.isArray(snake)) {
+    return snake;
+  }
+  const record = { ...(snake as Record<string, unknown>) };
+  const fromLabels = stringRecord(record.labels);
+  const fromMetadata = stringRecord(record.metadata);
+  const merged = sanitizeKonnectLabels({ ...fromLabels, ...fromMetadata });
+  delete record.metadata;
+  if (Object.keys(merged).length > 0) {
+    record.labels = merged;
+  } else {
+    delete record.labels;
+  }
+  return record;
 }
 
 /** Normalize SDK JSON bodies to Konnect v3 request shapes. */
@@ -402,7 +533,7 @@ export function rewriteKonnectRequestBody(
   }
 
   if (isKonnectCustomerMutation(pathname, method)) {
-    return deepCamelToSnake(body);
+    return rewriteKonnectCustomerRequestBody(body);
   }
 
   if (verb === "POST" && normalizedPath.endsWith("/subscriptions")) {
@@ -462,7 +593,11 @@ export function normalizeKonnectResponseBody(body: unknown): unknown {
     listed &&
     typeof listed === "object" &&
     "id" in listed &&
-    ("key" in listed || "usage_attribution" in listed || "usageAttribution" in listed)
+    ("key" in listed ||
+      "usage_attribution" in listed ||
+      "usageAttribution" in listed ||
+      "labels" in listed ||
+      "metadata" in listed)
   ) {
     return normalizeKonnectCustomerRecord(listed);
   }

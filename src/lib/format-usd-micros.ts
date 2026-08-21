@@ -103,6 +103,37 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
   }
 }
 
+/**
+ * Summary money format: exactly 2 decimals, rounded half-up (`$0.66`, not the
+ * truncated `$0.65` that {@link formatUsdMicrosDisplay} produces).
+ *
+ * Use for headers, totals and the cost waterfall. Detail table cells should
+ * keep full precision via {@link formatUsdMicrosString} and expose the exact
+ * value on hover — see {@link formatUsdMicrosExactTitle}.
+ */
+export function formatUsdMicrosSummary(microsStr: string | null | undefined): string {
+  const amount = parseUsdMicrosString(microsStr ?? "");
+  if (amount == null) return "$0.00";
+  const negative = amount < 0n;
+  const abs = negative ? -amount : amount;
+  // Round half-up at the cent boundary.
+  const cents = (abs + USD_MICROS_PER_CENT / 2n) / USD_MICROS_PER_CENT;
+  const whole = cents / 100n;
+  const frac = (cents % 100n).toString().padStart(2, "0");
+  return `${negative ? "-" : ""}$${whole.toString()}.${frac}`;
+}
+
+/**
+ * Exact value for a `title` tooltip next to a rounded summary figure, so the
+ * precise amount stays reachable without cluttering the headline number.
+ */
+export function formatUsdMicrosExactTitle(
+  microsStr: string | null | undefined,
+): string | undefined {
+  const exact = formatUsdMicrosString(microsStr, 6);
+  return exact ?? undefined;
+}
+
 /** Format a non-negative dollar amount from whole + fractional digit string. */
 function formatDollarParts(whole: bigint, fracDigits: string): string {
   const frac = trimFracDigitZeros(

@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
+import CostWaterfall from "@/components/billing/CostWaterfall";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
 import {
@@ -18,7 +19,8 @@ import type {
   BillingAppRow,
   BillingChartSeries,
 } from "@/lib/billing-usage-dashboard-data";
-import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
 
 /** Client-safe dashboard payload (bigints as strings). */
@@ -33,14 +35,20 @@ type BillingUsageDashboardClientPayload = {
   appUsage: BillingAppUsageSummary[];
   chartData: { date: string; value: number }[];
   chartSeries: BillingChartSeries[];
+  chartSeriesByIdentity: BillingChartSeries[];
   totalRequests: number;
   totalFeeWei: string;
   totalNetworkFeeUsdMicros: string;
   appsWithUsage: number;
   activeSubscriptions?: OwnerBillingSubscriptionRow[];
+  creditBalanceUsdMicros?: string | null;
+  defaultPaymentMethod?: { brand?: string | null; last4?: string | null } | null;
 };
 
 type UsageTab = "mine" | "all";
+
+/** Chart series split: app × pipeline/model (default) or app × identity. */
+type ChartDimension = "pipeline" | "identity";
 
 type LoadState =
   | { status: "loading" }
@@ -102,6 +110,9 @@ function deriveFilteredView(
   data: BillingUsageDashboardClientPayload,
   selectedPublicClientIds: string[],
   historyScope: "own" | "all",
+  chartDimension: ChartDimension,
+  selectedIdentityIds: string[],
+  allIdentityIds: string[],
 ) {
   const allIds = data.orderedApps.map((a) => a.publicClientId);
   const allSelected =
@@ -109,11 +120,24 @@ function deriveFilteredView(
   const noneSelected = selectedPublicClientIds.length === 0;
   const selectedSet = new Set(selectedPublicClientIds);
 
-  let filteredSeries = data.chartSeries;
+  const allIdentitiesSelected =
+    allIdentityIds.length === 0 ||
+    selectedIdentityIds.length === allIdentityIds.length;
+  const identitySet = new Set(selectedIdentityIds);
+
+  const baseSeries =
+    chartDimension === "identity" ? data.chartSeriesByIdentity : data.chartSeries;
+
+  let filteredSeries = baseSeries;
   if (!allSelected) {
     filteredSeries = noneSelected
       ? []
-      : data.chartSeries.filter((s) => selectedSet.has(s.appId));
+      : baseSeries.filter((s) => selectedSet.has(s.appId));
+  }
+  // Identity series carry the identity in `jobType`, so the filter applies only
+  // to that dimension; pipeline/model series stay app-filtered.
+  if (chartDimension === "identity" && !allIdentitiesSelected) {
+    filteredSeries = filteredSeries.filter((s) => identitySet.has(s.jobType));
   }
 
   let filteredAppUsage = data.appUsage;
@@ -121,6 +145,26 @@ function deriveFilteredView(
     filteredAppUsage = noneSelected
       ? []
       : data.appUsage.filter((e) => selectedSet.has(e.app.publicClientId));
+  }
+  if (!allIdentitiesSelected) {
+    filteredAppUsage = filteredAppUsage
+      .map((entry) => {
+        const byUser = entry.byUser.filter((u) =>
+          identitySet.has(u.externalUserId ?? u.endUserId),
+        );
+        const requestCount = byUser.reduce((sum, u) => sum + u.requestCount, 0);
+        const networkFeeUsdMicros = byUser
+          .reduce((sum, u) => sum + BigInt(u.networkFeeUsdMicros || "0"), 0n)
+          .toString();
+        return {
+          ...entry,
+          byUser,
+          requestCount,
+          networkFeeUsdMicros,
+          endUserBillableUsdMicros: networkFeeUsdMicros,
+        };
+      })
+      .filter((entry) => entry.byUser.length > 0);
   }
   filteredAppUsage = filteredAppUsage.filter((e) => e.requestCount > 0);
 
@@ -146,8 +190,12 @@ function deriveFilteredView(
 
 function ActiveSubscriptionSummary({
   subscriptions,
+  creditBalanceUsdMicros,
+  defaultPaymentMethod,
 }: Readonly<{
   subscriptions: OwnerBillingSubscriptionRow[];
+  creditBalanceUsdMicros: string | null;
+  defaultPaymentMethod: { brand?: string | null; last4?: string | null } | null;
 }>) {
   if (subscriptions.length === 0) {
     return (
@@ -167,16 +215,36 @@ function ActiveSubscriptionSummary({
 
   const primary = subscriptions[0];
   const extras = subscriptions.length - 1;
-  const usedLabel = formatUsdMicrosString(primary.usedUsdMicros, 4) ?? "$0";
   const allowanceMicros = primary.discountUsdMicros;
   const hasAllowance =
     allowanceMicros != null && BigInt(allowanceMicros) > 0n;
-  const usageLine = hasAllowance
-    ? `${primary.requestCount.toLocaleString()} requests this cycle`
-    : `${usedLabel} this cycle · ${primary.requestCount.toLocaleString()} requests`;
+  // Requests and dollars are separate quantities — render both explicitly
+  // rather than letting one percentage stand in for the other.
+  const requestsLabel = `${primary.requestCount.toLocaleString("en-US")} request${
+    primary.requestCount === 1 ? "" : "s"
+  }`;
+  const usageLine =
+    hasAllowance && allowanceMicros
+      ? `${requestsLabel} · ${formatUsdMicrosSummary(primary.usedUsdMicros)} of ${formatUsdMicrosSummary(allowanceMicros)} allowance used`
+      : `${requestsLabel} · ${formatUsdMicrosSummary(primary.usedUsdMicros)} this cycle`;
+  const pressure = resolveOwnerBillingPressure({
+    hasPaymentMethod: Boolean(defaultPaymentMethod),
+    creditBalanceUsdMicros,
+    subscriptions,
+  });
+  const needsPaymentMethod = pressure === "blocked";
+  const billingLinkLabel = needsPaymentMethod
+    ? "Attach payment method →"
+    : "View Billing →";
 
   return (
-    <div className="rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
+    <div
+      className={`rounded-lg border px-3 py-3 ${
+        needsPaymentMethod
+          ? "border-amber-500/30 bg-amber-500/10"
+          : "border-white/[0.05] bg-black/20"
+      }`}
+    >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
@@ -195,12 +263,22 @@ function ActiveSubscriptionSummary({
             ) : null}
           </p>
           <p className="mt-0.5 font-mono text-xs text-zinc-500">{usageLine}</p>
+          {needsPaymentMethod ? (
+            <p className="mt-1 text-xs text-amber-200/90">
+              Starter allowance used up — usage is paused until you attach a payment
+              method.
+            </p>
+          ) : null}
         </div>
         <Link
           href="/billing"
-          className="shrink-0 text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+          className={`shrink-0 text-sm font-medium transition-colors ${
+            needsPaymentMethod
+              ? "text-amber-300 hover:text-amber-200"
+              : "text-emerald-400 hover:text-emerald-300"
+          }`}
         >
-          View Billing →
+          {billingLinkLabel}
         </Link>
       </div>
       {hasAllowance && allowanceMicros ? (
@@ -210,6 +288,15 @@ function ActiveSubscriptionSummary({
           className="mt-3"
         />
       ) : null}
+
+      <CostWaterfall
+        className="mt-4"
+        usedUsdMicros={primary.usedUsdMicros}
+        planIncludedUsdMicros={primary.discountUsdMicros}
+        creditBalanceUsdMicros={creditBalanceUsdMicros}
+        paymentMethod={defaultPaymentMethod}
+        needsPaymentMethod={needsPaymentMethod}
+      />
     </div>
   );
 }
@@ -322,6 +409,151 @@ function AppUsageList({
   );
 }
 
+function identityFilterOptions(
+  appUsage: BillingUsageDashboardClientPayload["appUsage"],
+): { value: string; label: string }[] {
+  const feeByIdentity = new Map<string, bigint>();
+  for (const entry of appUsage) {
+    for (const user of entry.byUser) {
+      const id = user.externalUserId;
+      if (!id) continue;
+      feeByIdentity.set(
+        id,
+        (feeByIdentity.get(id) ?? 0n) + BigInt(user.networkFeeUsdMicros || "0"),
+      );
+    }
+  }
+  return [...feeByIdentity.entries()]
+    .sort((a, b) => {
+      if (a[1] === b[1]) return a[0].localeCompare(b[0]);
+      return b[1] > a[1] ? 1 : -1;
+    })
+    .map(([id]) => ({ value: id, label: id }));
+}
+
+function BillingPeriodPanel({
+  data,
+  showTabs,
+  activeTab,
+  isMultiApp,
+  filterOptions,
+  identityOptions,
+  selectedAppIds,
+  setSelectedAppIds,
+  selectedIdentityIds,
+  setSelectedIdentityIds,
+  chartDimension,
+  setChartDimension,
+  filteredSeries,
+}: Readonly<{
+  data: BillingUsageDashboardClientPayload;
+  showTabs: boolean;
+  activeTab: UsageTab;
+  isMultiApp: boolean;
+  filterOptions: { value: string; label: string }[];
+  identityOptions: { value: string; label: string }[];
+  selectedAppIds: string[];
+  setSelectedAppIds: (ids: string[]) => void;
+  selectedIdentityIds: string[];
+  setSelectedIdentityIds: (ids: string[]) => void;
+  chartDimension: ChartDimension;
+  setChartDimension: (dimension: ChartDimension) => void;
+  filteredSeries: BillingChartSeries[];
+}>) {
+  const periodCopy =
+    activeTab === "all" && showTabs
+      ? "Platform-wide usage for the current cycle."
+      : "Usage for apps you own or administer.";
+  const showMineSubscriptions = activeTab === "mine" || !showTabs;
+
+  return (
+    <div className="mb-6 sm:mb-8 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="font-semibold text-zinc-100">This billing period</h3>
+          <p className="text-xs text-zinc-500 mt-1">{periodCopy}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {isMultiApp && filterOptions.length > 0 ? (
+            <AppFilterDropdown
+              options={filterOptions}
+              selectedValues={selectedAppIds}
+              onChange={setSelectedAppIds}
+            />
+          ) : null}
+          {identityOptions.length > 0 ? (
+            <AppFilterDropdown
+              options={identityOptions}
+              selectedValues={selectedIdentityIds}
+              onChange={setSelectedIdentityIds}
+              label="Identities"
+              emptyLabel="No identities"
+              allLabel="All identities"
+            />
+          ) : null}
+        </div>
+      </div>
+
+      {showMineSubscriptions ? (
+        <div className="mb-5">
+          <ActiveSubscriptionSummary
+            subscriptions={data.activeSubscriptions ?? []}
+            creditBalanceUsdMicros={data.creditBalanceUsdMicros ?? null}
+            defaultPaymentMethod={data.defaultPaymentMethod ?? null}
+          />
+        </div>
+      ) : null}
+
+      <div>
+        <div className="mb-1 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <h4 className="text-sm font-medium text-zinc-200">
+            Usage over billing period
+          </h4>
+          <div className="inline-flex self-start rounded-lg border border-zinc-700 p-0.5">
+            {(
+              [
+                { key: "pipeline", label: "Pipeline" },
+                { key: "identity", label: "Identity" },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setChartDimension(option.key)}
+                aria-pressed={chartDimension === option.key}
+                className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
+                  chartDimension === option.key
+                    ? "bg-zinc-700 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-zinc-500 mb-4">
+          {chartDimension === "identity"
+            ? "Each bar segment is one app × identity."
+            : "Each bar segment is one app × pipeline/model."}
+        </p>
+        {filteredSeries.length === 0 ? (
+          <p className="text-sm text-zinc-500">
+            {chartEmptyMessage(selectedAppIds.length)}
+          </p>
+        ) : (
+          <UsageBreakdownChart
+            series={filteredSeries}
+            valueLabel="Usage"
+            height={220}
+            maxSeries={12}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BillingUsageBody({
   data,
   showTabs,
@@ -359,10 +591,27 @@ function BillingUsageBody({
   );
   const allIdsKey = allPublicClientIds.join("\0");
 
+  // Identities that transacted this cycle, most expensive first (matches the
+  // Identities table default so the two surfaces agree).
+  const identityOptions = useMemo(
+    () => identityFilterOptions(data.appUsage),
+    [data.appUsage],
+  );
+
+  const allIdentityIds = useMemo(
+    () => identityOptions.map((o) => o.value),
+    [identityOptions],
+  );
+  const allIdentityKey = allIdentityIds.join("\0");
+
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>(() =>
     allPublicClientIds,
   );
   const [prevAllIdsKey, setPrevAllIdsKey] = useState(allIdsKey);
+  const [selectedIdentityIds, setSelectedIdentityIds] =
+    useState<string[]>(allIdentityIds);
+  const [prevIdentityKey, setPrevIdentityKey] = useState(allIdentityKey);
+  const [chartDimension, setChartDimension] = useState<ChartDimension>("pipeline");
 
   // Reset selection when the loaded app set changes (tab switch / reload).
   // Adjust during render — avoids setState-in-effect cascading renders.
@@ -370,14 +619,21 @@ function BillingUsageBody({
     setPrevAllIdsKey(allIdsKey);
     setSelectedAppIds(allIdsKey.length > 0 ? allIdsKey.split("\0") : []);
   }
+  if (prevIdentityKey !== allIdentityKey) {
+    setPrevIdentityKey(allIdentityKey);
+    setSelectedIdentityIds(allIdentityKey.length > 0 ? allIdentityKey.split("\0") : []);
+  }
 
   const historyScope: "own" | "all" =
     showTabs && activeTab === "all" ? "all" : "own";
-  const derived = deriveFilteredView(data, selectedAppIds, historyScope);
-  const periodCopy =
-    activeTab === "all" && showTabs
-      ? "Platform-wide usage for the current cycle."
-      : "Usage for apps you own or administer.";
+  const derived = deriveFilteredView(
+    data,
+    selectedAppIds,
+    historyScope,
+    chartDimension,
+    selectedIdentityIds,
+    allIdentityIds,
+  );
 
   return (
     <>
@@ -387,6 +643,7 @@ function BillingUsageBody({
           singleAppName={singleAppName}
           cycle={cycle}
           isOpenMeter={isOpenMeter}
+          appId={scope === "single" ? orderedApps[0]?.id : null}
         />
         {showTabs ? (
           <div className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5">
@@ -400,50 +657,21 @@ function BillingUsageBody({
         ) : null}
       </div>
 
-      <div className="mb-6 sm:mb-8 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="font-semibold text-zinc-100">This billing period</h3>
-            <p className="text-xs text-zinc-500 mt-1">{periodCopy}</p>
-          </div>
-          {isMultiApp && filterOptions.length > 0 ? (
-            <AppFilterDropdown
-              options={filterOptions}
-              selectedValues={selectedAppIds}
-              onChange={setSelectedAppIds}
-            />
-          ) : null}
-        </div>
-
-        {activeTab === "mine" || !showTabs ? (
-          <div className="mb-5">
-            <ActiveSubscriptionSummary
-              subscriptions={data.activeSubscriptions ?? []}
-            />
-          </div>
-        ) : null}
-
-        <div>
-          <h4 className="text-sm font-medium text-zinc-200 mb-1">
-            Usage over billing period
-          </h4>
-          <p className="text-xs text-zinc-500 mb-4">
-            Each series is one app × pipeline/model (requests per day).
-          </p>
-          {derived.filteredSeries.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              {chartEmptyMessage(selectedAppIds.length)}
-            </p>
-          ) : (
-            <UsageBreakdownChart
-              series={derived.filteredSeries}
-              valueLabel="Requests / day"
-              height={220}
-              maxSeries={12}
-            />
-          )}
-        </div>
-      </div>
+      <BillingPeriodPanel
+        data={data}
+        showTabs={showTabs}
+        activeTab={activeTab}
+        isMultiApp={isMultiApp}
+        filterOptions={filterOptions}
+        identityOptions={identityOptions}
+        selectedAppIds={selectedAppIds}
+        setSelectedAppIds={setSelectedAppIds}
+        selectedIdentityIds={selectedIdentityIds}
+        setSelectedIdentityIds={setSelectedIdentityIds}
+        chartDimension={chartDimension}
+        setChartDimension={setChartDimension}
+        filteredSeries={derived.filteredSeries}
+      />
 
       <SignedTicketsBlock
         needsSelection={selectedAppIds.length === 0 && isMultiApp}
@@ -473,10 +701,13 @@ function BillingUsageBody({
 export default function BillingUsageDashboard({
   filterAppId,
   fundPanel,
+  wrapLayout = true,
 }: Readonly<{
   filterAppId?: string | null;
   /** Optional MoonPay / prepaid top-up panel (app owners on pay-per-use). */
   fundPanel?: ReactNode;
+  /** When false, the parent route already provides DashboardLayout. */
+  wrapLayout?: boolean;
 }>) {
   const { data: session, status: authStatus } = useSession();
   const pathname = usePathname();
@@ -552,8 +783,8 @@ export default function BillingUsageDashboard({
     };
   }, [filterAppId, activeTab, retryToken, showTabs]);
 
-  return (
-    <DashboardLayout>
+  const body = (
+    <>
       {fundPanel}
       {state.status === "loading" ? (
         <>
@@ -601,6 +832,12 @@ export default function BillingUsageDashboard({
           activeTab={activeTab}
         />
       ) : null}
-    </DashboardLayout>
+    </>
   );
+
+  if (!wrapLayout) {
+    return body;
+  }
+
+  return <DashboardLayout>{body}</DashboardLayout>;
 }
