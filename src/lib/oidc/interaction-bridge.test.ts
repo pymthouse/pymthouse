@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { mapInteractionPayload } from "@/lib/oidc/interaction-bridge";
+import { oidcInteractionSubmitPath } from "@/lib/oidc/interaction-path";
+
+test("oidcInteractionSubmitPath is a POST path with no complete query", () => {
+  assert.equal(
+    oidcInteractionSubmitPath("W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7"),
+    "/api/v1/oidc/interaction/W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7",
+  );
+  assert.equal(oidcInteractionSubmitPath("abc").includes("complete="), false);
+});
+
+test("mapInteractionPayload reads prompt and params", () => {
+  const details = mapInteractionPayload(
+    "uid-1",
+    {
+      uid: "uid-1",
+      exp: 4_000_000_000,
+      prompt: { name: "consent", details: { missingOIDCScope: ["email"] } },
+      params: {
+        client_id: "dcr_abc",
+        redirect_uri: "http://localhost:52657/callback",
+      },
+      session: { accountId: "user-1" },
+    },
+    "MCP Connector",
+    1_700_000_000_000,
+  );
+  assert.deepEqual(details, {
+    uid: "uid-1",
+    prompt: { name: "consent", details: { missingOIDCScope: ["email"] } },
+    params: {
+      client_id: "dcr_abc",
+      redirect_uri: "http://localhost:52657/callback",
+    },
+    session: { accountId: "user-1" },
+    clientName: "MCP Connector",
+  });
+});
+
+test("mapInteractionPayload rejects expired interactions", () => {
+  assert.equal(
+    mapInteractionPayload(
+      "uid-1",
+      {
+        exp: 1_700,
+        prompt: { name: "login", details: {} },
+        params: {},
+      },
+      undefined,
+      1_700_000_001,
+    ),
+    null,
+  );
+});
+
+test("mapInteractionPayload treats Interaction uid as the payload jti", () => {
+  const details = mapInteractionPayload(
+    "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK",
+    {
+      jti: "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK",
+      exp: 4_000_000_000,
+      prompt: { name: "login", details: {} },
+      params: { client_id: "dcr_520e5020d4574ceba9e3cf86f1c1d7fa" },
+    },
+    undefined,
+    1_700_000_000_000,
+  );
+  assert.equal(details?.uid, "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK");
+  assert.equal(details?.prompt.name, "login");
+});
+
+test("mapInteractionPayload rejects payloads without a prompt name", () => {
+  assert.equal(
+    mapInteractionPayload("uid-1", { params: { client_id: "dcr_abc" } }),
+    null,
+  );
+});

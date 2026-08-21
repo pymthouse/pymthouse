@@ -3,22 +3,29 @@ import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { buildAppManifestForApp } from "@/lib/app-manifest";
-import { DISCOVERY_TOP_N_MAX } from "@/lib/discovery-plans";
-import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
-import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
-import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
-import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
+import { partitionByExclusions } from "@/lib/mcp/capability-allow";
+import { readDiscoveryRawUrl, readDiscoveryServiceUrl } from "@/lib/mcp/config";
+import { projectDiscoveryQueryResult } from "@/lib/mcp/hosted-server-format";
+import {
+  cachedAppManifestForApp,
+  cachedPlansDiscoveryForApp,
+  createSignerSessionForPrincipal,
+  discoveryFetch,
+} from "@/lib/mcp/session";
 import { MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
+
+const QUERY_ORCHESTRATORS_TOP_N_DEFAULT = 10;
+const QUERY_ORCHESTRATORS_TOP_N_MAX = 25;
+const DISCOVERY_SERVICE_TYPES = ["live-video-to-video", "live-runner"] as const;
 
 function textResult(data: unknown) {
   return {
     content: [
       {
         type: "text" as const,
-        text: typeof data === "string" ? data : JSON.stringify(data, null, 2),
+        text: typeof data === "string" ? data : JSON.stringify(data),
       },
     ],
   };
@@ -36,6 +43,51 @@ function errorResult(message: string) {
   };
 }
 
+function capabilityWireName(pipeline: string, modelId: string): string {
+  return `${pipeline}/${modelId}`;
+}
+
+function connectionInfo(principal: McpPrincipal): Record<string, unknown> {
+  let issuer = "https://pymthouse.com/api/v1/oidc";
+  try {
+    issuer = getIssuer();
+  } catch {
+    /* keep default */
+  }
+  let discoveryServiceUrl: string | null = null;
+  let discoveryRawUrl: string | null = null;
+  try {
+    discoveryServiceUrl = readDiscoveryServiceUrl();
+    discoveryRawUrl = readDiscoveryRawUrl();
+  } catch {
+    /* misconfigured discovery env: report null, keep metadata usable */
+  }
+  return {
+    name: "Livepeer MCP",
+    mode: "hosted",
+    issuer_url: issuer,
+    auth_kind: principal.kind,
+    public_client_id: principal.publicClientId,
+    developer_app_id: principal.developerAppId,
+    discovery_service_url: discoveryServiceUrl,
+    discovery_raw_url: discoveryRawUrl,
+    local_execution:
+      "livepeer-python-gateway/examples/comfypeer-mcp (run_capability / start_stream / call_live_runner)",
+  };
+}
+
+function signerSessionErrorMessage(err: MintUserSignerTokenError): string {
+  if (err.code === "invalid_scope") {
+    return (
+      `${err.code}: ${err.message}. ` +
+      "Grant sign:job on the authenticating M2M client and its public app_ sibling " +
+      "(user/API-key callers need sign:job on the public client). " +
+      "Then retry create_signer_session with confirm=true."
+    );
+  }
+  return `${err.code}: ${err.message}. Fix the error and retry create_signer_session with confirm=true.`;
+}
+
 /**
  * Hosted Livepeer MCP: user-scoped platform MCP on PymtHouse.
  * Auth is the caller's developer/end-user/M2M credential (no fixed app M2M behind MCP).
@@ -50,52 +102,62 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     description:
       "Hosted Livepeer MCP on PymtHouse. Authenticate as developer, end-user, or M2M " +
       "(Authorization: Bearer <API key|JWT>, or Basic M2M). " +
-      "Tools cover app network capabilities and create_signer_session. " +
+      "Tools: query_orchestrators, get_discovery_freshness, list_capabilities, " +
+      "list_discovery_profiles, create_signer_session. " +
+      "Connection metadata is the livepeer://mcp/info resource. " +
       "For run_capability / start_stream / call_live_runner, use " +
       "livepeer-python-gateway/examples/comfypeer-mcp.",
   });
 
-  server.registerTool(
+  server.registerResource(
     "livepeer_mcp_info",
+    "livepeer://mcp/info",
     {
-      description: "Hosted Livepeer MCP metadata for the authenticated principal (no secrets).",
-      inputSchema: {},
+      description:
+        "Read-only Livepeer MCP connection metadata (issuer, discovery URLs, principal). Not a tool.",
+      mimeType: "application/json",
     },
-    async () => {
-      let issuer = "https://pymthouse.com/api/v1/oidc";
-      try {
-        issuer = getIssuer();
-      } catch {
-        /* keep default */
-      }
-      return textResult({
-        name: "Livepeer MCP",
-        mode: "hosted",
-        issuer_url: issuer,
-        auth_kind: principal.kind,
-        public_client_id: principal.publicClientId,
-        developer_app_id: principal.developerAppId,
-        discovery_service_url: readDiscoveryServiceUrl(),
-        local_execution:
-          "livepeer-python-gateway/examples/comfypeer-mcp (run_capability / start_stream / call_live_runner)",
-      });
-    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(connectionInfo(principal)),
+        },
+      ],
+    }),
   );
 
   server.registerTool(
     "list_capabilities",
     {
       description:
-        "List network capabilities allowed for this app (network default plan / discovery exclusions). " +
-        "This is the app-scoped catalog from PymtHouse application settings.",
+        "Use to see which pipeline/model wire names query_orchestrators will accept. " +
+        "Do not use for plan prices or discovery policy — that is list_discovery_profiles. " +
+        "Returns a summary (capability names, excluded names, manifestVersion, total_count).",
       inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
-      const manifest = await buildAppManifestForApp(principal.developerAppId);
+      const manifest = await cachedAppManifestForApp(principal.developerAppId);
+      const capabilities = manifest.capabilities.map((c) =>
+        capabilityWireName(c.pipeline, c.modelId),
+      );
+      const excludedCapabilities = manifest.excludedCapabilities.map((c) =>
+        capabilityWireName(c.pipeline, c.modelId),
+      );
       return textResult({
         source: "app_manifest",
         public_client_id: principal.publicClientId,
-        ...manifest,
+        manifestVersion: manifest.manifestVersion,
+        total_count: capabilities.length,
+        capabilities,
+        excludedCapabilities,
       });
     },
   );
@@ -104,11 +166,18 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     "list_discovery_profiles",
     {
       description:
-        "List discovery profiles and plan capability bundles configured for this app.",
+        "Use for plan bundles / max_price_per_unit. Do not use to pick a capability name " +
+        "for a query — that is list_capabilities.",
       inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
-      const plans = await resolvePlansDiscoveryForApp(principal.developerAppId);
+      const plans = await cachedPlansDiscoveryForApp(principal.developerAppId);
       return textResult({
         public_client_id: principal.publicClientId,
         plans: plans.map((row) => ({
@@ -132,54 +201,109 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     "query_orchestrators",
     {
       description:
-        "Query ranked orchestrators for capability names. Requests are filtered to this app's network allowlist.",
+        "Query ranked orchestrators for capability wire names. Call list_capabilities first " +
+        "if you do not already have a name. Do not call this for plan prices " +
+        "(list_discovery_profiles) or connection metadata (livepeer://mcp/info). " +
+        "Returns projected orchestrators (id, avail, price, capabilities) plus total_count.",
       inputSchema: {
-        capabilities: z.array(z.string()).min(1),
-        service_types: z.array(z.string()).optional(),
-        top_n: z.number().int().positive().max(DISCOVERY_TOP_N_MAX).optional(),
+        capabilities: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe(
+            "Wire names, e.g. ['live-video-to-video/streamdiffusion-sdxl'] or a bare token",
+          ),
+        service_types: z
+          .array(z.enum(DISCOVERY_SERVICE_TYPES))
+          .optional()
+          .describe("Defaults to both live-video-to-video and live-runner"),
+        top_n: z
+          .number()
+          .int()
+          .min(1)
+          .max(QUERY_ORCHESTRATORS_TOP_N_MAX)
+          .optional()
+          .describe(
+            `Max orchestrators to return. Default ${QUERY_ORCHESTRATORS_TOP_N_DEFAULT}. Do not use the REST cap of 1000.`,
+          ),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+        idempotentHint: true,
       },
     },
     async ({ capabilities, service_types, top_n }) => {
-      const manifest = await buildAppManifestForApp(principal.developerAppId);
-      const filtered = filterAllowedCapabilities(
+      const manifest = await cachedAppManifestForApp(principal.developerAppId);
+      const { permitted, excluded } = partitionByExclusions(
         capabilities,
-        manifest.capabilities,
+        manifest.excludedCapabilities,
       );
-      if (filtered.length === 0) {
-        return textResult({
-          error: "none_of_requested_capabilities_allowed_for_app",
-          requested: capabilities,
-          allowed_sample: manifest.capabilities.slice(0, 25),
-          manifest_version: manifest.manifestVersion,
-        });
+      if (permitted.length === 0) {
+        const example =
+          manifest.capabilities[0] != null
+            ? capabilityWireName(
+                manifest.capabilities[0].pipeline,
+                manifest.capabilities[0].modelId,
+              )
+            : "live-video-to-video/streamdiffusion-sdxl";
+        return errorResult(
+          `all requested capabilities are excluded for this app. Example allowed spelling: "${example}". Call list_capabilities and retry with names absent from excludedCapabilities.`,
+        );
       }
-      const data = await discoveryFetch("/v1/discovery/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          capabilities: filtered,
-          serviceTypes: service_types ?? ["live-video-to-video", "live-runner"],
-          topN: top_n ?? 50,
-          sortBy: "avail",
-        }),
-      });
-      return textResult({
-        filtered_capabilities: filtered,
-        dropped_capabilities: capabilities.filter((c) => !filtered.includes(c)),
-        result: data,
-      });
+      try {
+        const data = await discoveryFetch("/v1/discovery/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            capabilities: permitted,
+            serviceTypes: service_types ?? [...DISCOVERY_SERVICE_TYPES],
+            topN: top_n ?? QUERY_ORCHESTRATORS_TOP_N_DEFAULT,
+            sortBy: "avail",
+          }),
+        });
+        const projected = projectDiscoveryQueryResult(data);
+        return textResult({
+          filtered_capabilities: permitted,
+          dropped_capabilities: excluded,
+          total_count: projected.total_count,
+          orchestrators: projected.orchestrators,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Discovery query failed";
+        return errorResult(
+          `Discovery query failed (${message}). Retry query_orchestrators after list_capabilities confirms the wire names.`,
+        );
+      }
     },
   );
 
   server.registerTool(
     "get_discovery_freshness",
     {
-      description: "Discovery-service dataset freshness.",
+      description: "Discovery-service dataset freshness. Do not use this to pick orchestrators.",
       inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+        idempotentHint: true,
+      },
     },
     async () => {
-      const data = await discoveryFetch("/v1/discovery/freshness");
-      return textResult(data);
+      try {
+        const data = await discoveryFetch(
+          "/v1/discovery/freshness",
+          undefined,
+          { cacheTtlMs: 15_000 },
+        );
+        return textResult(data);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Discovery freshness failed";
+        return errorResult(
+          `Discovery freshness failed (${message}). Retry later; do not treat this as a capability name.`,
+        );
+      }
     },
   );
 
@@ -187,8 +311,19 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     "create_signer_session",
     {
       description:
-        "Mint a SignerSession for the authenticated principal (+ optional base64 SDK --token for local livepeer-python-gateway).",
-      inputSchema: {},
+        "Mint a SignerSession (access_token + optional sdk_token) for the authenticated principal. " +
+        "Requires confirm=true. Do not call for discovery or connection metadata.",
+      inputSchema: {
+        confirm: z
+          .literal(true)
+          .describe("Must be true. Gates credential mint in the client UI."),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+        idempotentHint: false,
+      },
     },
     async () => {
       try {
@@ -196,7 +331,7 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         return textResult(session);
       } catch (err) {
         if (err instanceof MintUserSignerTokenError) {
-          return errorResult(`${err.code}: ${err.message}`);
+          return errorResult(signerSessionErrorMessage(err));
         }
         throw err;
       }

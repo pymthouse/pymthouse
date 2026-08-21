@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appUsers, developerApps, endUsers, oidcClients, users } from "@/db/schema";
 import { findOrCreateAppEndUser } from "@/lib/billing";
+import { MCP_OAUTH_APP_CLAIM, getMcpResourceUrl } from "@/lib/mcp/oauth-resource";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
 import { TokenExchangeError } from "@/lib/oidc/token-exchange";
 
@@ -40,6 +41,18 @@ function readTokenClientId(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+/**
+ * MCP OAuth tokens bind the Builder app via `pymthouse_app` (public `app_…`
+ * client id), not via the DCR `client_id` / `azp`.
+ */
+function readMcpBoundPublicClientId(payload: Record<string, unknown>): string | null {
+  const bound = payload[MCP_OAUTH_APP_CLAIM];
+  if (typeof bound === "string" && bound.trim()) {
+    return bound.trim();
+  }
+  return null;
+}
+
 async function resolveDeveloperAppFromPublicClient(
   dbConn: typeof db,
   publicClientId: string,
@@ -56,33 +69,20 @@ async function resolveDeveloperAppFromPublicClient(
   return rows[0] ?? null;
 }
 
-/**
- * Resolve a PymtHouse-issued user access JWT (`aud=issuer`) to developer app context
- * and stable external user id. Supports `sub` from app_users, end_users, or users.
- */
-export async function resolveSubjectAccessToken(
-  subjectToken: string,
+async function resolveIdentityFromAccessPayload(
+  rec: Record<string, unknown>,
+  publicClientId: string,
   options?: {
     expectedPublicClientId?: string | null;
     dbConn?: typeof db;
   },
 ): Promise<ResolvedSubjectAccessToken> {
   const dbConn = options?.dbConn ?? db;
-  const payload = await verifyAccessToken(subjectToken);
-  if (!payload || typeof payload.sub !== "string" || !payload.sub.trim()) {
+  const sub = typeof rec.sub === "string" ? rec.sub.trim() : "";
+  if (!sub) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
       "subject_token is not a valid access token for this issuer",
-      400,
-    );
-  }
-
-  const rec = payload as Record<string, unknown>;
-  const publicClientId = readTokenClientId(rec);
-  if (!publicClientId) {
-    throw new SubjectAccessTokenResolveError(
-      "invalid_grant",
-      "subject_token must include client_id or azp",
       400,
     );
   }
@@ -93,7 +93,7 @@ export async function resolveSubjectAccessToken(
   ) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
-      "subject_token must have been issued to the expected public client_id",
+      "subject_token must have been issued for the expected public client_id",
       400,
     );
   }
@@ -105,12 +105,10 @@ export async function resolveSubjectAccessToken(
   if (!developerApp) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
-      "subject_token client_id does not map to a developer app",
+      "subject_token does not map to a developer app",
       400,
     );
   }
-
-  const sub = payload.sub.trim();
 
   const appUserRows = await dbConn
     .select({
@@ -147,9 +145,6 @@ export async function resolveSubjectAccessToken(
     };
   }
 
-  // Device verification binds accountId to platform users.id (see device/verify approve).
-  // Any such user who received an access token may exchange for a signer JWT; provision
-  // a per-app end_user keyed by user:{sub} (same convention as app owner below).
   const platformUserRows = await dbConn
     .select({ id: users.id })
     .from(users)
@@ -172,6 +167,74 @@ export async function resolveSubjectAccessToken(
     "subject_token sub does not map to an app user, end user, or app owner",
     400,
   );
+}
+
+/**
+ * Resolve a PymtHouse-issued user access JWT (`aud=issuer`) to developer app
+ * context. MCP resource tokens must use {@link resolveMcpAccessToken}.
+ */
+export async function resolveSubjectAccessToken(
+  subjectToken: string,
+  options?: {
+    expectedPublicClientId?: string | null;
+    dbConn?: typeof db;
+  },
+): Promise<ResolvedSubjectAccessToken> {
+  const payload = await verifyAccessToken(subjectToken);
+  if (!payload || typeof payload.sub !== "string" || !payload.sub.trim()) {
+    throw new SubjectAccessTokenResolveError(
+      "invalid_grant",
+      "subject_token is not a valid access token for this issuer",
+      400,
+    );
+  }
+
+  const rec = payload as Record<string, unknown>;
+  const publicClientId = readTokenClientId(rec);
+  if (!publicClientId) {
+    throw new SubjectAccessTokenResolveError(
+      "invalid_grant",
+      "subject_token must include client_id or azp",
+      400,
+    );
+  }
+
+  return resolveIdentityFromAccessPayload(rec, publicClientId, options);
+}
+
+/**
+ * Resolve an MCP OAuth access token (`aud=MCP resource`). Never accepted as a
+ * general RFC 8693 subject token — audience stays bound to `/api/v1/mcp`.
+ */
+export async function resolveMcpAccessToken(
+  accessToken: string,
+  options?: {
+    expectedPublicClientId?: string | null;
+    dbConn?: typeof db;
+  },
+): Promise<ResolvedSubjectAccessToken> {
+  const payload = await verifyAccessToken(accessToken, {
+    audience: getMcpResourceUrl(),
+  });
+  if (!payload || typeof payload.sub !== "string" || !payload.sub.trim()) {
+    throw new SubjectAccessTokenResolveError(
+      "invalid_grant",
+      "access token is not a valid MCP resource token for this issuer",
+      400,
+    );
+  }
+
+  const rec = payload as Record<string, unknown>;
+  const publicClientId = readMcpBoundPublicClientId(rec);
+  if (!publicClientId) {
+    throw new SubjectAccessTokenResolveError(
+      "invalid_grant",
+      "MCP access token must include pymthouse_app",
+      400,
+    );
+  }
+
+  return resolveIdentityFromAccessPayload(rec, publicClientId, options);
 }
 
 export function subjectAccessTokenResolveErrorToTokenExchange(
