@@ -800,37 +800,40 @@ function PlanDraftForm({
       )}
 
       {draft.type === "subscription" && (
-        <>
-          <div>
-            <label
-              htmlFor={`${idPrefix}-price`}
-              className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
-            >
-              {billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
-              <InfoTooltip
-                href={OPENMETER_DOCS.flatFee}
-                wide
-                label={
-                  "Maps to an OpenMeter flat_fee rate card (subscription_fee).\n" +
-                  "Recurring charge billed each billing cadence when amount is greater than $0."
-                }
-              />
-            </label>
-            <DollarCentsInput
-              id={`${idPrefix}-price`}
-              value={draft.priceAmount}
-              onChange={(priceAmount) => onChange({ ...draft, priceAmount })}
-              placeholder="0.00"
-              disabled={!canEdit}
-              aria-label={billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
+        <div>
+          <label
+            htmlFor={`${idPrefix}-price`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
+            {billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
+            <InfoTooltip
+              href={OPENMETER_DOCS.flatFee}
+              wide
+              label={
+                "Maps to an OpenMeter flat_fee rate card (subscription_fee).\n" +
+                "Recurring charge billed each billing cadence when amount is greater than $0."
+              }
             />
-          </div>
-          <div>
+          </label>
+          <DollarCentsInput
+            id={`${idPrefix}-price`}
+            value={draft.priceAmount}
+            onChange={(priceAmount) => onChange({ ...draft, priceAmount })}
+            placeholder="0.00"
+            disabled={!canEdit}
+            aria-label={billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
+          />
+        </div>
+      )}
+
+      {(draft.type === "subscription" || draft.type === "usage") && (
+        <div>
           <label
             htmlFor={`${idPrefix}-included`}
             className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
           >
-            Included usage allowance (per billing cycle)
+            Included usage allowance
+            {draft.type === "subscription" ? " (per billing cycle)" : " (per month)"}
             <InfoTooltip
               href={OPENMETER_DOCS.usageDiscount}
               wide
@@ -848,8 +851,13 @@ function PlanDraftForm({
             disabled={!canEdit}
             aria-label="Included usage allowance in dollars"
           />
-          </div>
-        </>
+          {draft.type === "usage" && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Leave blank for no included allowance. Usage draws this down first, then prepaid
+              credits, then invoiced overage.
+            </p>
+          )}
+        </div>
       )}
 
       <div className="space-y-2">
@@ -962,7 +970,8 @@ function buildPlanPayload(
   _existing: PlanRow | null,
 ): Record<string, unknown> {
   const includedUsdMicros =
-    draft.type === "subscription" && draft.includedUsdDisplay
+    (draft.type === "subscription" || draft.type === "usage") &&
+    draft.includedUsdDisplay
       ? displayToUsdMicros(draft.includedUsdDisplay)
       : null;
 
