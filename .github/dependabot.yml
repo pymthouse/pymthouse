@@ -15,6 +15,18 @@ updates:
     commit-message:
       prefix: "build"
       include: scope
+    # eslint-config-next still ships eslint-plugin-react, which does not
+    # support ESLint 10 (getFilename removed). typescript-eslint does not
+    # support TypeScript 7 yet.
+    # https://github.com/vercel/next.js/issues/89764
+    # https://github.com/typescript-eslint/typescript-eslint/issues/10940
+    ignore:
+      - dependency-name: eslint
+        update-types:
+          - version-update:semver-major
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     groups:
       npm-security:
         applies-to: security-updates
