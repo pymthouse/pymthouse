@@ -158,7 +158,7 @@ flow degrades into a green run that tested nothing:
 
 | Floor | Value | Miss it and… |
 | --- | --- | --- |
-| Starter included usage | `$5.00` (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`) | no debt accrues, nothing to invoice |
+| Starter included usage | app `plans.included_usd_micros` (seeded by `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$0`; existing apps may still hold `$5`) | included leftover must be exhausted before debt accrues |
 | Invoice lead window | `min(ceiling/2, $5)` | the trigger never fires |
 | Stripe minimum charge | `$0.50` (`MIN_INVOICE_USD_MICROS`) | `collect` returns `skipped` |
 

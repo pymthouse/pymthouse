@@ -9,7 +9,7 @@ import {
  * Ensure the customer has a synced Starter plan subscription.
  *
  * Included free usage comes from the plan rate-card `discounts.usage`
- * (amount from `plans.includedUsdMicros` / `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`),
+ * (amount from `plans.includedUsdMicros`, seeded by `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`),
  * not from prepaid credit grants. Manual top-ups still use `grantAllowanceUsdMicros`.
  *
  * App owners share one `owner:{users.id}` customer across owned apps.

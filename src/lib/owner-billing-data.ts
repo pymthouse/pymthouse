@@ -32,14 +32,17 @@ import {
   resolveCustomerSubjectKeys,
 } from "@/lib/openmeter/customers";
 import {
-  defaultStarterIncludedUsdMicros,
+  parseIncludedUsdMicros,
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
 import {
   isOwnerStarterPlanKey,
 } from "@/lib/openmeter/owner-starter-key";
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
-import { resolvePlatformOwnerStarterPlanName } from "@/lib/billing/platform-owner-starter-default";
+import {
+  resolvePlatformOwnerStarterIncludedUsdMicros,
+  resolvePlatformOwnerStarterPlanName,
+} from "@/lib/billing/platform-owner-starter-default";
 import { getOwnerSubscriptionTierByKey } from "@/lib/billing/owner-subscription-tiers";
 import { applyFreeBillingProfileToCustomer } from "@/lib/openmeter/billing-profiles";
 import {
@@ -244,10 +247,12 @@ async function resolveDiscountUsdMicros(input: {
       .limit(1);
     const row = rows[0];
     if (row) {
-      const fromPlan = parsePositiveMicros(row.includedUsdMicros);
+      const fromPlan = parseIncludedUsdMicros(row.includedUsdMicros);
       if (fromPlan != null) return fromPlan;
       if (row.isStarterDefault) {
-        return parsePositiveMicros(defaultStarterIncludedUsdMicros());
+        return parseIncludedUsdMicros(
+          await resolvePlatformOwnerStarterIncludedUsdMicros(),
+        );
       }
     }
   }
@@ -263,7 +268,9 @@ async function resolveDiscountUsdMicros(input: {
   }
 
   if (input.isStarterDefault) {
-    return parsePositiveMicros(defaultStarterIncludedUsdMicros());
+    return parseIncludedUsdMicros(
+      await resolvePlatformOwnerStarterIncludedUsdMicros(),
+    );
   }
   return null;
 }
