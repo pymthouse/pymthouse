@@ -292,6 +292,32 @@ test("plans POST accepts subscription with retail overageRateUsd", async (t) => 
   assert.equal(planRows[0].includedUsdMicros, "20000000");
 });
 
+test("plans POST accepts pay-per-use with includedUsdMicros", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  authorizedApp = app;
+  t.after(async () => {
+    authorizedApp = null;
+    await cleanupTestApp(app);
+  });
+
+  const created = await postPlan(app.clientId, {
+    name: "Pay as you go with included",
+    type: "usage",
+    priceAmount: "0",
+    priceCurrency: "USD",
+    includedUsdMicros: "5000000",
+  });
+  assert.equal(created.status, 201);
+
+  const planRows = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.id, created.body.id as string))
+    .limit(1);
+  assert.equal(planRows[0]?.type, "usage");
+  assert.equal(planRows[0]?.includedUsdMicros, "5000000");
+});
+
 test("plans POST accepts billingCycle and rejects invalid values", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
