@@ -57,9 +57,9 @@
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@braintree/sanitize-url": "^7.1.2",
-"@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@openmeter/sdk": "^1.0.0-beta.232",
-    "@pymthouse/builder-sdk": "^0.6.5",
+    "@pymthouse/builder-sdk": "^0.7.1-rc.0",
     "@pymthouse/clearinghouse-identity-webhook": "0.5.0-rc.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@turnkey/crypto": "^2.11.3",
