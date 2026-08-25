@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  authenticateEndUser,
-  endUserSubjectOverrideError,
-} from "@/lib/auth/end-user";
+import { type EndUserAuth, requireEndUserRouteAuth } from "@/lib/auth/end-user";
 import { parseUsageRequestDateRange } from "@/lib/billing-utils";
 import {
   listEndUserSignedTicketRequests,
@@ -24,26 +21,10 @@ async function requireEndUserAuth(
   publicClientId: string | undefined,
   resourceLabel: string,
 ): Promise<
-  | { auth: NonNullable<Awaited<ReturnType<typeof authenticateEndUser>>> }
+  | { auth: EndUserAuth }
   | { response: Response }
 > {
-  const override = endUserSubjectOverrideError(
-    request.nextUrl.searchParams,
-    resourceLabel,
-  );
-  if (override) {
-    return { response: override };
-  }
-
-  const auth = await authenticateEndUser(request, {
-    expectedPublicClientId: publicClientId,
-  });
-  if (!auth) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-  return { auth };
+  return requireEndUserRouteAuth(request, publicClientId, resourceLabel);
 }
 
 /** End-user usage aggregates for path-scoped `/apps/{clientId}/me/usage`. */
