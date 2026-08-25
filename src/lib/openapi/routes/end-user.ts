@@ -177,3 +177,59 @@ defineUserUsageRoute(
   "End-user signed-ticket request history",
   endUserRequestsQueryParams,
 );
+
+const meBillingPath = (suffix: string) =>
+  `/api/v1/apps/{clientId}/me/billing${suffix}`;
+
+function defineMeBillingGet(suffix: string, summary: string, description: string) {
+  defineRouteMetadata("get", meBillingPath(suffix), {
+    tags: [OPENAPI_TAGS.endUserBilling],
+    summary,
+    description,
+    security: endUserSecurity,
+    request: { params: z.object({ clientId }) },
+    responses: {
+      200: jsonSuccess,
+      ...builderErrorResponses,
+      400: {
+        ...builderErrorResponses[400],
+        description: "Disallowed cross-user filter",
+      },
+      401: {
+        ...builderErrorResponses[401],
+        description: "Missing or invalid end-user credential",
+      },
+    },
+  });
+}
+
+defineMeBillingGet(
+  "/allowances",
+  "End-user prepaid allowances",
+  "Konnect credit snapshot for the Bearer subject. Do not pass `externalUserId`.",
+);
+defineMeBillingGet(
+  "/wallet",
+  "End-user prepaid wallet",
+  "Merchant-mode prepaid wallet (balance, auto-top-up, billing state) for the Bearer subject.",
+);
+defineMeBillingGet(
+  "/state",
+  "End-user billing state",
+  "Spend posture for the Bearer subject (included usage, prepaid, overage).",
+);
+defineMeBillingGet(
+  "/invoices",
+  "End-user invoices",
+  "Invoice list for the Bearer subject. Optional `page` / `pageSize`.",
+);
+defineMeBillingGet(
+  "/payment-methods",
+  "End-user payment methods",
+  "Cards on the Bearer subject's retail Stripe customer.",
+);
+defineMeBillingGet(
+  "/subscription",
+  "End-user subscription",
+  "Live OpenMeter subscription for the Bearer subject.",
+);

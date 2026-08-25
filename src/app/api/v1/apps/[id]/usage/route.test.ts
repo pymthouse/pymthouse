@@ -112,6 +112,16 @@ test("usage API aggregates OpenMeter meter rows and validates input", async (t) 
   assert.equal(betaTotals.requestCount, 1);
   assert.equal(betaTotals.networkFeeUsdMicros, "500000");
 
+  const betaByExternal = await call(
+    `?externalUserId=${encodeURIComponent("beta-ext")}`,
+  );
+  assert.equal(betaByExternal.status, 200);
+  const betaByExternalTotals = (betaByExternal.body as {
+    totals: { requestCount: number; networkFeeUsdMicros: string };
+  }).totals;
+  assert.equal(betaByExternalTotals.requestCount, 1);
+  assert.equal(betaByExternalTotals.networkFeeUsdMicros, "500000");
+
   const grouped = await call("?groupBy=user");
   const buckets = (grouped.body as {
     byUser: {

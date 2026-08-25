@@ -1258,6 +1258,18 @@ test("ensureOpenMeterCustomer skips subject update when active sub is known", as
   assert.equal(updateCalls, 0);
 });
 
+test("buildUsageMeterSubjects does not invent owner subjects for eu_ integrator ids", async () => {
+  const { buildUsageMeterSubjects } = await import("./usage-read");
+  const eu =
+    "eu_ae1807f10fb0a94ea56cc216c0e4ca6876159a243744f78a1d4b2bef65d58d8a";
+  const subjects = buildUsageMeterSubjects("app_aaa", eu).sort();
+  assert.deepEqual(subjects, [`app_aaa:${eu}`, eu].sort());
+  assert.equal(
+    subjects.some((s) => s.startsWith("owner:")),
+    false,
+  );
+});
+
 test("buildUsageMeterSubjects dual-reads bare owner and compound forms", async () => {
   const { buildUsageMeterSubjects, buildExternalUserIdMatchKeys } = await import(
     "./usage-read"
