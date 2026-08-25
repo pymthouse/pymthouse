@@ -1,11 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { decodeJwt } from "jose";
+
+import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import {
+  BILLING_SUBJECT_KEY_CLAIM,
+  COST_OWNER_USER_ID_CLAIM,
+  resetBillingIdentityCache,
+} from "@/lib/openmeter/billing-identity";
+import { buildOwnerCustomerKey, isEndUserCustomerKey } from "@/lib/openmeter/customer-key";
+import { test as dbTest } from "@/test-utils/db-guard";
+import {
+  cleanupTestApp,
+  seedDeveloperAppWithClient,
+} from "@/test-utils/fixtures";
 
 import {
   enforceMintAllowanceGate,
   isM2mOwnerSignJobRequest,
   isMintUserSignerTokenRequest,
   mintAllowanceGateDecision,
+  mintSignerJwtForExternalUser,
   MintUserSignerTokenError,
 } from "./mint-user-signer-token";
 
@@ -230,4 +246,60 @@ test("enforceMintAllowanceGate throws billing_unavailable when allowance is null
       process.env.OPENMETER_TEST_LIVE = previousLive;
     }
   }
+});
+
+dbTest("signer JWT mint stamps owner_rollup cost-rail claims", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+  const externalUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(app.clientId, { billingMode: "owner_rollup" });
+  resetBillingIdentityCache();
+
+  const minted = await mintSignerJwtForExternalUser({
+    publicClientId: app.clientId,
+    developerAppId: app.clientId,
+    externalUserId,
+  });
+  const claims = decodeJwt(minted.access_token);
+  assert.equal(claims.user_type, "external_user");
+  assert.equal(claims.external_user_id, externalUserId);
+  assert.equal(
+    claims[BILLING_SUBJECT_KEY_CLAIM],
+    buildOwnerCustomerKey(app.userId),
+  );
+  assert.equal(claims[COST_OWNER_USER_ID_CLAIM], app.userId);
+});
+
+dbTest("signer JWT mint stamps merchant eu_ payer and omits cost_owner_user_id", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+  const externalUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+
+  const minted = await mintSignerJwtForExternalUser({
+    publicClientId: app.clientId,
+    developerAppId: app.clientId,
+    externalUserId,
+  });
+  const claims = decodeJwt(minted.access_token);
+  assert.equal(claims.user_type, "external_user");
+  assert.equal(claims.external_user_id, externalUserId);
+  assert.equal(claims[COST_OWNER_USER_ID_CLAIM], undefined);
+  assert.equal(
+    typeof claims[BILLING_SUBJECT_KEY_CLAIM],
+    "string",
+  );
+  assert.ok(
+    isEndUserCustomerKey(String(claims[BILLING_SUBJECT_KEY_CLAIM])),
+  );
+  assert.notEqual(
+    claims[BILLING_SUBJECT_KEY_CLAIM],
+    buildOwnerCustomerKey(app.userId),
+  );
 });

@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { loadBillingState } from "@/lib/billing/billing-state-read";
+import { loadMerchantAppUserWallet } from "@/lib/billing/merchant-app-user-wallet";
 import {
   authorizeOwnerWalletM2m,
   readJsonObjectBody,
@@ -18,7 +19,6 @@ import {
 } from "@/lib/billing/wallet-billing-target";
 import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-method";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
 import {
   DEFAULT_AUTO_TOP_UP_USD_MICROS,
@@ -58,6 +58,14 @@ export async function GET(
     );
   }
 
+  if (billingTarget.target.mode === "merchant") {
+    return loadMerchantAppUserWallet({
+      publicClientId: clientId,
+      appId: access.app.id,
+      externalUserId: billingTarget.target.externalUserId,
+    });
+  }
+
   const usagePlanRowsPromise = db
     .select({
       id: plans.id,
@@ -73,57 +81,6 @@ export async function GET(
       ),
     )
     .orderBy(desc(plans.updatedAt));
-
-  if (billingTarget.target.mode === "merchant") {
-    const endUserId = billingTarget.target.externalUserId;
-    const [trialBalance, paymentMethods, usagePlanRows, billingState, autoTopUp] =
-      await Promise.all([
-        getTrialCreditBalance({
-          clientId,
-          externalUserId: endUserId,
-        }),
-        listAppUserPaymentMethods({
-          clientId: access.app.id,
-          externalUserId: endUserId,
-        }).catch(() => null),
-        usagePlanRowsPromise,
-        loadBillingState({
-          publicClientId: clientId,
-          appId: access.app.id,
-          target: billingTarget.target,
-          externalUserId: endUserId,
-        }),
-        loadAppUserAutoTopUpPrefs({
-          appId: access.app.id,
-          externalUserId: endUserId,
-        }),
-      ]);
-    const balance = trialBalance
-      ? {
-          usdMicros: trialBalance.balanceUsdMicros,
-          usd: formatUsdMicrosForDisplay(trialBalance.balanceUsdMicros),
-          lifetimeGrantedUsdMicros: trialBalance.lifetimeGrantedUsdMicros,
-          consumedUsdMicros: trialBalance.consumedUsdMicros,
-        }
-      : null;
-    return NextResponse.json({
-      clientId,
-      balance,
-      paymentMethod: {
-        hasDefault: paymentMethods
-          ? paymentMethods.some((pm) => pm.isDefault)
-          : null,
-      },
-      autoTopUp,
-      billingState,
-      payPerUsePlans: usagePlanRows.map((usagePlan) => ({
-        planId: usagePlan.id,
-        planName: usagePlan.name,
-        chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-        resolvedBehavior: resolvedPayPerUseBehavior(),
-      })),
-    });
-  }
 
   const [ownerBalance, hasDefaultPaymentMethod, usagePlanRows, billingState] =
     await Promise.all([
