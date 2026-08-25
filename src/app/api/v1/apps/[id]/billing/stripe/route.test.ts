@@ -139,3 +139,28 @@ test("PATCH stripeLivemode busts billing identity cache", async (t) => {
     buildSandboxEndUserCustomerKey(sandbox.actorEndUserId),
   );
 });
+
+test("POST /billing/stripe/connect rejects non-boolean stripeLivemode", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  installSession(app, "developer");
+  t.after(async () => {
+    setProviderAppSessionResolverForTests(null);
+    await cleanupTestApp(app);
+  });
+
+  const { POST } = await import("./connect/route");
+  const res = await POST(
+    new Request(
+      `http://localhost/api/v1/apps/${app.clientId}/billing/stripe/connect`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "account_link", stripeLivemode: "true" }),
+      },
+    ) as never,
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(res.status, 400);
+  const json = (await res.json()) as { error?: string };
+  assert.equal(json.error, "stripeLivemode must be a boolean");
+});

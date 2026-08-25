@@ -233,6 +233,25 @@ export function merchantConnectOnboardingLivemode(
   return config?.stripeLivemode === true;
 }
 
+/**
+ * Live vs sandbox for `startMerchantConnect`.
+ * An explicit Payments-toggle value wins until a Connected Account is linked.
+ */
+export function resolveStartMerchantConnectLivemode(input: {
+  requestedLivemode?: boolean;
+  config: {
+    stripeLivemode?: boolean | null;
+    billingMode?: string | null;
+    stripeConnectedAccountId?: string | null;
+  } | null | undefined;
+}): boolean {
+  const linked = Boolean(input.config?.stripeConnectedAccountId?.trim());
+  if (typeof input.requestedLivemode === "boolean" && !linked) {
+    return input.requestedLivemode;
+  }
+  return merchantConnectOnboardingLivemode(input.config);
+}
+
 function stripeSecretKey(livemode = true): string {
   return resolveStripePlatformSecretKey(livemode);
 }
@@ -550,7 +569,10 @@ export async function startMerchantConnect({
     await upsertAppBillingConfig(clientId, { stripeLivemode: requestedLivemode });
     existing = await getAppBillingConfig(clientId);
   }
-  const livemode = merchantConnectOnboardingLivemode(existing);
+  const livemode = resolveStartMerchantConnectLivemode({
+    requestedLivemode,
+    config: existing,
+  });
   let accountId = linkedAccountId;
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
