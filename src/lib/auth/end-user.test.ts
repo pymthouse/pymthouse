@@ -174,6 +174,54 @@ run("authenticateEndUser resolves composite Bearer to end-user identity", async 
   assert.equal(auth?.developerAppId, app.clientId);
 });
 
+run("requireEndUserRouteAuth rejects overrides and missing Bearer", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const missing = await requireEndUserRouteAuth(
+    new NextRequest(`http://localhost/api/v1/apps/${app.clientId}/me/billing/wallet`),
+    app.clientId,
+    "wallet",
+  );
+  assert.ok("response" in missing);
+  assert.equal(missing.response.status, 401);
+
+  const overridden = await requireEndUserRouteAuth(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/me/billing/wallet?externalUserId=other`,
+    ),
+    app.clientId,
+    "wallet",
+  );
+  assert.ok("response" in overridden);
+  assert.equal(overridden.response.status, 400);
+
+  const externalUserId = `user-${randomUUID()}`;
+  const appUser = await createAppUser({
+    clientId: app.clientId,
+    externalUserId,
+  });
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"4".repeat(32)}`;
+  await db.insert(apiKeys).values({
+    id: `key-${randomUUID()}`,
+    keyHash: hashToken(bare),
+    clientId: app.clientId,
+    appUserId: appUser.id,
+    label: "end-user key",
+    status: "active",
+  });
+
+  const ok = await requireEndUserRouteAuth(
+    new NextRequest(`http://localhost/api/v1/apps/${app.clientId}/me/billing/wallet`, {
+      headers: { Authorization: `Bearer ${bare}` },
+    }),
+    app.clientId,
+    "wallet",
+  );
+  assert.ok("auth" in ok);
+  assert.equal(ok.auth.externalUserId, externalUserId);
+});
+
 test("authenticateEndUser returns null without Authorization", async () => {
   const auth = await authenticateEndUser(
     new Request("http://localhost/api/v1/apps/app_x/me/usage"),
