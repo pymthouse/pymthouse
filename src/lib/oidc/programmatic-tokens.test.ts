@@ -8,6 +8,7 @@ import { oidcClients } from "@/db/schema";
 import { issueProgrammaticTokens } from "@/lib/oidc/programmatic-tokens";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import {
+  BILLING_MODE_CLAIM,
   BILLING_SUBJECT_KEY_CLAIM,
   COST_OWNER_USER_ID_CLAIM,
   resetBillingIdentityCache,
@@ -45,6 +46,7 @@ test("programmatic JWT mint follows owner_rollup then merchant billing_mode", as
   });
   const rollupClaims = decodeJwt(rollup.access_token);
   assert.equal(rollupClaims.user_type, "app_user");
+  assert.equal(rollupClaims[BILLING_MODE_CLAIM], "owner_rollup");
   assert.equal(
     rollupClaims[BILLING_SUBJECT_KEY_CLAIM],
     buildOwnerCustomerKey(app.userId),
@@ -64,6 +66,7 @@ test("programmatic JWT mint follows owner_rollup then merchant billing_mode", as
   });
   const merchantClaims = decodeJwt(merchant.access_token);
   assert.equal(merchantClaims.user_type, "app_user");
+  assert.equal(merchantClaims[BILLING_MODE_CLAIM], "merchant");
   assert.equal(merchantClaims[COST_OWNER_USER_ID_CLAIM], undefined);
   assert.ok(
     isEndUserCustomerKey(String(merchantClaims[BILLING_SUBJECT_KEY_CLAIM])),

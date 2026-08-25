@@ -5,6 +5,7 @@ import { decodeJwt } from "jose";
 
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import {
+  BILLING_MODE_CLAIM,
   BILLING_SUBJECT_KEY_CLAIM,
   COST_OWNER_USER_ID_CLAIM,
   resetBillingIdentityCache,
@@ -264,6 +265,7 @@ dbTest("signer JWT mint stamps owner_rollup cost-rail claims", async (t) => {
   const claims = decodeJwt(minted.access_token);
   assert.equal(claims.user_type, "external_user");
   assert.equal(claims.external_user_id, externalUserId);
+  assert.equal(claims[BILLING_MODE_CLAIM], "owner_rollup");
   assert.equal(
     claims[BILLING_SUBJECT_KEY_CLAIM],
     buildOwnerCustomerKey(app.userId),
@@ -290,6 +292,7 @@ dbTest("signer JWT mint stamps merchant eu_ payer and omits cost_owner_user_id",
   const claims = decodeJwt(minted.access_token);
   assert.equal(claims.user_type, "external_user");
   assert.equal(claims.external_user_id, externalUserId);
+  assert.equal(claims[BILLING_MODE_CLAIM], "merchant");
   assert.equal(claims[COST_OWNER_USER_ID_CLAIM], undefined);
   assert.equal(
     typeof claims[BILLING_SUBJECT_KEY_CLAIM],

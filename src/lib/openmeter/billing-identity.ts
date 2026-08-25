@@ -25,6 +25,9 @@ export const COST_OWNER_USER_ID_CLAIM = "cost_owner_user_id";
 /** JWT claim: OpenMeter payer customer key (owner bare id, `eu_…`, or `sbx_eu_…`). */
 export const BILLING_SUBJECT_KEY_CLAIM = "billing_subject_key";
 
+/** JWT claim: app `billing_mode` so clients skip merchant-only `/me/billing` money reads. */
+export const BILLING_MODE_CLAIM = "billing_mode";
+
 /** Separator between payer and actor in the wire `usage_subject`. */
 export const PAYER_ACTOR_WIRE_SEPARATOR = "#";
 
@@ -62,6 +65,7 @@ export type ResolvedBillingIdentity = {
   publicClientId: string;
   /** developer_apps.id for plans / app_users rows. */
   developerAppId: string;
+  billingMode: "owner_rollup" | "merchant";
   /**
    * Legacy compound customer key `app_…:externalUserId` for dual-read during
    * the end-user customer migration. Absent for pure platform-user payers.
@@ -85,6 +89,7 @@ function platformUserIdentity(input: {
   publicClientId: string;
   developerAppId: string;
   actorExternalUserId: string;
+  billingMode?: "owner_rollup" | "merchant";
 }): ResolvedBillingIdentity {
   const payerCustomerKey = buildOwnerCustomerKey(input.platformUserId);
   return {
@@ -98,6 +103,7 @@ function platformUserIdentity(input: {
     actorExternalUserId: input.actorExternalUserId,
     publicClientId: input.publicClientId,
     developerAppId: input.developerAppId,
+    billingMode: input.billingMode ?? "owner_rollup",
   };
 }
 
@@ -110,6 +116,7 @@ function endUserIdentity(input: {
   actorExternalUserId: string;
   publicClientId: string;
   developerAppId: string;
+  billingMode: "owner_rollup" | "merchant";
   legacyCompoundCustomerKey: string;
 }): ResolvedBillingIdentity {
   return {
@@ -123,6 +130,7 @@ function endUserIdentity(input: {
     actorExternalUserId: input.actorExternalUserId,
     publicClientId: input.publicClientId,
     developerAppId: input.developerAppId,
+    billingMode: input.billingMode,
     legacyCompoundCustomerKey: input.legacyCompoundCustomerKey,
   };
 }
@@ -244,12 +252,13 @@ export function costOwnerUserIdClaim(
 export function billingSubjectClaim(
   identity: ResolvedBillingIdentity,
 ): Record<string, string> {
-  if (identity.isOwner && identity.payerKind === "platform_user") {
-    return {};
-  }
   const claims: Record<string, string> = {
-    [BILLING_SUBJECT_KEY_CLAIM]: identity.payerCustomerKey,
+    [BILLING_MODE_CLAIM]: identity.billingMode,
   };
+  if (identity.isOwner && identity.payerKind === "platform_user") {
+    return claims;
+  }
+  claims[BILLING_SUBJECT_KEY_CLAIM] = identity.payerCustomerKey;
   const ownerUserId = ownerCostRailUserId(identity);
   if (ownerUserId && !identity.isOwner) {
     claims[COST_OWNER_USER_ID_CLAIM] = ownerUserId;
@@ -588,6 +597,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       actorExternalUserId: externalUserId,
       publicClientId: input.clientId.trim(),
       developerAppId: input.clientId.trim(),
+      billingMode: "owner_rollup",
       legacyCompoundCustomerKey: legacyKey,
     });
   }
@@ -600,6 +610,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
       actorExternalUserId: ownerUserId,
+      billingMode: app.billingMode,
     });
   }
 
@@ -611,6 +622,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
       actorExternalUserId: app.ownerId,
+      billingMode: app.billingMode,
     });
   }
 
@@ -623,6 +635,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
       actorExternalUserId: normalized,
+      billingMode: app.billingMode,
     });
   }
 
@@ -642,6 +655,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       actorExternalUserId: externalUserId,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
+      billingMode: "owner_rollup",
       legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
     });
   }
@@ -658,6 +672,7 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     actorExternalUserId: externalUserId,
     publicClientId: app.publicClientId,
     developerAppId: app.developerAppId,
+    billingMode: "merchant",
     legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
   });
 }
