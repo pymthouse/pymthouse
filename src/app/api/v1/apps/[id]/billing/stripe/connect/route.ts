@@ -56,7 +56,15 @@ export async function POST(
       { status: 400 },
     );
   }
+  if (body.stripeLivemode !== undefined && typeof body.stripeLivemode !== "boolean") {
+    return NextResponse.json(
+      { error: "stripeLivemode must be a boolean" },
+      { status: 400 },
+    );
+  }
   const mode = modeRaw as MerchantConnectMode;
+  const stripeLivemode =
+    typeof body.stripeLivemode === "boolean" ? body.stripeLivemode : undefined;
 
   try {
     const result = await startMerchantConnect({
@@ -66,6 +74,7 @@ export async function POST(
       email: typeof body.email === "string" ? body.email : undefined,
       displayName:
         typeof body.displayName === "string" ? body.displayName : undefined,
+      stripeLivemode,
     });
     return NextResponse.json(result);
   } catch (err) {

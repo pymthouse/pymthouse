@@ -529,6 +529,7 @@ export async function startMerchantConnect({
   clientId,
   email,
   displayName,
+  stripeLivemode: requestedLivemode,
 }: {
   clientId: string;
   /** Reserved for audit / future session binding; Account Links do not persist OAuth state. */
@@ -536,12 +537,21 @@ export async function startMerchantConnect({
   mode?: MerchantConnectMode;
   email?: string;
   displayName?: string;
+  /** Selected Live/Sandbox mode from Payments. Ignored once an acct_ is linked. */
+  stripeLivemode?: boolean;
 }): Promise<{ method: "account_link"; url: string; accountId: string }> {
   await ensureOmStarterSideEffect(clientId);
 
-  const existing = await getAppBillingConfig(clientId);
+  let existing = await getAppBillingConfig(clientId);
+  const linkedAccountId = existing?.stripeConnectedAccountId?.trim() || "";
+  // Persist the Payments toggle on this request. Complete-onboarding used to
+  // ignore the selected mode and fall through to the owner_rollup sandbox default.
+  if (typeof requestedLivemode === "boolean" && !linkedAccountId) {
+    await upsertAppBillingConfig(clientId, { stripeLivemode: requestedLivemode });
+    existing = await getAppBillingConfig(clientId);
+  }
   const livemode = merchantConnectOnboardingLivemode(existing);
-  let accountId = existing?.stripeConnectedAccountId?.trim() || "";
+  let accountId = linkedAccountId;
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
       clientId,
