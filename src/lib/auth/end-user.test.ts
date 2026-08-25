@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { SignJWT } from "jose";
 import { v4 as uuidv4 } from "uuid";
+import { NextRequest } from "next/server";
 
 import { run } from "@/test-utils/db-guard";
 import {
@@ -19,6 +20,7 @@ import {
 import {
   authenticateEndUser,
   endUserSubjectOverrideError,
+  requireEndUserRouteAuth,
 } from "@/lib/auth/end-user";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
@@ -254,4 +256,58 @@ run("authenticateEndUser rejects mismatched expectedPublicClientId for subject a
     { expectedPublicClientId: OTHER_CLIENT_ID },
   );
   assert.equal(mismatched, null);
+});
+
+test("requireEndUserRouteAuth returns 401 without a credential", async () => {
+  const result = await requireEndUserRouteAuth(
+    new NextRequest("http://localhost/api/v1/apps/app_x/me/billing/allowances"),
+    "app_x",
+    "allowances",
+  );
+  assert.ok("response" in result);
+  assert.equal(result.response.status, 401);
+});
+
+test("requireEndUserRouteAuth returns 400 on subject override", async () => {
+  const result = await requireEndUserRouteAuth(
+    new NextRequest(
+      "http://localhost/api/v1/apps/app_x/me/billing/allowances?externalUserId=other",
+    ),
+    "app_x",
+    "allowances",
+  );
+  assert.ok("response" in result);
+  assert.equal(result.response.status, 400);
+});
+
+run("requireEndUserRouteAuth accepts matching Bearer", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const externalUserId = `user-${randomUUID()}`;
+  const appUser = await createAppUser({
+    clientId: app.clientId,
+    externalUserId,
+  });
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"9".repeat(32)}`;
+  await db.insert(apiKeys).values({
+    id: `key-${randomUUID()}`,
+    keyHash: hashToken(bare),
+    clientId: app.clientId,
+    appUserId: appUser.id,
+    label: "end-user key",
+    status: "active",
+  });
+
+  const result = await requireEndUserRouteAuth(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/me/billing/allowances`,
+      { headers: { Authorization: `Bearer ${bare}` } },
+    ),
+    app.clientId,
+    "allowances",
+  );
+  assert.ok("auth" in result);
+  assert.equal(result.auth.externalUserId, externalUserId);
+  assert.equal(result.auth.publicClientId, app.clientId);
 });
