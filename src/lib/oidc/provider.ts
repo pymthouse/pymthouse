@@ -289,6 +289,10 @@ async function buildCorsSnapshot(): Promise<{
   return { trustedHosts, clientOrigins };
 }
 
+/**
+ * Single-flight wrapper. Concurrent requests arriving on a cold instance used to
+ * each build their own provider, multiplying the init queries.
+ */
 export function getProvider(): Promise<Provider> {
   if (_provider) return Promise.resolve(_provider);
   _providerPromise ??= instantiateProvider().catch((err) => {

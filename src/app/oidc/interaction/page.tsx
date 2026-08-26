@@ -62,13 +62,19 @@ export default async function OidcInteractionPage({
     );
   }
 
-  const session = await getServerSession(authOptions);
+  const [session, details] = await Promise.all([
+    getServerSession(authOptions),
+    loadOidcInteractionDetails(uid),
+  ]);
 
   if (!session?.user) {
-    redirect(oidcLoginRedirect(clientIdFromQuery, oidcInteractionPath(uid, clientIdFromQuery)));
+    const clientId =
+      (typeof details?.params.client_id === "string" &&
+        details.params.client_id.trim()) ||
+      clientIdFromQuery;
+    redirect(oidcLoginRedirect(clientId, oidcInteractionPath(uid, clientId)));
   }
 
-  const details = await loadOidcInteractionDetails(uid);
   if (!details) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">

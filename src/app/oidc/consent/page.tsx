@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
+import { developerApps } from "@/db/schema";
 import { getClient } from "@/lib/oidc/clients";
 import { DCR_ALLOWED_SCOPES, isDcrClientId } from "@/lib/oidc/dcr-client";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
@@ -13,7 +13,7 @@ import {
   type OidcInteractionDetails,
 } from "@/lib/oidc/interaction-bridge";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
-import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
+import { resolveAppBrandingFromRows, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { getDefaultBranding } from "@/lib/oidc/branding-shared";
 import type { AppBranding } from "@/lib/oidc/branding-shared";
 import { eq } from "drizzle-orm";
@@ -79,6 +79,7 @@ type ConsentClient = {
   grantTypes: string[];
   tokenEndpointAuthMethod: string;
   clientSecretHash: string | null;
+  logoUri: string | null;
   createdAt: string;
 };
 
@@ -104,54 +105,25 @@ async function resolveConsentClient(
     grantTypes: ["authorization_code", "refresh_token"],
     tokenEndpointAuthMethod: "none",
     clientSecretHash: null,
+    logoUri: null,
     createdAt: "",
   };
 }
 
-type DeveloperAppMeta = {
-  name: string | null;
-  developerName: string | null;
-  websiteUrl: string | null;
-  privacyPolicyUrl: string | null;
-  supportUrl: string | null;
-  logoLightUrl: string | null;
-};
-
-async function loadDeveloperAppMeta(
+async function loadDeveloperAppRow(
   registeredClientId: string | null,
-  oidcClientId: string,
-): Promise<{
-  developerApp: DeveloperAppMeta | undefined;
-  oidcLogoUri: string | null | undefined;
-}> {
+): Promise<typeof developerApps.$inferSelect | undefined> {
   if (!registeredClientId) {
-    return { developerApp: undefined, oidcLogoUri: undefined };
+    return undefined;
   }
 
-  const [developerAppRows, oidcClientRows] = await Promise.all([
-    db
-      .select({
-        name: developerApps.name,
-        developerName: developerApps.developerName,
-        websiteUrl: developerApps.websiteUrl,
-        privacyPolicyUrl: developerApps.privacyPolicyUrl,
-        supportUrl: developerApps.supportUrl,
-        logoLightUrl: developerApps.logoLightUrl,
-      })
-      .from(developerApps)
-      .where(eq(developerApps.oidcClientId, registeredClientId))
-      .limit(1),
-    db
-      .select({ logoUri: oidcClients.logoUri })
-      .from(oidcClients)
-      .where(eq(oidcClients.clientId, oidcClientId))
-      .limit(1),
-  ]);
+  const developerAppRows = await db
+    .select()
+    .from(developerApps)
+    .where(eq(developerApps.oidcClientId, registeredClientId))
+    .limit(1);
 
-  return {
-    developerApp: developerAppRows[0],
-    oidcLogoUri: oidcClientRows[0]?.logoUri,
-  };
+  return developerAppRows[0];
 }
 
 function resolveLogoUrl(input: {
@@ -194,7 +166,7 @@ type ConsentViewModel = {
   client: ConsentClient;
   branding: AppBranding;
   isWhiteLabel: boolean;
-  developerApp: DeveloperAppMeta | undefined;
+  developerApp: typeof developerApps.$inferSelect | undefined;
   logoUrl: string | null;
   scopeItems: Array<{
     name: string;
@@ -232,8 +204,9 @@ async function buildConsentViewModel(
     return null;
   }
 
+  const developerAppRow = await loadDeveloperAppRow(registeredClient?.id ?? null);
   const branding = registeredClient
-    ? await resolveAppBrandingByClientId(clientId)
+    ? resolveAppBrandingFromRows(registeredClient, developerAppRow)
     : {
         ...getDefaultBranding(),
         displayName: client.displayName,
@@ -243,22 +216,18 @@ async function buildConsentViewModel(
     ? shouldUseWhiteLabelBranding(branding)
     : false;
 
-  const { developerApp, oidcLogoUri } = await loadDeveloperAppMeta(
-    registeredClient?.id ?? null,
-    clientId,
-  );
   const logoUrl = resolveLogoUrl({
     isWhiteLabel,
     brandingLogoUrl: branding.logoUrl,
-    oidcLogoUri,
-    developerLogoUrl: developerApp?.logoLightUrl,
+    oidcLogoUri: client.logoUri,
+    developerLogoUrl: developerAppRow?.logoLightUrl,
   });
 
   const scopeItems = buildScopeItems(scope, client.allowedScopes);
   const signedInAs = user.name || user.email || "Your account";
   const redirectHost = getHostLabel(redirectUri || "");
-  const websiteHost = developerApp?.websiteUrl
-    ? getHostLabel(developerApp.websiteUrl)
+  const websiteHost = developerAppRow?.websiteUrl
+    ? getHostLabel(developerAppRow.websiteUrl)
     : null;
 
   const heading = isWhiteLabel
@@ -267,8 +236,8 @@ async function buildConsentViewModel(
   const whiteLabelDescription = isWhiteLabel
     ? `${client.displayName} is requesting access to your account.`
     : null;
-  const applicationSubtitle = developerApp?.developerName
-    ? `Built by ${developerApp.developerName}`
+  const applicationSubtitle = developerAppRow?.developerName
+    ? `Built by ${developerAppRow.developerName}`
     : "Registered application";
   const permissionCountLabel = `${scopeItems.length} permission${
     scopeItems.length === 1 ? "" : "s"
@@ -279,7 +248,7 @@ async function buildConsentViewModel(
     client,
     branding,
     isWhiteLabel,
-    developerApp,
+    developerApp: developerAppRow,
     logoUrl,
     scopeItems,
     signedInAs,
@@ -580,8 +549,10 @@ export default async function ConsentPage({
     );
   }
 
-  const session = await getServerSession(authOptions);
-  const interactionDetails = await loadOidcInteractionDetails(uid);
+  const [session, interactionDetails] = await Promise.all([
+    getServerSession(authOptions),
+    loadOidcInteractionDetails(uid),
+  ]);
   if (!interactionDetails) {
     return (
       <ConsentErrorPanel title="Expired or Invalid Request">

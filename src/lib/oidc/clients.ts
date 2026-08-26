@@ -160,6 +160,7 @@ export async function getClient(clientId: string): Promise<{
   grantTypes: string[];
   tokenEndpointAuthMethod: string;
   clientSecretHash: string | null;
+  logoUri: string | null;
   createdAt: string;
 } | null> {
   const rows = await db
@@ -180,6 +181,7 @@ export async function getClient(clientId: string): Promise<{
     grantTypes: client.grantTypes.split(",").filter(Boolean),
     tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
     clientSecretHash: client.clientSecretHash,
+    logoUri: client.logoUri,
     createdAt: client.createdAt,
   };
 }
