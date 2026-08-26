@@ -9,6 +9,29 @@ import {
   getBrandingCssVars,
 } from "./branding-shared";
 
+/**
+ * Branding from rows the caller already holds. Lets a page that has fetched the
+ * client + developer app resolve branding without re-querying both tables.
+ */
+export function resolveAppBrandingFromRows(
+  oidcClient: { displayName: string; logoUri: string | null } | undefined,
+  app: typeof developerApps.$inferSelect | undefined,
+): AppBranding {
+  if (!oidcClient) {
+    return getDefaultBranding();
+  }
+
+  if (!app) {
+    return {
+      ...getDefaultBranding(),
+      displayName: oidcClient.displayName,
+      logoUrl: oidcClient.logoUri || null,
+    };
+  }
+
+  return resolveAppBranding(app);
+}
+
 export async function resolveAppBrandingByClientId(clientId: string): Promise<AppBranding> {
   const oidcRows = await db
     .select()
@@ -26,17 +49,8 @@ export async function resolveAppBrandingByClientId(clientId: string): Promise<Ap
     .from(developerApps)
     .where(eq(developerApps.oidcClientId, oidcClient.id))
     .limit(1);
-  const app = appRows[0];
 
-  if (!app) {
-    return {
-      ...getDefaultBranding(),
-      displayName: oidcClient.displayName,
-      logoUrl: oidcClient.logoUri || null,
-    };
-  }
-
-  return resolveAppBranding(app);
+  return resolveAppBrandingFromRows(oidcClient, appRows[0]);
 }
 
 export async function resolveAppBrandingByAppId(appId: string): Promise<AppBranding> {

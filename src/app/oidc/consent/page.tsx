@@ -3,13 +3,13 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
+import { developerApps } from "@/db/schema";
 import { getClient } from "@/lib/oidc/clients";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
-import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
+import { resolveAppBrandingFromRows, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { eq } from "drizzle-orm";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
@@ -65,7 +65,11 @@ export default async function ConsentPage({
     );
   }
 
-  const session = await getServerSession(authOptions);
+  const [session, provider, requestHeaders] = await Promise.all([
+    getServerSession(authOptions),
+    getProvider(),
+    headers(),
+  ]);
 
   // Fetch interaction details from the provider
   let interactionDetails: {
@@ -75,8 +79,6 @@ export default async function ConsentPage({
   };
 
   try {
-    const provider = await getProvider();
-    const requestHeaders = await headers();
     const socket = new Socket();
     const req = new IncomingMessage(socket);
     req.method = "GET";
@@ -131,33 +133,20 @@ export default async function ConsentPage({
     );
   }
 
-  const branding = await resolveAppBrandingByClientId(clientId);
-  const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
-
   const developerAppRows = await db
-    .select({
-      name: developerApps.name,
-      developerName: developerApps.developerName,
-      websiteUrl: developerApps.websiteUrl,
-      privacyPolicyUrl: developerApps.privacyPolicyUrl,
-      supportUrl: developerApps.supportUrl,
-      logoLightUrl: developerApps.logoLightUrl,
-    })
+    .select()
     .from(developerApps)
     .where(eq(developerApps.oidcClientId, client.id))
     .limit(1);
   const developerApp = developerAppRows[0];
 
-  // Fetch logo_uri from OIDC client metadata (synced from app settings)
-  const oidcClientRows = await db
-    .select({ logoUri: oidcClients.logoUri })
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-  const oidcClientRow = oidcClientRows[0];
+  const branding = resolveAppBrandingFromRows(client, developerApp);
+  const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
+
+  // logo_uri on the OIDC client is synced from app settings.
   const logoUrl = isWhiteLabel 
-    ? (branding.logoUrl || oidcClientRow?.logoUri || developerApp?.logoLightUrl || null)
-    : (oidcClientRow?.logoUri || developerApp?.logoLightUrl || null);
+    ? (branding.logoUrl || client.logoUri || developerApp?.logoLightUrl || null)
+    : (client.logoUri || developerApp?.logoLightUrl || null);
 
   const scopes = scope
     ? scope.split(/\s+/).filter((s) => client.allowedScopes.includes(s))
