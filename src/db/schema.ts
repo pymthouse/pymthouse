@@ -704,8 +704,8 @@ export const ownerBillingConfig = pgTable(
  *
  * Owner Starter included allowance is admin-editable here so changing the
  * default for new developers (and base-key re-sync) does not require a
- * redeploy. Env `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` is the
- * bootstrap fallback when this row is absent.
+ * redeploy. When this row is absent the allowance is `"0"`. App / M2M Starter
+ * seeding uses `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` separately.
  */
 export const platformBillingSettings = pgTable("platform_billing_settings", {
   id: text("id").primaryKey(),

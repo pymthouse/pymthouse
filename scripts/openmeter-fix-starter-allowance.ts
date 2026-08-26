@@ -198,7 +198,7 @@ async function ensureIncludedUsdMicros(
   apply: boolean,
 ): Promise<StarterRow> {
   const current = row.includedUsdMicros?.trim() || "";
-  if (/^\d+$/.test(current) && BigInt(current) > 0n) {
+  if (/^\d+$/.test(current)) {
     return row;
   }
   const next = defaultStarterIncludedUsdMicros();
