@@ -83,7 +83,7 @@ export async function resolvePlatformOwnerStarterDefault(): Promise<ResolvedPlat
   const row = rows[0];
   const planName = coerceOwnerStarterPlanName(row?.ownerStarterPlanName);
   const fromDb = normalizeMicros(row?.ownerStarterIncludedUsdMicros);
-  if (fromDb) {
+  if (fromDb != null) {
     return {
       ownerStarterIncludedUsdMicros: fromDb,
       ownerStarterPlanName: planName,

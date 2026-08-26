@@ -80,6 +80,27 @@ test("platform owner starter default prefers DB over env", async (t) => {
   assert.equal(resolvedAgain.ownerStarterPlanName, "Developer Free Tier");
 });
 
+test("platform owner starter default treats stored 0 as db source", async (t) => {
+  const adminId = await createTestUser({ role: "admin" });
+  t.after(async () => {
+    await db
+      .delete(platformBillingSettings)
+      .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
+    await db.delete(users).where(eq(users.id, adminId));
+  });
+
+  const saved = await setPlatformOwnerStarterIncludedUsdMicros({
+    ownerStarterIncludedUsdMicros: "0",
+    updatedBy: adminId,
+  });
+  assert.equal(saved.source, "db");
+  assert.equal(saved.ownerStarterIncludedUsdMicros, "0");
+
+  const resolved = await resolvePlatformOwnerStarterDefault();
+  assert.equal(resolved.source, "db");
+  assert.equal(resolved.ownerStarterIncludedUsdMicros, "0");
+});
+
 nodeTest("normalizeOwnerStarterPlanName falls back and rejects overlong names", () => {
   assert.equal(normalizeOwnerStarterPlanName(""), "Owner Sandbox Starter");
   assert.equal(normalizeOwnerStarterPlanName("  Free  Tier  "), "Free Tier");
