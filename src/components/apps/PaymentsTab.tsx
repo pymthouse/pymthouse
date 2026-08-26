@@ -358,9 +358,11 @@ async function requestSetStripeLivemode(input: {
   stripeLivemode: boolean;
   setters: BusySetters & {
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+    setSelectedLivemode: (value: boolean) => void;
   };
 }): Promise<void> {
   const { setters } = input;
+  setters.setSelectedLivemode(input.stripeLivemode);
   setters.setBusy(true);
   setters.setError(null);
   try {
@@ -375,6 +377,7 @@ async function requestSetStripeLivemode(input: {
     }
     setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
   } catch (err) {
+    setters.setSelectedLivemode(!input.stripeLivemode);
     setters.setError(err instanceof Error ? err.message : String(err));
   } finally {
     setters.setBusy(false);
@@ -388,6 +391,7 @@ function PaymentsLivemodeToggle(props: Readonly<{
   stripeLivemode: boolean;
   setters: BusySetters & {
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+    setSelectedLivemode: (value: boolean) => void;
   };
 }>) {
   const { appId, busy, locked, stripeLivemode, setters } = props;
@@ -569,8 +573,9 @@ function PaymentsConnectActions(props: Readonly<{
   flags: ReturnType<typeof connectUiFlags>;
   busySetters: BusySetters;
   reload: () => Promise<void>;
+  stripeLivemode: boolean;
 }>) {
-  const { appId, busy, flags, busySetters, reload } = props;
+  const { appId, busy, flags, busySetters, reload, stripeLivemode } = props;
   return (
     <div className="flex flex-wrap gap-2">
       {!flags.hasAccount && (
@@ -584,7 +589,10 @@ function PaymentsConnectActions(props: Readonly<{
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mode: "account_link" }),
+                body: JSON.stringify({
+                  mode: "account_link",
+                  stripeLivemode,
+                }),
               },
               busySetters,
               "Connect failed",
@@ -957,6 +965,14 @@ function PaymentsTabLoaded(props: Readonly<{
 
   const flags = connectUiFlags(status);
   const busySetters = { setBusy, setError };
+  const storedLivemode = status?.stripeLivemode === true;
+  const [selectedLivemode, setSelectedLivemode] = useState(storedLivemode);
+  const [livemodeBusy, setLivemodeBusy] = useState(false);
+  useEffect(() => {
+    if (!livemodeBusy) {
+      setSelectedLivemode(storedLivemode);
+    }
+  }, [storedLivemode, livemodeBusy]);
   const connectReadyForMerchant = flags.merchantReady;
   const save = () =>
     void requestSaveBillingSettings({
@@ -998,20 +1014,26 @@ function PaymentsTabLoaded(props: Readonly<{
         {canManageBilling && (
           <PaymentsLivemodeToggle
             appId={appId}
-            busy={busy}
+            busy={busy || livemodeBusy}
             locked={flags.hasAccount}
-            stripeLivemode={status?.stripeLivemode === true}
-            setters={{ setBusy, setError, setStatus }}
+            stripeLivemode={selectedLivemode}
+            setters={{
+              setBusy: setLivemodeBusy,
+              setError,
+              setStatus,
+              setSelectedLivemode,
+            }}
           />
         )}
 
         {canManageBilling && (
           <PaymentsConnectActions
             appId={appId}
-            busy={busy}
+            busy={busy || livemodeBusy}
             flags={flags}
             busySetters={busySetters}
             reload={reload}
+            stripeLivemode={selectedLivemode}
           />
         )}
 
