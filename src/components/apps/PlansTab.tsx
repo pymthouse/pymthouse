@@ -1347,7 +1347,7 @@ function StarterPlanCard({
 }>) {
   const [expanded, setExpanded] = useState(false);
   const [includedUsdDisplay, setIncludedUsdDisplay] = useState(() =>
-    usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "5000000"),
+    usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "0"),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1355,7 +1355,7 @@ function StarterPlanCard({
 
   useEffect(() => {
     if (expanded) {
-      setIncludedUsdDisplay(usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "5000000"));
+      setIncludedUsdDisplay(usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "0"));
       setError(null);
     }
   }, [expanded, plan.includedUsdMicros]);

@@ -43,7 +43,9 @@ function parseIncludedMicros(raw: string | null | undefined): number | undefined
   if (!raw?.trim()) return undefined;
   try {
     const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+    return Number.isFinite(n) && n >= 0 && /^\d+$/.test(raw.trim())
+      ? Math.floor(n)
+      : undefined;
   } catch {
     return undefined;
   }

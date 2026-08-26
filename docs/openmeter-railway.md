@@ -136,7 +136,7 @@ Bootstrap does **not** create per-app plans or grant credits. Those happen at ru
 2. **Customer keys:**
    - **M2M end-users:** `client_id:external_user_id` — one Konnect customer per (app, user). CloudEvent `subject` matches this compound key.
    - **App owners:** billing wallet `owner:{users.id}` — one shared Konnect customer across all apps they own. JWT `sub` / `external_user_id` stay bare `{users.id}`; the remote-signer webhook maps owners to `usage_subject` = `owner:{users.id}` so CloudEvent `subject` is the customer key (required for Konnect settlement — multi-subject `usageAttribution` is cleared when a subscription is created).
-3. **Trial / top-up allowance** is `POST /customers/{id}/credits/grants` only (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). Owners are granted once on the shared wallet; end-users once per app customer. Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
+3. **Included usage** is plan rate-card `discounts.usage`, not an auto credit grant. App / M2M Starter seeds from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` (default `$0`). Owner Starter uses `platform_billing_settings` (admin `PATCH /api/v1/admin/billing/platform`; `$0` when that row is absent). Manual top-ups still use `POST /customers/{id}/credits/grants`. Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
 
 Migrate existing per-app owner wallets with:
 
