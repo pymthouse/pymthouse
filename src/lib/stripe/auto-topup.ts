@@ -75,6 +75,7 @@ export type AutoTopUpRuntime = {
   getAppUserStripeCustomer: (input: {
     clientId: string;
     externalUserId: string;
+    stripeConnectedAccountId: string;
   }) => Promise<{
     stripeCustomerId?: string | null;
     stripeConnectedAccountId?: string | null;
@@ -276,12 +277,12 @@ async function executeEnabledAutoTopUp(input: {
   const customer = await runtime.getAppUserStripeCustomer({
     clientId: input.developerAppId,
     externalUserId: input.externalUserId,
+    stripeConnectedAccountId: accountId,
   });
   const stripeCustomerId = customer?.stripeCustomerId?.trim() || "";
-  if (
-    !stripeCustomerId ||
-    customer?.stripeConnectedAccountId !== accountId
-  ) {
+  // The lookup is already scoped to this plane's account, but the resolver is
+  // injectable and this path charges a card — re-check before moving money.
+  if (!stripeCustomerId || customer?.stripeConnectedAccountId !== accountId) {
     return { status: "skipped", reason: "no_stripe_customer" };
   }
 

@@ -475,15 +475,15 @@ export async function listAppUserPaymentMethods(input: {
     if (!resolveStripePlatformSecretKeyOrNull(livemode)) {
       return [];
     }
+    if (!connectedAccountId) {
+      return [];
+    }
     const merchantCustomer = await getAppUserStripeCustomer({
       clientId,
       externalUserId,
+      stripeConnectedAccountId: connectedAccountId,
     });
-    if (
-      !connectedAccountId ||
-      merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
-      !merchantCustomer.stripeCustomerId?.trim()
-    ) {
+    if (!merchantCustomer?.stripeCustomerId?.trim()) {
       return [];
     }
 
@@ -591,12 +591,15 @@ async function resolveAppUserStripeRefs(input: {
       return null;
     }
     const stripeAccount = billingConfig?.stripeConnectedAccountId?.trim();
-    const merchantCustomer = await getAppUserStripeCustomer(input);
-    if (
-      !stripeAccount ||
-      merchantCustomer?.stripeConnectedAccountId !== stripeAccount ||
-      !merchantCustomer.stripeCustomerId?.trim()
-    ) {
+    if (!stripeAccount) {
+      return null;
+    }
+    const merchantCustomer = await getAppUserStripeCustomer({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      stripeConnectedAccountId: stripeAccount,
+    });
+    if (!merchantCustomer?.stripeCustomerId?.trim()) {
       return null;
     }
     return {

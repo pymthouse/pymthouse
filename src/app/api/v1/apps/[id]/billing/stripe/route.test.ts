@@ -167,7 +167,7 @@ test("PATCH stripeLivemode no-ops when linked account already matches", async (t
   assert.equal(json.stripeLivemode, true);
 });
 
-test("PATCH stripeLivemode still rejects a plane change while linked", async (t) => {
+test("PATCH stripeLivemode parks the linked account and restores it on the way back", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   installSession(app, "developer");
   t.after(async () => {
@@ -178,6 +178,66 @@ test("PATCH stripeLivemode still rejects a plane change while linked", async (t)
   await upsertAppBillingConfig(app.clientId, {
     stripeLivemode: true,
     stripeConnectedAccountId: "acct_linked_live",
+    stripeChargesEnabled: true,
+    stripeDetailsSubmitted: true,
+  });
+
+  const { PATCH } = await import("./route");
+  const patchLivemode = async (stripeLivemode: boolean) =>
+    PATCH(
+      new Request(
+        `http://localhost/api/v1/apps/${app.clientId}/billing/stripe`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stripeLivemode }),
+        },
+      ) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+
+  const toSandbox = await patchLivemode(false);
+  assert.equal(toSandbox.status, 200);
+  const sandboxJson = (await toSandbox.json()) as {
+    stripeLivemode?: boolean;
+    stripeConnectedAccountId?: string | null;
+    stripeLivemodeSwitch?: { changed?: boolean; accountId?: string | null };
+    connectPlanes?: { live?: { stripeConnectedAccountId?: string } | null };
+  };
+  assert.equal(sandboxJson.stripeLivemode, false);
+  // Sandbox was never onboarded, so the active account clears...
+  assert.equal(sandboxJson.stripeConnectedAccountId, null);
+  assert.equal(sandboxJson.stripeLivemodeSwitch?.changed, true);
+  assert.equal(sandboxJson.stripeLivemodeSwitch?.accountId, null);
+  // ...while the live plane keeps its onboarding.
+  assert.equal(
+    sandboxJson.connectPlanes?.live?.stripeConnectedAccountId,
+    "acct_linked_live",
+  );
+
+  const backToLive = await patchLivemode(true);
+  assert.equal(backToLive.status, 200);
+  const liveJson = (await backToLive.json()) as {
+    stripeLivemode?: boolean;
+    stripeConnectedAccountId?: string | null;
+  };
+  assert.equal(liveJson.stripeLivemode, true);
+  assert.equal(liveJson.stripeConnectedAccountId, "acct_linked_live");
+});
+
+test("PATCH rejects billingMode and stripeLivemode in the same body", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  installSession(app, "developer");
+  t.after(async () => {
+    setProviderAppSessionResolverForTests(null);
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_combo_live",
+    stripeChargesEnabled: true,
+    stripeDetailsSubmitted: true,
   });
 
   const { PATCH } = await import("./route");
@@ -185,16 +245,25 @@ test("PATCH stripeLivemode still rejects a plane change while linked", async (t)
     new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/stripe`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stripeLivemode: false }),
+      body: JSON.stringify({
+        billingMode: "merchant",
+        stripeLivemode: false,
+      }),
     }) as never,
     { params: Promise.resolve({ id: app.clientId }) },
   );
-  assert.notEqual(res.status, 200);
+  assert.equal(res.status, 400);
   const json = (await res.json()) as { error?: string };
-  assert.match(
-    json.error ?? "",
-    /Cannot change stripeLivemode while a Connected Account is linked/,
+  assert.match(json.error ?? "", /Cannot change billingMode and stripeLivemode/);
+
+  // Neither field applied — still on the live plane, still owner_rollup.
+  const { getAppBillingConfig } = await import(
+    "@/lib/openmeter/billing-profiles"
   );
+  const config = await getAppBillingConfig(app.clientId);
+  assert.equal(config?.stripeLivemode, true);
+  assert.equal(config?.stripeConnectedAccountId, "acct_combo_live");
+  assert.equal(config?.billingMode ?? "owner_rollup", "owner_rollup");
 });
 
 test("POST /billing/stripe/connect rejects non-boolean stripeLivemode", async (t) => {

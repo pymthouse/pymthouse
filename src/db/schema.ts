@@ -599,8 +599,9 @@ export const appBillingConfig = pgTable(
     /**
      * When true, Merchant Connect uses the live platform key.
      * When false (default for new rows), Connect uses STRIPE_SANDBOX_SECRET_KEY.
-     * Existing live merchant apps stay true. Locked once stripeConnectedAccountId
-     * is set — disconnect to switch.
+     * Existing live merchant apps stay true. Switching planes parks the
+     * Connected Account in `app_stripe_connect_accounts` and restores the
+     * target plane — disconnect only when deliberately dropping a plane.
      */
     stripeLivemode: boolean("stripe_livemode").notNull().default(false),
     /** How the merchant linked: account_link | oauth */
@@ -653,6 +654,57 @@ export const appBillingConfig = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [uniqueIndex("idx_app_billing_config_client_id").on(t.clientId)],
+);
+
+/**
+ * Merchant Connect state parked per Stripe plane, so an app can move between
+ * sandbox and live without losing either onboarding.
+ *
+ * `app_billing_config` still holds the *active* plane (`stripe_livemode` plus
+ * the `stripe_connected_account_id` / capability flags every consumer reads).
+ * This table is the durable copy for each plane the app has onboarded; a plane
+ * switch restores the target row into `app_billing_config` and re-syncs flags
+ * from Stripe. Supplier columns are deliberately not parked — they are
+ * re-derived from the connected account on the next flag sync.
+ */
+export const appStripeConnectAccounts = pgTable(
+  "app_stripe_connect_accounts",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    /** true = live Stripe platform, false = sandbox. */
+    livemode: boolean("livemode").notNull(),
+    stripeConnectedAccountId: text("stripe_connected_account_id").notNull(),
+    /** How the merchant linked: account_link | oauth */
+    stripeOnboardingMethod: text("stripe_onboarding_method"),
+    stripeChargesEnabled: boolean("stripe_charges_enabled")
+      .notNull()
+      .default(false),
+    stripePayoutsEnabled: boolean("stripe_payouts_enabled")
+      .notNull()
+      .default(false),
+    stripeDetailsSubmitted: boolean("stripe_details_submitted")
+      .notNull()
+      .default(false),
+    connectedAt: text("connected_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_app_stripe_connect_accounts_plane").on(
+      t.clientId,
+      t.livemode,
+    ),
+    index("idx_app_stripe_connect_accounts_account").on(
+      t.stripeConnectedAccountId,
+    ),
+  ],
 );
 
 /**
@@ -872,7 +924,17 @@ export const appUserStripeCustomers = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [
+    /**
+     * Scoped by connected account so an app user keeps a distinct `cus_` per
+     * Stripe plane. Reads must filter on the account too — a bare
+     * (clientId, externalUserId) lookup can match the other plane's customer.
+     */
     uniqueIndex("idx_app_user_stripe_customers_unique").on(
+      t.clientId,
+      t.externalUserId,
+      t.stripeConnectedAccountId,
+    ),
+    index("idx_app_user_stripe_customers_client_user").on(
       t.clientId,
       t.externalUserId,
     ),

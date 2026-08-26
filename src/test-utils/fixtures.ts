@@ -340,6 +340,11 @@ export async function cleanupTestApp(
   await deleteFromOptionalTable("app_billing_config", "client_id", appId);
   await deleteFromOptionalTable("app_billing_oauth_states", "client_id", appId);
   await deleteFromOptionalTable("app_user_stripe_customers", "client_id", appId);
+  await deleteFromOptionalTable(
+    "app_stripe_connect_accounts",
+    "client_id",
+    appId,
+  );
 
   await db.execute(sql`DELETE FROM developer_apps WHERE id = ${appId}`);
   await db.execute(sql`DELETE FROM oidc_clients WHERE id = ${oidcClientPk}`);

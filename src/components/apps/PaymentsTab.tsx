@@ -21,9 +21,24 @@ type ActivationInfo = {
   appUserCount: number;
 };
 
+type ConnectPlaneSummary = {
+  stripeConnectedAccountId: string;
+  chargesEnabled: boolean;
+  detailsSubmitted: boolean;
+  connectedAt: string | null;
+  ready: boolean;
+};
+
+/** Onboarding parked per Stripe plane — null when that plane was never set up. */
+type ConnectPlanes = {
+  live: ConnectPlaneSummary | null;
+  sandbox: ConnectPlaneSummary | null;
+};
+
 type StripeStatus = {
   status: string;
   billingReady?: boolean;
+  connectPlanes?: ConnectPlanes | null;
   openmeterStripeAppId: string | null;
   openmeterBillingProfileId: string | null;
   defaultCurrency: string;
@@ -286,10 +301,18 @@ async function postConnectRedirect(
 
 async function requestDisconnectStripe(
   appId: string,
+  stripeLivemode: boolean,
   setters: BusySetters,
   reload: () => Promise<void>,
 ): Promise<void> {
-  if (!globalThis.confirm("Disconnect Stripe from this app?")) {
+  const plane = stripeLivemode ? "Live" : "Sandbox";
+  if (
+    !globalThis.confirm(
+      `Disconnect the ${plane} Stripe account from this app?\n\n` +
+        `This discards ${plane} onboarding — reconnecting means completing it again. ` +
+        `To test on the other plane instead, use the Stripe platform switch, which keeps both.`,
+    )
+  ) {
     return;
   }
   setters.setBusy(true);
@@ -353,16 +376,57 @@ async function requestSaveBillingSettings(input: {
   }
 }
 
+function planeLabel(livemode: boolean): string {
+  return livemode ? "Live" : "Sandbox";
+}
+
+/**
+ * Spell out what a plane switch costs before it happens. Each plane keeps its
+ * own onboarding, so the only real hazard is landing on a plane that cannot
+ * charge yet while the app is set to bill end users itself.
+ */
+function planeSwitchConfirmMessage(input: {
+  target: boolean;
+  targetPlane: ConnectPlaneSummary | null;
+  billingMode: "owner_rollup" | "merchant";
+}): string {
+  const to = planeLabel(input.target);
+  const from = planeLabel(!input.target);
+  const lines = [`Switch this app's Stripe platform from ${from} to ${to}?`, ""];
+  if (input.targetPlane?.ready) {
+    lines.push(
+      `${to} onboarding is already complete (${input.targetPlane.stripeConnectedAccountId}), so it will start collecting immediately.`,
+    );
+  } else if (input.targetPlane) {
+    lines.push(
+      `${to} has an account (${input.targetPlane.stripeConnectedAccountId}) that has not finished onboarding. You will need to complete it before charges work.`,
+    );
+  } else {
+    lines.push(
+      `${to} has no Connected Account yet — you will need to complete onboarding on that plane.`,
+    );
+  }
+  if (input.billingMode === "merchant" && !input.targetPlane?.ready) {
+    lines.push(
+      "",
+      "This app bills end users directly (merchant mode), so paid-plan checkout will be blocked until onboarding finishes.",
+    );
+  }
+  lines.push(
+    "",
+    `Your ${from} onboarding is kept and restored if you switch back.`,
+  );
+  return lines.join("\n");
+}
+
 async function requestSetStripeLivemode(input: {
   appId: string;
   stripeLivemode: boolean;
   setters: BusySetters & {
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
-    setSelectedLivemode: (value: boolean) => void;
   };
 }): Promise<void> {
   const { setters } = input;
-  setters.setSelectedLivemode(input.stripeLivemode);
   setters.setBusy(true);
   setters.setError(null);
   try {
@@ -373,77 +437,129 @@ async function requestSetStripeLivemode(input: {
     });
     const body = await res.json();
     if (!res.ok) {
-      throw new Error(body.error || "Failed to update Stripe mode");
+      throw new Error(body.error || "Failed to switch Stripe platform");
     }
     setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
   } catch (err) {
-    setters.setSelectedLivemode(!input.stripeLivemode);
     setters.setError(err instanceof Error ? err.message : String(err));
   } finally {
     setters.setBusy(false);
   }
 }
 
+function PaymentsPlaneRow(props: Readonly<{
+  livemode: boolean;
+  plane: ConnectPlaneSummary | null;
+  active: boolean;
+}>) {
+  const { livemode, plane, active } = props;
+  let state: string;
+  if (!plane) {
+    state = "not set up";
+  } else if (plane.ready) {
+    state = "ready";
+  } else {
+    state = "onboarding incomplete";
+  }
+  return (
+    <div className="flex items-baseline justify-between gap-3 text-xs">
+      <span className="text-zinc-500">
+        {planeLabel(livemode)}
+        {active ? (
+          <span className="ml-1.5 text-emerald-400">active</span>
+        ) : null}
+      </span>
+      <span className="min-w-0 truncate text-right">
+        {plane ? (
+          <span className="font-mono text-zinc-400">
+            {plane.stripeConnectedAccountId}
+          </span>
+        ) : null}
+        <span
+          className={`ml-2 ${plane?.ready ? "text-emerald-400" : "text-zinc-500"}`}
+        >
+          {state}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function PaymentsLivemodeToggle(props: Readonly<{
   appId: string;
   busy: boolean;
-  locked: boolean;
   stripeLivemode: boolean;
+  billingMode: "owner_rollup" | "merchant";
+  connectPlanes: ConnectPlanes;
   setters: BusySetters & {
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
-    setSelectedLivemode: (value: boolean) => void;
   };
 }>) {
-  const { appId, busy, locked, stripeLivemode, setters } = props;
+  const { appId, busy, stripeLivemode, billingMode, connectPlanes, setters } =
+    props;
+  const switchTo = (target: boolean) => {
+    const targetPlane = target ? connectPlanes.live : connectPlanes.sandbox;
+    if (
+      !globalThis.confirm(
+        planeSwitchConfirmMessage({ target, targetPlane, billingMode }),
+      )
+    ) {
+      return;
+    }
+    void requestSetStripeLivemode({
+      appId,
+      stripeLivemode: target,
+      setters,
+    });
+  };
   return (
     <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-zinc-200">Stripe platform</p>
           <p className="mt-0.5 text-xs text-zinc-500">
-            {locked
-              ? "Locked while a Connected Account is linked. Disconnect to switch."
-              : "Defaults to sandbox (test cards, no real money). Switch to Live before onboarding for live charges."}
+            Sandbox uses Stripe test mode — test cards, no real money. Each
+            plane keeps its own onboarding, so you can switch back and forth.
           </p>
         </div>
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={busy || locked || stripeLivemode}
+            disabled={busy || stripeLivemode}
             className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               stripeLivemode
                 ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
                 : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
             }`}
-            onClick={() =>
-              void requestSetStripeLivemode({
-                appId,
-                stripeLivemode: true,
-                setters,
-              })
-            }
+            onClick={() => switchTo(true)}
           >
             Live
           </button>
           <button
             type="button"
-            disabled={busy || locked || !stripeLivemode}
+            disabled={busy || !stripeLivemode}
             className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               !stripeLivemode
                 ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
                 : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
             }`}
-            onClick={() =>
-              void requestSetStripeLivemode({
-                appId,
-                stripeLivemode: false,
-                setters,
-              })
-            }
+            onClick={() => switchTo(false)}
           >
             Sandbox
           </button>
         </div>
+      </div>
+      <div className="mt-2.5 space-y-1 border-t border-white/[0.06] pt-2">
+        <PaymentsPlaneRow
+          livemode
+          plane={connectPlanes.live}
+          active={stripeLivemode}
+        />
+        <PaymentsPlaneRow
+          livemode={false}
+          plane={connectPlanes.sandbox}
+          active={!stripeLivemode}
+        />
       </div>
       {!stripeLivemode ? (
         <p className="mt-2 text-xs text-amber-300/90">
@@ -624,7 +740,14 @@ function PaymentsConnectActions(props: Readonly<{
           type="button"
           className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
           disabled={busy}
-          onClick={() => void requestDisconnectStripe(appId, busySetters, reload)}
+          onClick={() =>
+            void requestDisconnectStripe(
+              appId,
+              stripeLivemode,
+              busySetters,
+              reload,
+            )
+          }
         >
           Disconnect
         </button>
@@ -965,14 +1088,11 @@ function PaymentsTabLoaded(props: Readonly<{
 
   const flags = connectUiFlags(status);
   const busySetters = { setBusy, setError };
-  const storedLivemode = status?.stripeLivemode === true;
-  const [selectedLivemode, setSelectedLivemode] = useState(storedLivemode);
-  const [livemodeBusy, setLivemodeBusy] = useState(false);
-  useEffect(() => {
-    if (!livemodeBusy) {
-      setSelectedLivemode(storedLivemode);
-    }
-  }, [storedLivemode, livemodeBusy]);
+  const stripeLivemode = status?.stripeLivemode === true;
+  const connectPlanes: ConnectPlanes = {
+    live: status?.connectPlanes?.live ?? null,
+    sandbox: status?.connectPlanes?.sandbox ?? null,
+  };
   const connectReadyForMerchant = flags.merchantReady;
   const save = () =>
     void requestSaveBillingSettings({
@@ -1014,26 +1134,26 @@ function PaymentsTabLoaded(props: Readonly<{
         {canManageBilling && (
           <PaymentsLivemodeToggle
             appId={appId}
-            busy={busy || livemodeBusy}
-            locked={flags.hasAccount}
-            stripeLivemode={selectedLivemode}
-            setters={{
-              setBusy: setLivemodeBusy,
-              setError,
-              setStatus,
-              setSelectedLivemode,
-            }}
+            busy={busy}
+            stripeLivemode={stripeLivemode}
+            // Persisted mode, not the unsaved radio selection — the warning is
+            // about what this app actually bills on today.
+            billingMode={
+              status?.billingMode === "merchant" ? "merchant" : "owner_rollup"
+            }
+            connectPlanes={connectPlanes}
+            setters={{ setBusy, setError, setStatus }}
           />
         )}
 
         {canManageBilling && (
           <PaymentsConnectActions
             appId={appId}
-            busy={busy || livemodeBusy}
+            busy={busy}
             flags={flags}
             busySetters={busySetters}
             reload={reload}
-            stripeLivemode={selectedLivemode}
+            stripeLivemode={stripeLivemode}
           />
         )}
 
