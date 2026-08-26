@@ -126,6 +126,66 @@ export function buildInitiateLoginRedirectUrl(
 }
 
 /**
+ * Verification URIs for an RFC 8628 device authorization response.
+ *
+ * `verification_uri` stays on this authorization server because RFC 8628 3.2
+ * expects end users to type it by hand. `verification_uri_complete` is
+ * "designed for non-textual transmission", so when the app federates device
+ * approval it targets the RP's `initiate_login_uri` directly and the browser
+ * never transits our device page. Falls back to the authorization-server URL
+ * whenever the RP target cannot be built.
+ */
+export function deviceAuthVerificationUris(args: {
+  userCode?: string | null;
+  clientId?: string | null;
+  issuer: string;
+  externalOrigin: string;
+  initiateLoginUri?: string | null;
+}): { verification_uri: string; verification_uri_complete?: string } {
+  const verification_uri = `${args.externalOrigin}/oidc/device`;
+  if (!args.userCode) {
+    return { verification_uri };
+  }
+
+  const qs = new URLSearchParams();
+  qs.set("user_code", args.userCode);
+  if (args.clientId) {
+    qs.set("client_id", args.clientId);
+  }
+  qs.set("iss", args.issuer);
+  const onAuthorizationServer = `${verification_uri}?${qs.toString()}`;
+
+  if (!args.initiateLoginUri || !args.clientId) {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+
+  try {
+    return {
+      verification_uri,
+      verification_uri_complete: buildInitiateLoginRedirectUrl(
+        args.initiateLoginUri,
+        {
+          iss: args.issuer,
+          target_link_uri: buildDeviceFlowTargetLinkUri({
+            user_code: args.userCode,
+            client_id: args.clientId,
+            iss: args.issuer,
+          }),
+        },
+      ),
+    };
+  } catch {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+}
+
+/**
  * Extract `user_code` from a device `target_link_uri` (same shape as
  * `buildDeviceFlowTargetLinkUri`).
  */
