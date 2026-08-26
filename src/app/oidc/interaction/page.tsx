@@ -66,31 +66,33 @@ export default async function OidcInteractionPage({
     );
   }
 
-  const session = await getServerSession(authOptions);
-
-  // Prefer the cookie-backed interaction, then the query stamp from authorize.
-  let clientId: string | null = clientIdFromQuery;
-  try {
-    const requestHeaders = await headers();
-    const preflightReq = buildNodeRequest("GET", uid, requestHeaders);
-    const provider = await getProvider();
-    const preflightDetails = await provider.interactionDetails(preflightReq.req, preflightReq.res);
-    clientId =
-      (preflightDetails.params.client_id as string | undefined)?.trim() ||
-      clientIdFromQuery;
-  } catch {
-    // Interaction may be invalid/expired; we'll handle this after session check
-  }
+  const [session, provider, requestHeaders] = await Promise.all([
+    getServerSession(authOptions),
+    getProvider(),
+    headers(),
+  ]);
 
   if (!session?.user) {
+    // Prefer the cookie-backed interaction, then the query stamp from authorize.
+    let clientId: string | null = clientIdFromQuery;
+    try {
+      const preflightReq = buildNodeRequest("GET", uid, requestHeaders);
+      const preflightDetails = await provider.interactionDetails(
+        preflightReq.req,
+        preflightReq.res,
+      );
+      clientId =
+        (preflightDetails.params.client_id as string | undefined)?.trim() ||
+        clientIdFromQuery;
+    } catch {
+      // Interaction may be invalid/expired; the login hop can still proceed.
+    }
     redirect(oidcLoginRedirect(clientId, oidcInteractionPath(uid, clientId)));
   }
 
-  const requestHeaders = await headers();
   const { req, res } = buildNodeRequest("GET", uid, requestHeaders);
 
   try {
-    const provider = await getProvider();
     const details = await provider.interactionDetails(req, res);
 
     // Check app access before allowing authentication

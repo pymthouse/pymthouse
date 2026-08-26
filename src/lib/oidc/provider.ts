@@ -219,6 +219,7 @@ function buildInteractionPolicy() {
 }
 
 let _provider: Provider | null = null;
+let _providerPromise: Promise<Provider> | null = null;
 let _cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 // TTL-cached CORS snapshot (refreshes every 60s)
@@ -241,43 +242,58 @@ async function buildCorsSnapshot(): Promise<{
   trustedHosts: string[];
   clientOrigins: Map<string, Set<string>>;
 }> {
-  const trustedHosts = await getTrustedLoginHosts();
-  const oidcRows = await db.select().from(oidcClients);
-  const clientOrigins = new Map<string, Set<string>>();
-
-  for (const oc of oidcRows) {
-    const appRows = await db
-      .select({ id: developerApps.id })
-      .from(developerApps)
-      .where(
+  // One join instead of a per-client fan-out. This snapshot is awaited during
+  // provider construction, so a 1+2N query walk stalled every cold start.
+  const [trustedHosts, rows] = await Promise.all([
+    getTrustedLoginHosts(),
+    db
+      .select({
+        clientId: oidcClients.clientId,
+        domain: appAllowedDomains.domain,
+      })
+      .from(oidcClients)
+      .innerJoin(
+        developerApps,
         or(
-          eq(developerApps.oidcClientId, oc.id),
-          eq(developerApps.m2mOidcClientId, oc.id),
-          eq(developerApps.webOidcClientId, oc.id),
+          eq(developerApps.oidcClientId, oidcClients.id),
+          eq(developerApps.m2mOidcClientId, oidcClients.id),
+          eq(developerApps.webOidcClientId, oidcClients.id),
         ),
       )
-      .limit(1);
-    const app = appRows[0];
-    if (!app) continue;
-    const domains = await db
-      .select()
-      .from(appAllowedDomains)
-      .where(eq(appAllowedDomains.appId, app.id));
-    clientOrigins.set(
-      oc.clientId,
-      new Set(domains.map((d) => d.domain)),
-    );
+      .innerJoin(
+        appAllowedDomains,
+        eq(appAllowedDomains.appId, developerApps.id),
+      ),
+  ]);
+
+  const clientOrigins = new Map<string, Set<string>>();
+  for (const row of rows) {
+    let origins = clientOrigins.get(row.clientId);
+    if (!origins) {
+      origins = new Set<string>();
+      clientOrigins.set(row.clientId, origins);
+    }
+    origins.add(row.domain);
   }
 
   return { trustedHosts, clientOrigins };
 }
 
+/**
+ * Single-flight wrapper. Concurrent requests arriving on a cold instance used to
+ * each build their own provider, multiplying the init queries.
+ */
 export async function getProvider(): Promise<Provider> {
   if (_provider) return _provider;
+  _providerPromise ??= buildProvider().finally(() => {
+    _providerPromise = null;
+  });
+  return _providerPromise;
+}
 
+async function buildProvider(): Promise<Provider> {
   const issuer = getIssuer();
-  const jwks = await loadJWKS();
-  const clients = await loadClients();
+  const [jwks, clients] = await Promise.all([loadJWKS(), loadClients()]);
 
   const configuration: Configuration = {
     adapter: PostgresOidcAdapter,
@@ -544,4 +560,5 @@ export function resetProvider(): void {
   _corsCache = null;
   _corsCacheExpiry = 0;
   _provider = null;
+  _providerPromise = null;
 }
