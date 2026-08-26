@@ -6,7 +6,7 @@
 
 import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
-import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
+import { promptIncludesConsent } from "@/lib/oidc/consent-prompt";
 import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
 import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
@@ -18,6 +18,18 @@ import { parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
 import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-login";
+import {
+  applyMcpDcrRegistrationPolicy,
+  createDcrClientId,
+  isDcrClientId,
+} from "./dcr-client";
+import { findMcpAppGrantBinding } from "./mcp-app-grant";
+import {
+  getMcpResourceUrl,
+  isMcpResourceIndicator,
+  MCP_OAUTH_APP_CLAIM,
+  MCP_RESOURCE_SCOPES,
+} from "@/lib/mcp/oauth-resource";
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
 import { desc, eq, or } from "drizzle-orm";
@@ -32,6 +44,16 @@ const KEY_ALGORITHM = "RS256";
  * Credentials — never use a redirect_uri.
  */
 const REDIRECT_DEPENDENT_GRANTS = new Set(["authorization_code", "implicit"]);
+
+function normalizeTokenAudiences(aud: string | string[] | undefined): string[] {
+  if (Array.isArray(aud)) {
+    return aud;
+  }
+  if (typeof aud === "string") {
+    return [aud];
+  }
+  return [];
+}
 
 /**
  * Load JWKS from the `oidc_signing_keys` table.
@@ -187,30 +209,24 @@ function patchHashedClientSecretComparison(provider: Provider): void {
  */
 function buildInteractionPolicy() {
   const basePolicy = interactionPolicy.base();
-
   const consent = basePolicy.find((p) => p.name === "consent");
   if (consent) {
     const { Check } = interactionPolicy;
-    consent.checks.clear();
+    // Keep native / missing-scope checks. Replacing them let resume finish
+    // with an empty grant and redirect access_denied (no description).
     consent.checks.add(
       new Check(
-        "native_client_prompt",
-        "consent required for third-party clients",
-        async (ctx) => {
-          const oidc = ctx.oidc;
-          const clientId = oidc.client?.clientId;
-          const needed = await consentPromptNeeded({
-            requestedScopes: oidc.requestParamScopes,
-            resultConsentGrantId: oidc.result?.consent?.grantId,
-            sessionGrantId: clientId
-              ? oidc.session?.grantIdFor(clientId)
-              : undefined,
-            findGrant: async (grantId) =>
-              oidc.provider.Grant.find(grantId),
-          });
-          return needed ? Check.REQUEST_PROMPT : Check.NO_NEED_TO_PROMPT;
+        "prompt_parameter_consent",
+        "client requested a consent prompt",
+        (ctx) => {
+          if (!promptIncludesConsent(ctx.oidc.params?.prompt)) {
+            return Check.NO_NEED_TO_PROMPT;
+          }
+          if (ctx.oidc.result?.consent) {
+            return Check.NO_NEED_TO_PROMPT;
+          }
+          return Check.REQUEST_PROMPT;
         },
-        (ctx) => ({ scopes: ctx.oidc.requestParamScopes }),
       ),
     );
   }
@@ -219,6 +235,7 @@ function buildInteractionPolicy() {
 }
 
 let _provider: Provider | null = null;
+let _providerPromise: Promise<Provider> | null = null;
 let _cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 // TTL-cached CORS snapshot (refreshes every 60s)
@@ -272,12 +289,23 @@ async function buildCorsSnapshot(): Promise<{
   return { trustedHosts, clientOrigins };
 }
 
-export async function getProvider(): Promise<Provider> {
+export function getProvider(): Promise<Provider> {
+  if (_provider) return Promise.resolve(_provider);
+  _providerPromise ??= instantiateProvider().catch((err) => {
+    _providerPromise = null;
+    throw err;
+  });
+  return _providerPromise;
+}
+
+async function instantiateProvider(): Promise<Provider> {
   if (_provider) return _provider;
 
   const issuer = getIssuer();
-  const jwks = await loadJWKS();
-  const clients = await loadClients();
+  // JWKS, clients, and CORS are independent DB/crypto work — run together so
+  // Vercel cold starts pay one round-trip wall time instead of three.
+  const corsSeed = getCorsSnapshot();
+  const [jwks, clients] = await Promise.all([loadJWKS(), loadClients()]);
 
   const configuration: Configuration = {
     adapter: PostgresOidcAdapter,
@@ -335,6 +363,7 @@ export async function getProvider(): Promise<Provider> {
       "openid",
       "email",
       "profile",
+      "offline_access",
       "sign:job",
       "users:read",
       "users:write",
@@ -366,17 +395,77 @@ export async function getProvider(): Promise<Provider> {
       required: (_ctx, client) => client.tokenEndpointAuthMethod === "none",
     },
 
+    extraParams: ["app_client_id"],
+
     // Rotate refresh tokens on use
     rotateRefreshToken: true,
 
-    // Always issue refresh tokens when refresh_token grant is allowed
+    // Registered Builder/device clients keep refresh tokens whenever the
+    // refresh_token grant is enabled. MCP DCR clients follow OIDC and only
+    // receive a refresh token when the grant includes offline_access.
     issueRefreshToken: async (_ctx, client, code) => {
       if (!client.grantTypeAllowed("refresh_token")) return false;
+      if (
+        isDcrClientId(client.clientId) &&
+        code &&
+        typeof code.scopes?.has === "function"
+      ) {
+        return code.scopes.has("offline_access");
+      }
       return true;
+    },
+
+    extraClientMetadata: {
+      properties: ["pymthouse_dcr"],
+      validator(ctx, _key, _value, metadata) {
+        applyMcpDcrRegistrationPolicy(
+          ctx,
+          metadata as unknown as Record<string, unknown>,
+        );
+      },
+    },
+
+    extraTokenClaims: async (_ctx, token) => {
+      const tokenRecord = token as {
+        grantId?: string;
+        aud?: string | string[];
+        resourceServer?: { audience?: string };
+      };
+      const grantId =
+        typeof tokenRecord.grantId === "string" ? tokenRecord.grantId : undefined;
+      if (!grantId) return undefined;
+
+      const audiences = normalizeTokenAudiences(tokenRecord.aud);
+      const resourceServerAud =
+        typeof tokenRecord.resourceServer?.audience === "string"
+          ? tokenRecord.resourceServer.audience
+          : undefined;
+      const mcpUrl = getMcpResourceUrl();
+      const isMcp =
+        audiences.some((a) => typeof a === "string" && isMcpResourceIndicator(a)) ||
+        (resourceServerAud !== undefined &&
+          isMcpResourceIndicator(resourceServerAud)) ||
+        (typeof tokenRecord.aud === "string" && tokenRecord.aud === mcpUrl);
+
+      if (!isMcp) return undefined;
+
+      const binding = await findMcpAppGrantBinding(grantId);
+      if (!binding) return undefined;
+      return { [MCP_OAUTH_APP_CLAIM]: binding.publicClientId };
     },
 
     features: {
       devInteractions: { enabled: false },
+      registration: {
+        enabled: true,
+        initialAccessToken: false,
+        idFactory: () => createDcrClientId(),
+        issueRegistrationAccessToken: false,
+      },
+      registrationManagement: {
+        enabled: false,
+        rotateRegistrationAccessToken: true,
+      },
       clientCredentials: { enabled: true },
       deviceFlow: {
         enabled: true,
@@ -420,6 +509,18 @@ export async function getProvider(): Promise<Provider> {
           return issuer;
         },
         getResourceServerInfo: async (_ctx, resourceIndicator, _client) => {
+          if (isMcpResourceIndicator(resourceIndicator)) {
+            const mcp = getMcpResourceUrl();
+            return {
+              scope: MCP_RESOURCE_SCOPES.join(" "),
+              audience: mcp,
+              accessTokenFormat: "jwt" as const,
+              accessTokenTTL: 3600,
+              jwt: {
+                sign: { alg: "RS256" as const },
+              },
+            };
+          }
           if (resourceIndicator !== issuer) {
             throw new oidcErrors.InvalidTarget(
               `Unknown resource indicator: ${resourceIndicator}`,
@@ -517,8 +618,8 @@ export async function getProvider(): Promise<Provider> {
   // Trust the proxy (Next.js + reverse proxy)
   _provider.proxy = true;
 
-  // Seed the CORS cache
-  await getCorsSnapshot();
+  // Finish CORS seed started in parallel with JWKS/clients above.
+  await corsSeed;
 
   // Run periodic cleanup of expired adapter rows (deduplicated)
   if (_cleanupInterval) clearInterval(_cleanupInterval);
@@ -544,4 +645,5 @@ export function resetProvider(): void {
   _corsCache = null;
   _corsCacheExpiry = 0;
   _provider = null;
+  _providerPromise = null;
 }

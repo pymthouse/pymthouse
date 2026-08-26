@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, isLoopbackHttpRedirect, reencodeOAuthRedirectLocation } from "./utils";
 
 test("deriveExternalOriginFromHeaders prefers forwarded host+proto", () => {
   const headers = new Headers({
@@ -32,6 +32,79 @@ test("resolveRedirectLocation passes absolute URL when origin is in allowed set"
     allowed,
   );
   assert.equal(redirect.href, "https://app.example.com/callback?code=abc");
+});
+
+test("resolveRedirectLocation allows Claude Code loopback redirects", () => {
+  const allowed = new Set(["https://pymthouse.com"]);
+  const redirect = resolveRedirectLocation(
+    "http://localhost:52262/callback?code=abc&state=xyz",
+    "https://pymthouse.com",
+    allowed,
+  );
+  assert.equal(
+    redirect.href,
+    "http://localhost:52262/callback?code=abc&state=xyz",
+  );
+});
+
+test("resolveRedirectLocation allows Claude hosted callback origins", () => {
+  const allowed = new Set(["https://pymthouse.com"]);
+  const redirect = resolveRedirectLocation(
+    "https://claude.ai/api/mcp/auth_callback?code=abc",
+    "https://pymthouse.com",
+    allowed,
+  );
+  assert.equal(
+    redirect.href,
+    "https://claude.ai/api/mcp/auth_callback?code=abc",
+  );
+});
+
+test("reencodeOAuthRedirectLocation percent-encodes bare plus in state", () => {
+  const out = reencodeOAuthRedirectLocation(
+    "http://localhost:3118/callback?code=abc&state=z+++8ABC&iss=https%3A%2F%2Fstaging.pymthouse.com%2Fapi%2Fv1%2Foidc",
+  );
+  assert.match(out, /state=z%2B%2B%2B8ABC/);
+  assert.equal(new URL(out).searchParams.get("state"), "z+++8ABC");
+});
+
+test("reencodeOAuthRedirectLocation is idempotent for already-encoded state", () => {
+  const input =
+    "http://127.0.0.1:9/callback?state=z%2B%2B%2B8ABC&code=x";
+  const out = reencodeOAuthRedirectLocation(input);
+  assert.match(out, /state=z%2B%2B%2B8ABC/);
+  assert.equal(new URL(out).searchParams.get("state"), "z+++8ABC");
+});
+
+test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://localhost:1/callback")),
+    true,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://127.0.0.1:1/callback")),
+    true,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://[::1]/callback")),
+    true,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://evil.example/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("https://localhost/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://localhost:1/nested/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://user:pass@127.0.0.1/callback")),
+    false,
+  );
 });
 
 test("resolveRedirectLocation passes server-origin absolute URL when allowed", () => {
