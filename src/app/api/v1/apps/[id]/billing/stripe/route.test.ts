@@ -140,6 +140,63 @@ test("PATCH stripeLivemode busts billing identity cache", async (t) => {
   );
 });
 
+test("PATCH stripeLivemode no-ops when linked account already matches", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  installSession(app, "developer");
+  t.after(async () => {
+    setProviderAppSessionResolverForTests(null);
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_linked_live",
+  });
+
+  const { PATCH } = await import("./route");
+  const res = await PATCH(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stripeLivemode: true }),
+    }) as never,
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { stripeLivemode?: boolean };
+  assert.equal(json.stripeLivemode, true);
+});
+
+test("PATCH stripeLivemode still rejects a plane change while linked", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  installSession(app, "developer");
+  t.after(async () => {
+    setProviderAppSessionResolverForTests(null);
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_linked_live",
+  });
+
+  const { PATCH } = await import("./route");
+  const res = await PATCH(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stripeLivemode: false }),
+    }) as never,
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.notEqual(res.status, 200);
+  const json = (await res.json()) as { error?: string };
+  assert.match(
+    json.error ?? "",
+    /Cannot change stripeLivemode while a Connected Account is linked/,
+  );
+});
+
 test("POST /billing/stripe/connect rejects non-boolean stripeLivemode", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   installSession(app, "developer");

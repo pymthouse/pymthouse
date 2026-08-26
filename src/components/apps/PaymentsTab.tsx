@@ -1029,7 +1029,7 @@ function PaymentsTabLoaded(props: Readonly<{
         {canManageBilling && (
           <PaymentsConnectActions
             appId={appId}
-            busy={busy}
+            busy={busy || livemodeBusy}
             flags={flags}
             busySetters={busySetters}
             reload={reload}
