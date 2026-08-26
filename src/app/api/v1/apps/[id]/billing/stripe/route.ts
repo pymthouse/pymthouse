@@ -27,6 +27,7 @@ import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 import { resetBillingIdentityCache } from "@/lib/openmeter/billing-identity";
 import { isConnectReady } from "@/lib/activation/app-activation";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import type { MerchantConnectPlaneSwitch } from "@/lib/stripe/merchant-connect";
 
 type BillingPatchFields = {
   progressiveBilling?: boolean;
@@ -411,29 +412,31 @@ function rejectPlatformControlledForNonAdmin(
 }
 
 /**
- * Idempotent when the stored value already matches (including after Connect
- * linked an acct_ on the same plane while this PATCH was in flight).
+ * Move the app to the requested Stripe plane, parking the plane it leaves so
+ * its Connected Account survives the round trip. No-ops when the app is
+ * already on that plane (including after Connect linked an acct_ on the same
+ * plane while this PATCH was in flight).
  */
 async function persistStripeLivemodePatch(
   appId: string,
   stripeLivemode: boolean,
-): Promise<void> {
-  const existing = await getAppBillingConfig(appId);
-  if (existing?.stripeLivemode === stripeLivemode) {
-    return;
-  }
-  if (existing?.stripeConnectedAccountId?.trim()) {
-    throw new Error(
-      "Cannot change stripeLivemode while a Connected Account is linked. Disconnect Stripe Connect first, then switch sandbox/live and re-onboard.",
-    );
-  }
-  await upsertAppBillingConfig(appId, { stripeLivemode });
+): Promise<MerchantConnectPlaneSwitch> {
+  const { switchMerchantConnectPlane } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  return switchMerchantConnectPlane({
+    clientId: appId,
+    livemode: stripeLivemode,
+  });
 }
 
 async function persistBillingPatch(
   appId: string,
   fields: BillingPatchFields,
-): Promise<Record<string, unknown>> {
+): Promise<{
+  updated: Record<string, unknown>;
+  planeSwitch: MerchantConnectPlaneSwitch | null;
+}> {
   const {
     progressiveBilling,
     invoiceLeadUsdMicros,
@@ -467,9 +470,10 @@ async function persistBillingPatch(
     await setAppSupplierTaxId({ clientId: appId, taxId: supplierTaxId });
   }
 
-  if (stripeLivemode !== undefined) {
-    await persistStripeLivemodePatch(appId, stripeLivemode);
-  }
+  const planeSwitch =
+    stripeLivemode !== undefined
+      ? await persistStripeLivemodePatch(appId, stripeLivemode)
+      : null;
 
   if (billingMode !== undefined || endUserCap !== undefined) {
     const merchantProfileId =
@@ -484,7 +488,7 @@ async function persistBillingPatch(
         : {}),
     });
   }
-  return updated;
+  return { updated, planeSwitch };
 }
 
 export async function GET(
@@ -549,7 +553,7 @@ export async function PATCH(
   }
 
   try {
-    const updated = await persistBillingPatch(
+    const { updated, planeSwitch } = await persistBillingPatch(
       access.auth.app.id,
       parsed.fields,
     );
@@ -577,6 +581,7 @@ export async function PATCH(
       ...status,
       ...updated,
       ...(billingModeEffectiveAt ? { billingModeEffectiveAt } : {}),
+      ...(planeSwitch ? { stripeLivemodeSwitch: planeSwitch } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

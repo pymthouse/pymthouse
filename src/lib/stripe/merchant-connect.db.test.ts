@@ -21,7 +21,10 @@ import {
 import {
   applyConnectedAccountWebhookUpdate,
   ensureMerchantOwnedStripeCustomer,
+  getAppUserStripeCustomer,
+  getMerchantConnectPlane,
   startMerchantConnect,
+  switchMerchantConnectPlane,
   upsertAppUserStripeCustomer,
 } from "@/lib/stripe/merchant-connect";
 import { test } from "@/test-utils/db-guard";
@@ -365,4 +368,145 @@ test("startMerchantConnect defaults first Connect to sandbox without stripeLivem
   assert.ok(auths.every((auth) => auth === "Bearer sk_test_sandbox_connect"));
   const config = await getAppBillingConfig(app.clientId);
   assert.equal(config?.stripeLivemode, false);
+});
+
+test("switchMerchantConnectPlane parks each plane and restores it on the way back", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripePlaneSwap ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  const previousLive = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = "sk_live_unit_plane_swap";
+  t.after(() => {
+    if (previousLive === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousLive;
+  });
+  // The restore path re-reads the account from Stripe; keep it off the network.
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/v1/accounts/acct_swap_live")) {
+      return jsonResponse({
+        id: "acct_swap_live",
+        charges_enabled: true,
+        payouts_enabled: true,
+        details_submitted: true,
+      });
+    }
+    return jsonResponse({ error: { message: `unexpected ${url}` } }, 500);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_swap_live",
+    stripeOnboardingMethod: "account_link",
+    stripeChargesEnabled: true,
+    stripePayoutsEnabled: true,
+    stripeDetailsSubmitted: true,
+    connectedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  // Live → sandbox. Sandbox was never onboarded, so the active plane clears.
+  const toSandbox = await switchMerchantConnectPlane({
+    clientId: app.clientId,
+    livemode: false,
+  });
+  assert.deepEqual(toSandbox, {
+    changed: true,
+    livemode: false,
+    accountId: null,
+    ready: false,
+  });
+  const sandboxConfig = await getAppBillingConfig(app.clientId);
+  assert.equal(sandboxConfig?.stripeLivemode, false);
+  assert.equal(sandboxConfig?.stripeConnectedAccountId, null);
+  assert.equal(sandboxConfig?.stripeChargesEnabled, false);
+
+  // The live plane is parked, not discarded.
+  const parkedLive = await getMerchantConnectPlane(app.clientId, true);
+  assert.equal(parkedLive?.stripeConnectedAccountId, "acct_swap_live");
+  assert.equal(parkedLive?.stripeChargesEnabled, true);
+  assert.equal(parkedLive?.connectedAt, "2026-01-01T00:00:00.000Z");
+  assert.equal(await getMerchantConnectPlane(app.clientId, false), null);
+
+  // Sandbox → live restores the parked account without re-onboarding, and
+  // re-reads its capabilities from Stripe rather than trusting parked flags.
+  const backToLive = await switchMerchantConnectPlane({
+    clientId: app.clientId,
+    livemode: true,
+  });
+  assert.equal(backToLive.changed, true);
+  assert.equal(backToLive.accountId, "acct_swap_live");
+  assert.equal(backToLive.ready, true);
+  const liveConfig = await getAppBillingConfig(app.clientId);
+  assert.equal(liveConfig?.stripeLivemode, true);
+  assert.equal(liveConfig?.stripeConnectedAccountId, "acct_swap_live");
+  assert.equal(liveConfig?.stripeChargesEnabled, true);
+  assert.equal(liveConfig?.connectedAt, "2026-01-01T00:00:00.000Z");
+
+  // Re-selecting the active plane is a no-op, not a re-onboard.
+  const again = await switchMerchantConnectPlane({
+    clientId: app.clientId,
+    livemode: true,
+  });
+  assert.equal(again.changed, false);
+  assert.equal(again.accountId, "acct_swap_live");
+});
+
+test("an app user keeps a separate Stripe customer per plane", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripePlaneCustomer ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  const externalUserId = `eu_${randomUUID().replaceAll("-", "")}`;
+  await upsertAppUserStripeCustomer({
+    clientId: app.clientId,
+    externalUserId,
+    stripeConnectedAccountId: "acct_plane_live",
+    stripeCustomerId: "cus_live_side",
+  });
+  await upsertAppUserStripeCustomer({
+    clientId: app.clientId,
+    externalUserId,
+    stripeConnectedAccountId: "acct_plane_sandbox",
+    stripeCustomerId: "cus_sandbox_side",
+  });
+
+  const rows = await db
+    .select()
+    .from(appUserStripeCustomers)
+    .where(
+      and(
+        eq(appUserStripeCustomers.clientId, app.clientId),
+        eq(appUserStripeCustomers.externalUserId, externalUserId),
+      ),
+    );
+  assert.equal(rows.length, 2, "both planes' customers coexist");
+
+  // Each lookup resolves its own plane rather than whichever row came first.
+  const live = await getAppUserStripeCustomer({
+    clientId: app.clientId,
+    externalUserId,
+    stripeConnectedAccountId: "acct_plane_live",
+  });
+  assert.equal(live?.stripeCustomerId, "cus_live_side");
+  const sandbox = await getAppUserStripeCustomer({
+    clientId: app.clientId,
+    externalUserId,
+    stripeConnectedAccountId: "acct_plane_sandbox",
+  });
+  assert.equal(sandbox?.stripeCustomerId, "cus_sandbox_side");
+  assert.equal(
+    await getAppUserStripeCustomer({
+      clientId: app.clientId,
+      externalUserId,
+      stripeConnectedAccountId: "acct_never_used",
+    }),
+    null,
+  );
 });
