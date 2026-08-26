@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 
 export type ViewerAllowanceSummary = {
@@ -28,8 +28,8 @@ export async function getViewerAllowanceSummary(): Promise<ViewerAllowanceSummar
 
   const apps = await listUserAccessibleApps(userId);
   const owned = apps.filter((app) => app.isOwner && app.id);
+  const starter = await resolvePlatformOwnerStarterIncludedUsdMicros();
   if (owned.length === 0) {
-    const starter = defaultStarterIncludedUsdMicros();
     return {
       remainingUsdMicros: starter,
       grantedUsdMicros: starter,
@@ -42,7 +42,7 @@ export async function getViewerAllowanceSummary(): Promise<ViewerAllowanceSummar
   let granted = 0n;
   let consumed = 0n;
   let hasPrepaidCredits = false;
-  const starter = BigInt(defaultStarterIncludedUsdMicros());
+  const starterMicros = BigInt(starter);
 
   await Promise.all(
     owned.map(async (app) => {
@@ -51,8 +51,8 @@ export async function getViewerAllowanceSummary(): Promise<ViewerAllowanceSummar
         externalUserId: userId,
       });
       if (!balance) {
-        remaining += starter;
-        granted += starter;
+        remaining += starterMicros;
+        granted += starterMicros;
         return;
       }
       try {
@@ -63,18 +63,18 @@ export async function getViewerAllowanceSummary(): Promise<ViewerAllowanceSummar
         remaining += appRemaining;
         granted += appGranted;
         consumed += appConsumed;
-        if (appGranted > starter) {
+        if (appGranted > starterMicros) {
           hasPrepaidCredits = true;
         }
       } catch {
-        remaining += starter;
-        granted += starter;
+        remaining += starterMicros;
+        granted += starterMicros;
       }
     }),
   );
 
   if (granted <= 0n) {
-    granted = starter;
+    granted = starterMicros;
   }
   if (remaining < 0n) {
     remaining = 0n;

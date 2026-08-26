@@ -57,22 +57,31 @@ test("malformed override amounts fall back rather than corrupt billing", () => {
 });
 
 test("the platform-default amount maps to the shared plan key", () => {
-  assert.equal(ownerStarterPlanKeyForAmount("5000000"), "pymthouse_owner_starter");
+  assert.equal(
+    ownerStarterPlanKeyForAmount("5000000", "5000000"),
+    "pymthouse_owner_starter",
+  );
 });
 
 test("an override amount gets its own plan key, shared by amount", () => {
-  const a = ownerStarterPlanKeyForAmount("50000000");
-  const b = ownerStarterPlanKeyForAmount("50000000");
+  const a = ownerStarterPlanKeyForAmount("50000000", "5000000");
+  const b = ownerStarterPlanKeyForAmount("50000000", "5000000");
   assert.equal(a, "pymthouse_owner_starter_50000000");
   // Two owners on the same allowance share one plan — plan count is bounded by
   // distinct amounts, not by developer count.
   assert.equal(a, b);
-  assert.notEqual(a, ownerStarterPlanKeyForAmount("25000000"));
+  assert.notEqual(a, ownerStarterPlanKeyForAmount("25000000", "5000000"));
 });
 
 test("a malformed amount falls back to the shared plan key", () => {
-  assert.equal(ownerStarterPlanKeyForAmount("abc"), "pymthouse_owner_starter");
-  assert.equal(ownerStarterPlanKeyForAmount(""), "pymthouse_owner_starter");
+  assert.equal(
+    ownerStarterPlanKeyForAmount("abc", "5000000"),
+    "pymthouse_owner_starter",
+  );
+  assert.equal(
+    ownerStarterPlanKeyForAmount("", "5000000"),
+    "pymthouse_owner_starter",
+  );
 });
 
 test("per-amount variants still classify as Owner Starter plans", () => {
