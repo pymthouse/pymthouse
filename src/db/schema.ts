@@ -599,8 +599,9 @@ export const appBillingConfig = pgTable(
     /**
      * When true, Merchant Connect uses the live platform key.
      * When false (default for new rows), Connect uses STRIPE_SANDBOX_SECRET_KEY.
-     * Existing live merchant apps stay true. Locked once stripeConnectedAccountId
-     * is set — disconnect to switch.
+     * Existing live merchant apps stay true. Switching planes parks the
+     * Connected Account in `app_stripe_connect_accounts` and restores the
+     * target plane — disconnect only when deliberately dropping a plane.
      */
     stripeLivemode: boolean("stripe_livemode").notNull().default(false),
     /** How the merchant linked: account_link | oauth */

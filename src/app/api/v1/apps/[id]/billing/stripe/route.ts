@@ -37,7 +37,11 @@ type BillingPatchFields = {
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
   supplierTaxId?: string | null;
-  /** Merchant Connect platform mode; locked once a Connected Account exists. */
+  /**
+   * Active Merchant Connect plane (live vs sandbox). Switching parks the
+   * plane being left and restores the target — see switchMerchantConnectPlane.
+   * Must not be sent in the same PATCH as billingMode.
+   */
   stripeLivemode?: boolean;
 };
 
@@ -337,6 +341,23 @@ async function parseBillingPatchBody(
         {
           error:
             "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, supplierTaxId, and/or stripeLivemode to update",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  // Merchant readiness is judged against the active plane. Combining a plane
+  // switch with billingMode in one body would either gate on the wrong plane
+  // or partially apply (switch succeeds, merchant mode then 400s). Require
+  // separate requests — Payments already does.
+  if (body.billingMode !== undefined && body.stripeLivemode !== undefined) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error:
+            "Cannot change billingMode and stripeLivemode in the same request. Switch the Stripe plane first, then set billingMode.",
         },
         { status: 400 },
       ),

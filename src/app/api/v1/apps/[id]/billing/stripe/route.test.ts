@@ -225,6 +225,47 @@ test("PATCH stripeLivemode parks the linked account and restores it on the way b
   assert.equal(liveJson.stripeConnectedAccountId, "acct_linked_live");
 });
 
+test("PATCH rejects billingMode and stripeLivemode in the same body", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  installSession(app, "developer");
+  t.after(async () => {
+    setProviderAppSessionResolverForTests(null);
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_combo_live",
+    stripeChargesEnabled: true,
+    stripeDetailsSubmitted: true,
+  });
+
+  const { PATCH } = await import("./route");
+  const res = await PATCH(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        billingMode: "merchant",
+        stripeLivemode: false,
+      }),
+    }) as never,
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(res.status, 400);
+  const json = (await res.json()) as { error?: string };
+  assert.match(json.error ?? "", /Cannot change billingMode and stripeLivemode/);
+
+  // Neither field applied — still on the live plane, still owner_rollup.
+  const { getAppBillingConfig } = await import(
+    "@/lib/openmeter/billing-profiles"
+  );
+  const config = await getAppBillingConfig(app.clientId);
+  assert.equal(config?.stripeLivemode, true);
+  assert.equal(config?.stripeConnectedAccountId, "acct_combo_live");
+  assert.equal(config?.billingMode ?? "owner_rollup", "owner_rollup");
+});
+
 test("POST /billing/stripe/connect rejects non-boolean stripeLivemode", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   installSession(app, "developer");
