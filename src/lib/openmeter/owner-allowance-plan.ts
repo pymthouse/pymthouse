@@ -44,8 +44,8 @@ export type OwnerAllowancePlanKind =
 
 export function parseOwnerAllowanceIncludedMicros(raw: string): number {
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return 5_000_000;
+  if (!Number.isFinite(n) || n < 0) {
+    return 0;
   }
   return Math.floor(n);
 }
