@@ -8,6 +8,7 @@ import {
   hasOpenOrDraftInvoice,
   isMerchantConnectPaymentsReady,
   merchantConnectOnboardingLivemode,
+  resolveStartMerchantConnectLivemode,
   stripePaymentMethodBrandLabel,
   sumPaidInvoiceCentsSince,
   sumSucceededStandalonePaymentCentsSince,
@@ -31,6 +32,40 @@ test("merchantConnectOnboardingLivemode defaults owner_rollup first Connect to s
     merchantConnectOnboardingLivemode({
       billingMode: "owner_rollup",
       stripeLivemode: true,
+    }),
+    true,
+  );
+});
+
+test("resolveStartMerchantConnectLivemode prefers the Payments toggle until linked", () => {
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: true,
+      config: { billingMode: "owner_rollup", stripeLivemode: false },
+    }),
+    true,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: false,
+      config: { billingMode: "owner_rollup", stripeLivemode: true },
+    }),
+    false,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      config: { billingMode: "owner_rollup" },
+    }),
+    false,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: false,
+      config: {
+        billingMode: "owner_rollup",
+        stripeConnectedAccountId: "acct_live",
+        stripeLivemode: true,
+      },
     }),
     true,
   );

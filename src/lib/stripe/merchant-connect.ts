@@ -233,6 +233,25 @@ export function merchantConnectOnboardingLivemode(
   return config?.stripeLivemode === true;
 }
 
+/**
+ * Live vs sandbox for `startMerchantConnect`.
+ * An explicit Payments-toggle value wins until a Connected Account is linked.
+ */
+export function resolveStartMerchantConnectLivemode(input: {
+  requestedLivemode?: boolean;
+  config: {
+    stripeLivemode?: boolean | null;
+    billingMode?: string | null;
+    stripeConnectedAccountId?: string | null;
+  } | null | undefined;
+}): boolean {
+  const linked = Boolean(input.config?.stripeConnectedAccountId?.trim());
+  if (typeof input.requestedLivemode === "boolean" && !linked) {
+    return input.requestedLivemode;
+  }
+  return merchantConnectOnboardingLivemode(input.config);
+}
+
 function stripeSecretKey(livemode = true): string {
   return resolveStripePlatformSecretKey(livemode);
 }
@@ -529,6 +548,7 @@ export async function startMerchantConnect({
   clientId,
   email,
   displayName,
+  stripeLivemode: requestedLivemode,
 }: {
   clientId: string;
   /** Reserved for audit / future session binding; Account Links do not persist OAuth state. */
@@ -536,12 +556,24 @@ export async function startMerchantConnect({
   mode?: MerchantConnectMode;
   email?: string;
   displayName?: string;
+  /** Selected Live/Sandbox mode from Payments. Ignored once an acct_ is linked. */
+  stripeLivemode?: boolean;
 }): Promise<{ method: "account_link"; url: string; accountId: string }> {
   await ensureOmStarterSideEffect(clientId);
 
-  const existing = await getAppBillingConfig(clientId);
-  const livemode = merchantConnectOnboardingLivemode(existing);
-  let accountId = existing?.stripeConnectedAccountId?.trim() || "";
+  let existing = await getAppBillingConfig(clientId);
+  const linkedAccountId = existing?.stripeConnectedAccountId?.trim() || "";
+  // Persist the Payments toggle on this request. Complete-onboarding used to
+  // ignore the selected mode and fall through to the owner_rollup sandbox default.
+  if (typeof requestedLivemode === "boolean" && !linkedAccountId) {
+    await upsertAppBillingConfig(clientId, { stripeLivemode: requestedLivemode });
+    existing = await getAppBillingConfig(clientId);
+  }
+  const livemode = resolveStartMerchantConnectLivemode({
+    requestedLivemode,
+    config: existing,
+  });
+  let accountId = linkedAccountId;
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
       clientId,

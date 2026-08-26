@@ -21,6 +21,7 @@ import {
 import {
   applyConnectedAccountWebhookUpdate,
   ensureMerchantOwnedStripeCustomer,
+  startMerchantConnect,
   upsertAppUserStripeCustomer,
 } from "@/lib/stripe/merchant-connect";
 import { test } from "@/test-utils/db-guard";
@@ -230,4 +231,138 @@ test("applyConnectedAccountWebhookUpdate ignores livemode mismatch", async (t) =
 
   const config = await getAppBillingConfig(app.clientId);
   assert.equal(config?.stripeChargesEnabled, false);
+});
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+test("startMerchantConnect uses live Stripe when stripeLivemode true is requested", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripeLiveOnboard ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  const previousLive = process.env.STRIPE_SECRET_KEY;
+  const previousSandbox = process.env.STRIPE_SANDBOX_SECRET_KEY;
+  const previousNextAuth = process.env.NEXTAUTH_URL;
+  process.env.STRIPE_SECRET_KEY = "sk_live_unit_connect";
+  process.env.STRIPE_SANDBOX_SECRET_KEY = "sk_test_sandbox_connect";
+  process.env.NEXTAUTH_URL = "https://builder.example";
+  t.after(() => {
+    if (previousLive === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousLive;
+    if (previousSandbox === undefined) {
+      delete process.env.STRIPE_SANDBOX_SECRET_KEY;
+    } else {
+      process.env.STRIPE_SANDBOX_SECRET_KEY = previousSandbox;
+    }
+    if (previousNextAuth === undefined) delete process.env.NEXTAUTH_URL;
+    else process.env.NEXTAUTH_URL = previousNextAuth;
+  });
+
+  const auths: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    const auth = headers.get("Authorization");
+    if (auth) auths.push(auth);
+    const url = String(input);
+    if (url.includes("/v2/core/accounts")) {
+      return jsonResponse({ error: { message: "v2 unavailable" } }, 400);
+    }
+    if (url.includes("/v1/account_links")) {
+      return jsonResponse({ url: "https://connect.stripe.com/setup/e/live" });
+    }
+    if (url.includes("/v1/accounts")) {
+      if (init?.method === "POST") {
+        return jsonResponse({ id: "acct_live_onboard" });
+      }
+      return jsonResponse({
+        id: "acct_live_onboard",
+        charges_enabled: false,
+        payouts_enabled: false,
+        details_submitted: false,
+      });
+    }
+    return jsonResponse({ error: { message: `unexpected ${url}` } }, 500);
+  });
+
+  const result = await startMerchantConnect({
+    clientId: app.clientId,
+    userId: app.userId,
+    stripeLivemode: true,
+  });
+  assert.equal(result.accountId, "acct_live_onboard");
+  assert.equal(result.method, "account_link");
+  assert.ok(auths.every((auth) => auth === "Bearer sk_live_unit_connect"));
+  const config = await getAppBillingConfig(app.clientId);
+  assert.equal(config?.stripeLivemode, true);
+  assert.equal(config?.stripeConnectedAccountId, "acct_live_onboard");
+});
+
+test("startMerchantConnect defaults first Connect to sandbox without stripeLivemode", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripeSbxOnboard ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  const previousLive = process.env.STRIPE_SECRET_KEY;
+  const previousSandbox = process.env.STRIPE_SANDBOX_SECRET_KEY;
+  const previousNextAuth = process.env.NEXTAUTH_URL;
+  process.env.STRIPE_SECRET_KEY = "sk_live_unit_connect";
+  process.env.STRIPE_SANDBOX_SECRET_KEY = "sk_test_sandbox_connect";
+  process.env.NEXTAUTH_URL = "https://builder.example";
+  t.after(() => {
+    if (previousLive === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousLive;
+    if (previousSandbox === undefined) {
+      delete process.env.STRIPE_SANDBOX_SECRET_KEY;
+    } else {
+      process.env.STRIPE_SANDBOX_SECRET_KEY = previousSandbox;
+    }
+    if (previousNextAuth === undefined) delete process.env.NEXTAUTH_URL;
+    else process.env.NEXTAUTH_URL = previousNextAuth;
+  });
+
+  const auths: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    const auth = headers.get("Authorization");
+    if (auth) auths.push(auth);
+    const url = String(input);
+    if (url.includes("/v2/core/accounts")) {
+      return jsonResponse({ error: { message: "v2 unavailable" } }, 400);
+    }
+    if (url.includes("/v1/account_links")) {
+      return jsonResponse({ url: "https://connect.stripe.com/setup/e/sbx" });
+    }
+    if (url.includes("/v1/accounts")) {
+      if (init?.method === "POST") {
+        return jsonResponse({ id: "acct_sandbox_onboard" });
+      }
+      return jsonResponse({
+        id: "acct_sandbox_onboard",
+        charges_enabled: false,
+        payouts_enabled: false,
+        details_submitted: false,
+      });
+    }
+    return jsonResponse({ error: { message: `unexpected ${url}` } }, 500);
+  });
+
+  const result = await startMerchantConnect({
+    clientId: app.clientId,
+    userId: app.userId,
+  });
+  assert.equal(result.accountId, "acct_sandbox_onboard");
+  assert.ok(auths.every((auth) => auth === "Bearer sk_test_sandbox_connect"));
+  const config = await getAppBillingConfig(app.clientId);
+  assert.equal(config?.stripeLivemode, false);
 });

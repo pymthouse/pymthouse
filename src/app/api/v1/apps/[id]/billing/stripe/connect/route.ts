@@ -12,6 +12,65 @@ import {
 } from "@/lib/stripe/merchant-connect";
 import { merchantConnectOAuthErrorCode } from "@/lib/stripe/webhook";
 
+type ConnectBodyParse =
+  | {
+      ok: true;
+      mode: MerchantConnectMode;
+      stripeLivemode?: boolean;
+      email?: string;
+      displayName?: string;
+    }
+  | { ok: false; response: NextResponse };
+
+function parseMerchantConnectBody(
+  body: Record<string, unknown>,
+): ConnectBodyParse {
+  const modeRaw =
+    typeof body.mode === "string" ? body.mode.trim() : "account_link";
+  if (modeRaw === "oauth") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error:
+            'Standard Connect OAuth is no longer supported. Use mode "account_link" (Stripe Account Links).',
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  if (modeRaw !== "account_link") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'mode must be "account_link"' },
+        { status: 400 },
+      ),
+    };
+  }
+  if (
+    body.stripeLivemode !== undefined &&
+    typeof body.stripeLivemode !== "boolean"
+  ) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "stripeLivemode must be a boolean" },
+        { status: 400 },
+      ),
+    };
+  }
+  return {
+    ok: true,
+    mode: modeRaw,
+    stripeLivemode:
+      typeof body.stripeLivemode === "boolean" ? body.stripeLivemode : undefined,
+    email: typeof body.email === "string" ? body.email : undefined,
+    displayName:
+      typeof body.displayName === "string" ? body.displayName : undefined,
+  };
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -40,32 +99,19 @@ export async function POST(
     body = {};
   }
 
-  const modeRaw = typeof body.mode === "string" ? body.mode.trim() : "account_link";
-  if (modeRaw === "oauth") {
-    return NextResponse.json(
-      {
-        error:
-          'Standard Connect OAuth is no longer supported. Use mode "account_link" (Stripe Account Links).',
-      },
-      { status: 400 },
-    );
+  const parsed = parseMerchantConnectBody(body);
+  if (!parsed.ok) {
+    return parsed.response;
   }
-  if (modeRaw !== "account_link") {
-    return NextResponse.json(
-      { error: 'mode must be "account_link"' },
-      { status: 400 },
-    );
-  }
-  const mode = modeRaw as MerchantConnectMode;
 
   try {
     const result = await startMerchantConnect({
       clientId: auth.app.id,
       userId: auth.userId,
-      mode,
-      email: typeof body.email === "string" ? body.email : undefined,
-      displayName:
-        typeof body.displayName === "string" ? body.displayName : undefined,
+      mode: parsed.mode,
+      email: parsed.email,
+      displayName: parsed.displayName,
+      stripeLivemode: parsed.stripeLivemode,
     });
     return NextResponse.json(result);
   } catch (err) {

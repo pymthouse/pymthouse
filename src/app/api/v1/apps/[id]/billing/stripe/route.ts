@@ -410,6 +410,26 @@ function rejectPlatformControlledForNonAdmin(
   );
 }
 
+/**
+ * Idempotent when the stored value already matches (including after Connect
+ * linked an acct_ on the same plane while this PATCH was in flight).
+ */
+async function persistStripeLivemodePatch(
+  appId: string,
+  stripeLivemode: boolean,
+): Promise<void> {
+  const existing = await getAppBillingConfig(appId);
+  if (existing?.stripeLivemode === stripeLivemode) {
+    return;
+  }
+  if (existing?.stripeConnectedAccountId?.trim()) {
+    throw new Error(
+      "Cannot change stripeLivemode while a Connected Account is linked. Disconnect Stripe Connect first, then switch sandbox/live and re-onboard.",
+    );
+  }
+  await upsertAppBillingConfig(appId, { stripeLivemode });
+}
+
 async function persistBillingPatch(
   appId: string,
   fields: BillingPatchFields,
@@ -448,13 +468,7 @@ async function persistBillingPatch(
   }
 
   if (stripeLivemode !== undefined) {
-    const existing = await getAppBillingConfig(appId);
-    if (existing?.stripeConnectedAccountId?.trim()) {
-      throw new Error(
-        "Cannot change stripeLivemode while a Connected Account is linked. Disconnect Stripe Connect first, then switch sandbox/live and re-onboard.",
-      );
-    }
-    await upsertAppBillingConfig(appId, { stripeLivemode });
+    await persistStripeLivemodePatch(appId, stripeLivemode);
   }
 
   if (billingMode !== undefined || endUserCap !== undefined) {
