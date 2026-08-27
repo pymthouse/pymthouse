@@ -126,6 +126,79 @@ export function buildInitiateLoginRedirectUrl(
 }
 
 /**
+ * Verification URIs for an RFC 8628 device authorization response.
+ *
+ * `verification_uri` stays on this authorization server because RFC 8628 3.2
+ * expects end users to type it by hand. When the app federates device
+ * approval, `verification_uri_complete` targets `/oidc/device/initiate-login`
+ * (same AS origin) so the browser skips the device form UI, the skip cookie
+ * is set, and initiate-login 302s to the RP. That hop is required: pointing
+ * complete at the RP directly would bypass the skip cookie and loop if the
+ * RP returns to `target_link_uri`. Falls back to the device-page URL whenever
+ * the federated target cannot be built.
+ */
+export function deviceAuthVerificationUris(args: {
+  userCode?: string | null;
+  clientId?: string | null;
+  issuer: string;
+  externalOrigin: string;
+  initiateLoginUri?: string | null;
+  loginHint?: string | null;
+}): { verification_uri: string; verification_uri_complete?: string } {
+  const verification_uri = `${args.externalOrigin}/oidc/device`;
+  if (!args.userCode) {
+    return { verification_uri };
+  }
+
+  const qs = new URLSearchParams();
+  qs.set("user_code", args.userCode);
+  if (args.clientId) {
+    qs.set("client_id", args.clientId);
+  }
+  qs.set("iss", args.issuer);
+  const onAuthorizationServer = `${verification_uri}?${qs.toString()}`;
+
+  if (!args.initiateLoginUri || !args.clientId) {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+
+  try {
+    const targetLinkUri = buildDeviceFlowTargetLinkUri({
+      user_code: args.userCode,
+      client_id: args.clientId,
+      iss: args.issuer,
+      login_hint: args.loginHint,
+    });
+    // Same checks initiate-login performs before 302ing to the RP.
+    validateInitiateLoginUri(args.initiateLoginUri);
+    validateDeviceFlowTargetLinkUri(targetLinkUri);
+
+    const initiateQs = new URLSearchParams({
+      client_id: args.clientId,
+      target_link_uri: targetLinkUri,
+    });
+    if (args.loginHint?.trim()) {
+      initiateQs.set("login_hint", args.loginHint.trim());
+    }
+
+    return {
+      verification_uri,
+      // Stay on the AS so complete shares origin with verification_uri and
+      // `/oidc/device/initiate-login` can set the third-party skip cookie.
+      verification_uri_complete: `${args.externalOrigin}/oidc/device/initiate-login?${initiateQs.toString()}`,
+    };
+  } catch {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+}
+
+/**
  * Extract `user_code` from a device `target_link_uri` (same shape as
  * `buildDeviceFlowTargetLinkUri`).
  */

@@ -29,7 +29,11 @@ import {
   OIDC_MOUNT_PATH,
   getIssuer,
 } from "@/lib/oidc/issuer-urls";
-import { getRegisteredRedirectOrigins } from "@/lib/oidc/clients";
+import {
+  getInitiateLoginUriForDeviceFlow,
+  getRegisteredRedirectOrigins,
+} from "@/lib/oidc/clients";
+import { deviceAuthVerificationUris } from "@/lib/oidc/third-party-initiate-login";
 import { isVerifiedCustomDomain } from "@/lib/oidc/custom-domains";
 import { getSecureHeaders } from "@/lib/oidc/security";
 import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins, reencodeOAuthRedirectLocation } from "./utils";
@@ -565,30 +569,30 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         try {
           const json = JSON.parse(finalBody.toString("utf-8"));
           if (json.verification_uri) {
-            const deviceParams = new URLSearchParams();
-            if (json.user_code) {
-              deviceParams.set("user_code", json.user_code);
-            }
+            let deviceClientId: string | null = null;
             if (body && body.length > 0) {
               try {
-                const form = new URLSearchParams(body.toString("utf-8"));
-                const deviceClientId = form.get("client_id");
-                if (deviceClientId) {
-                  deviceParams.set("client_id", deviceClientId);
-                }
+                deviceClientId = new URLSearchParams(
+                  body.toString("utf-8"),
+                ).get("client_id");
               } catch {
                 /* ignore */
               }
             }
-                       deviceParams.set("iss", getIssuer());
-            const qs = deviceParams.toString();
-            const verificationBase = `${externalOrigin}/oidc/device`;
-            json.verification_uri = verificationBase;
-            if (json.user_code) {
-              json.verification_uri_complete = qs
-                ? `${verificationBase}?${qs}`
-                : verificationBase;
-            }
+            const initiateLoginUri = deviceClientId
+              ? await getInitiateLoginUriForDeviceFlow(deviceClientId)
+              : null;
+            Object.assign(
+              json,
+              deviceAuthVerificationUris({
+                userCode:
+                  typeof json.user_code === "string" ? json.user_code : null,
+                clientId: deviceClientId,
+                issuer: getIssuer(),
+                externalOrigin,
+                initiateLoginUri,
+              }),
+            );
             finalBody = Buffer.from(JSON.stringify(json), "utf-8");
             headers.set("content-length", String(finalBody.length));
           }
