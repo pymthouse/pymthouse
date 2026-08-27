@@ -15,7 +15,8 @@ export type DeviceApprovalFailure = {
 
 export type DeviceApprovalSuccess = { ok: true };
 
-function isDeviceCodeBound(payload: Record<string, unknown>): boolean {
+/** True once a DeviceCode has been bound to an account/grant (approved). */
+export function isDeviceCodeBound(payload: Record<string, unknown>): boolean {
   const accountId = payload.accountId;
   const grantId = payload.grantId;
   if (typeof accountId === "string" && accountId.length > 0) {
