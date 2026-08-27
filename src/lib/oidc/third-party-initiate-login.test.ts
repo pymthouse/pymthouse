@@ -72,7 +72,7 @@ test("deviceAuthVerificationUris keeps verification_uri on the authorization ser
   assert.equal(uris.verification_uri, "https://op.example/oidc/device");
 });
 
-test("deviceAuthVerificationUris routes complete via initiate-login on the AS", () => {
+test("deviceAuthVerificationUris targets the RP initiate_login_uri directly", () => {
   const complete = deviceAuthVerificationUris({
     userCode: "ABCD-EFGH",
     clientId: "app_x",
@@ -84,9 +84,9 @@ test("deviceAuthVerificationUris routes complete via initiate-login on the AS", 
 
   assert.ok(complete);
   const url = new URL(complete);
-  assert.equal(url.origin, "https://op.example");
-  assert.equal(url.pathname, "/oidc/device/initiate-login");
-  assert.equal(url.searchParams.get("client_id"), "app_x");
+  assert.equal(url.origin, "https://rp.example");
+  assert.equal(url.pathname, "/device");
+  assert.equal(url.searchParams.get("iss"), getIssuer());
   assert.equal(url.searchParams.get("login_hint"), "user@example.com");
   assert.equal(
     userCodeFromDeviceTargetLinkUri(
@@ -94,12 +94,8 @@ test("deviceAuthVerificationUris routes complete via initiate-login on the AS", 
     ),
     "ABCD-EFGH",
   );
-  // Complete stays on the AS (same origin as verification_uri) so the skip
-  // cookie can be set before the RP hop.
-  assert.equal(
-    new URL(complete).origin,
-    new URL("https://op.example/oidc/device").origin,
-  );
+  // Complete leaves the AS — RFC 8628 only pins verification_uri to the AS.
+  assert.notEqual(url.origin, "https://op.example");
 });
 
 test("deviceAuthVerificationUris falls back to the authorization server", () => {
