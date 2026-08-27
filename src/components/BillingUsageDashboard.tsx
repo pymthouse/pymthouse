@@ -185,6 +185,8 @@ function deriveFilteredView(
     filteredSeries,
     filteredAppUsage,
     historyClientIds,
+    // Request history covers every identity unless the filter narrows it.
+    historyIdentityIds: allIdentitiesSelected ? [] : selectedIdentityIds,
   };
 }
 
@@ -327,22 +329,23 @@ function SignedTicketsBlock({
   historyScope,
   orderedApps,
   historyClientIds,
+  historyIdentityIds,
+  onClearIdentityFilter,
 }: Readonly<{
   needsSelection: boolean;
   scope: "all" | "single";
-  /** Viewer-own vs platform-wide admin history. */
+  /** Own/administered apps vs platform-wide admin history. */
   historyScope: "own" | "all";
   orderedApps: BillingAppRow[];
   historyClientIds: string[];
+  /** Identity filter from the Identities dropdown; empty means all. */
+  historyIdentityIds: string[];
+  onClearIdentityFilter: () => void;
 }>) {
-  const isPlatform = historyScope === "all";
-  const title = isPlatform
-    ? "Signed ticket requests"
-    : "Your signed ticket requests";
   if (needsSelection) {
     return (
       <section className="mb-6 sm:mb-8 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
-        <h2 className="text-sm font-semibold text-zinc-200">{title}</h2>
+        <h2 className="text-sm font-semibold text-zinc-200">Requests</h2>
         <p className="text-sm text-zinc-500 py-6 text-center">
           Select at least one application to view request history.
         </p>
@@ -355,6 +358,8 @@ function SignedTicketsBlock({
         clientId={scope === "single" ? orderedApps[0]?.publicClientId : null}
         clientIds={scope === "single" ? null : historyClientIds}
         historyScope={historyScope}
+        externalUserIds={historyIdentityIds}
+        onClearIdentityFilter={onClearIdentityFilter}
       />
     </div>
   );
@@ -679,6 +684,8 @@ function BillingUsageBody({
         historyScope={historyScope}
         orderedApps={orderedApps}
         historyClientIds={derived.historyClientIds}
+        historyIdentityIds={derived.historyIdentityIds}
+        onClearIdentityFilter={() => setSelectedIdentityIds(allIdentityIds)}
       />
 
       <AppUsageList

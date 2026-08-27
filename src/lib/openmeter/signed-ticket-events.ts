@@ -48,14 +48,21 @@ export type SignedTicketRequestRow = {
   eventId: string;
 };
 
-export type ListViewerSignedTicketRequestsInput = {
+/**
+ * Signed-ticket history for a signed-in developer.
+ *
+ * `managedClientIds` are apps the viewer owns or administers — every identity's
+ * requests are readable there, which is what makes per-identity request logs
+ * work on the Usage page. `memberClientIds` are apps where the viewer only holds
+ * an `app_users` membership, so those stay limited to the viewer's own subjects.
+ */
+export type ListDeveloperSignedTicketRequestsInput = {
   userId: string;
-  /**
-   * Public OIDC client_id(s) (app_…), not developer_apps.id.
-   * Prefer `clientIds`; `clientId` is kept for single-app callers.
-   */
-  clientId?: string | null;
-  clientIds?: string[] | null;
+  /** Public OIDC client_ids (app_…), not developer_apps.id. */
+  managedClientIds: string[];
+  memberClientIds: string[];
+  /** When set, only return requests for these identities (external_user_id). */
+  externalUserIds?: string[] | null;
   /** When set, only return requests for this stream/session mid. */
   manifestId?: string | null;
   cursor?: string | null;
@@ -71,6 +78,8 @@ export type ListAdminSignedTicketRequestsInput = {
    */
   clientId?: string | null;
   clientIds?: string[] | null;
+  /** When set, only return requests for these identities (external_user_id). */
+  externalUserIds?: string[] | null;
   /** When set, only return requests for this stream/session mid. */
   manifestId?: string | null;
   cursor?: string | null;
@@ -437,26 +446,12 @@ async function listSignedTicketRequestsForSubjects(input: {
     to,
   });
 
-  const actorFilter = input.actorExternalUserIds;
-  const matching = rawEvents.filter((ev) => {
-    if (!eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter)) {
-      return false;
-    }
-    if (actorFilter == null) {
-      return true;
-    }
-    if (actorFilter.size === 0) {
-      return false;
-    }
-    const actor = eventUsageSubject(ev);
-    if (!actor) {
-      return false;
-    }
-    return (
-      actorFilter.has(actor) ||
-      actorFilter.has(normalizePlatformUserId(actor))
-    );
-  });
+  const actorKeys = buildSubjectMatchKeys(input.actorExternalUserIds);
+  const matching = rawEvents.filter(
+    (ev) =>
+      eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter) &&
+      eventMatchesUsageSubjectKeys(ev, actorKeys),
+  );
 
   return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
@@ -491,9 +486,86 @@ export async function listAdminSignedTicketRequests(
     to,
   });
 
-  const matching = rawEvents.filter((ev) =>
-    eventMatchesAdminSignedTicket(ev, clientIdFilter),
+  const identityKeys = buildSubjectMatchKeys(
+    normalizeIdentityFilter(input.externalUserIds),
   );
+  const matching = rawEvents.filter(
+    (ev) =>
+      eventMatchesAdminSignedTicket(ev, clientIdFilter) &&
+      eventMatchesUsageSubjectKeys(ev, identityKeys),
+  );
+
+  return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
+}
+
+/**
+ * Signed-ticket history for a developer's Usage page.
+ *
+ * Managed apps are read app-wide (all identities, optionally narrowed to
+ * selected ones); membership-only apps stay gated on the viewer's own subjects.
+ */
+export async function listDeveloperSignedTicketRequests(
+  input: ListDeveloperSignedTicketRequestsInput,
+): Promise<ListViewerSignedTicketRequestsResult> {
+  if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const client = getHostedOpenMeterClient();
+  if (!client) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const managed = normalizeClientIdFilter(null, input.managedClientIds);
+  const member = normalizeClientIdFilter(null, input.memberClientIds);
+  if (!managed && !member) {
+    return { items: [], nextCursor: null, openMeterConfigured: true };
+  }
+
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const from = input.from?.trim() || cycle.start;
+  const to = input.to?.trim() || cycle.end;
+  const limit = clampLimit(input.limit);
+  const offset = decodeOffsetCursor(input.cursor);
+  const identityKeys = buildSubjectMatchKeys(
+    normalizeIdentityFilter(input.externalUserIds),
+  );
+
+  const viewerSubjects = member
+    ? await resolveViewerUsageSubjects(input.userId)
+    : new Set<string>();
+
+  const [managedEvents, memberEvents] = await Promise.all([
+    managed
+      ? fetchPlatformSignedTicketEvents({
+          client,
+          clientIds: managed,
+          from,
+          to,
+        })
+      : Promise.resolve([]),
+    member
+      ? fetchSignedTicketEvents({
+          client,
+          subjects: viewerSubjects,
+          clientIds: member,
+          from,
+          to,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const matching = [...managedEvents, ...memberEvents].filter((ev) => {
+    if (!eventMatchesUsageSubjectKeys(ev, identityKeys)) {
+      return false;
+    }
+    if (managed && eventMatchesAdminSignedTicket(ev, managed)) {
+      return true;
+    }
+    return Boolean(
+      member && eventMatchesViewerSubjects(ev, viewerSubjects, member),
+    );
+  });
 
   return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
@@ -545,22 +617,6 @@ async function pageSignedTicketEvents(
     nextCursor,
     openMeterConfigured: true,
   };
-}
-
-export async function listViewerSignedTicketRequests(
-  input: ListViewerSignedTicketRequestsInput,
-): Promise<ListViewerSignedTicketRequestsResult> {
-  const subjects = await resolveViewerUsageSubjects(input.userId);
-  return listSignedTicketRequestsForSubjects({
-    subjects,
-    clientId: input.clientId,
-    clientIds: input.clientIds,
-    manifestId: input.manifestId,
-    cursor: input.cursor,
-    limit: input.limit,
-    from: input.from,
-    to: input.to,
-  });
 }
 
 export type ListEndUserSignedTicketRequestsInput = {
@@ -631,25 +687,77 @@ export async function listEndUserSignedTicketRequests(
 }
 
 /**
- * Session (manifest) list backed by per-manifest analytics meters — authoritative
- * cycle totals, not a sum of paged request history rows.
+ * Session (manifest) list for a developer's Usage page, backed by per-manifest
+ * analytics meters — authoritative cycle totals, not a sum of paged request rows.
+ *
+ * Managed apps are read app-wide so owners see every identity's sessions;
+ * membership-only apps stay scoped to the viewer's own subjects.
  */
-export async function listViewerSignedTicketSessions(input: {
+export async function listDeveloperSignedTicketSessions(input: {
   userId: string;
-  clientId?: string | null;
-  clientIds?: string[] | null;
+  managedClientIds: string[];
+  memberClientIds: string[];
+  externalUserIds?: string[] | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
   to?: string;
 }): Promise<ListSignedTicketSessionsResult> {
-  const subjects = await resolveViewerUsageSubjects(input.userId);
-  // Always scope to the viewer's subjects — never fall back to an unfiltered
-  // app-wide meter query (that would leak other tenants' session fees).
+  if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const managed = normalizeClientIdFilter(null, input.managedClientIds);
+  const member = normalizeClientIdFilter(null, input.memberClientIds);
+  const identityFilter = normalizeIdentityFilter(input.externalUserIds);
+
+  const memberSubjects = member
+    ? intersectSubjectFilter(
+        await resolveViewerUsageSubjects(input.userId),
+        identityFilter,
+      )
+    : null;
+
+  const [managedRows, memberRows] = await Promise.all([
+    managed
+      ? collectSignedTicketSessionRows({
+          clientIdFilter: managed,
+          externalUserIds: identityFilter,
+          from: input.from,
+          to: input.to,
+        })
+      : Promise.resolve([]),
+    member && memberSubjects
+      ? collectSignedTicketSessionRows({
+          clientIdFilter: member,
+          externalUserIds: memberSubjects,
+          from: input.from,
+          to: input.to,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return pageSignedTicketSessions(
+    [...managedRows, ...memberRows],
+    clampLimit(input.limit),
+    decodeOffsetCursor(input.cursor),
+  );
+}
+
+export async function listAdminSignedTicketSessions(input: {
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  externalUserIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListSignedTicketSessionsResult> {
   return listSignedTicketSessionsForClientIds({
     clientId: input.clientId,
     clientIds: input.clientIds,
-    externalUserIds: subjects,
+    externalUserIds: normalizeIdentityFilter(input.externalUserIds),
+    allowPlatformDiscovery: true,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -657,23 +765,23 @@ export async function listViewerSignedTicketSessions(input: {
   });
 }
 
-export async function listAdminSignedTicketSessions(input: {
-  clientId?: string | null;
-  clientIds?: string[] | null;
-  cursor?: string | null;
-  limit?: number;
-  from?: string;
-  to?: string;
-}): Promise<ListSignedTicketSessionsResult> {
-  return listSignedTicketSessionsForClientIds({
-    clientId: input.clientId,
-    clientIds: input.clientIds,
-    externalUserIds: null,
-    cursor: input.cursor,
-    limit: input.limit,
-    from: input.from,
-    to: input.to,
-  });
+/** Keep only viewer subjects the identity filter also selects. */
+function intersectSubjectFilter(
+  subjects: ReadonlySet<string>,
+  identityFilter: ReadonlySet<string> | null,
+): Set<string> {
+  if (!identityFilter) return new Set(subjects);
+  const keys = buildSubjectMatchKeys(identityFilter);
+  const out = new Set<string>();
+  for (const subject of subjects) {
+    if (
+      keys?.has(subject) ||
+      keys?.has(normalizePlatformUserId(subject))
+    ) {
+      out.add(subject);
+    }
+  }
+  return out;
 }
 
 export async function listEndUserSignedTicketSessions(input: {
@@ -687,6 +795,7 @@ export async function listEndUserSignedTicketSessions(input: {
   return listSignedTicketSessionsForClientIds({
     clientId: input.clientId,
     externalUserIds: new Set([input.externalUserId]),
+    allowPlatformDiscovery: false,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -698,10 +807,12 @@ async function listSignedTicketSessionsForClientIds(input: {
   clientId?: string | null;
   clientIds?: string[] | null;
   /**
-   * Viewer/end-user subject allow-list. `null` = admin unfiltered.
+   * Subject allow-list. `null` = unfiltered (admin / app-wide managed read).
    * Empty set returns no sessions.
    */
   externalUserIds?: ReadonlySet<string> | null;
+  /** Allow discovering apps from platform events when no clientIds are given. */
+  allowPlatformDiscovery: boolean;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -711,35 +822,57 @@ async function listSignedTicketSessionsForClientIds(input: {
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
 
+  const items = await collectSignedTicketSessionRows({
+    clientIdFilter: normalizeClientIdFilter(input.clientId, input.clientIds),
+    externalUserIds: input.externalUserIds ?? null,
+    allowPlatformDiscovery: input.allowPlatformDiscovery,
+    from: input.from,
+    to: input.to,
+  });
+
+  return pageSignedTicketSessions(
+    items,
+    clampLimit(input.limit),
+    decodeOffsetCursor(input.cursor),
+  );
+}
+
+/**
+ * Session rows for one client_id group. Callers page the merged result so
+ * multi-group reads (managed + membership apps) stay on one cursor.
+ */
+async function collectSignedTicketSessionRows(input: {
+  clientIdFilter: ReadonlySet<string> | null;
+  externalUserIds: ReadonlySet<string> | null;
+  /** Only admin All Usage discovers apps from platform events. */
+  allowPlatformDiscovery?: boolean;
+  from?: string;
+  to?: string;
+}): Promise<SignedTicketSessionRow[]> {
   const cycle = calendarMonthBoundsUtc(new Date());
   const from = input.from?.trim() || cycle.start;
   const to = input.to?.trim() || cycle.end;
-  const limit = clampLimit(input.limit);
-  const offset = decodeOffsetCursor(input.cursor);
-  let clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
+  let clientIdFilter = input.clientIdFilter;
   // Match usage-read stubs: do not hit live OpenMeter during unit tests.
   const omClient =
     process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests()
       ? null
       : getHostedOpenMeterClient();
 
-  // Viewer with no resolved subjects must not see app-wide sessions.
+  // A filter that selects nothing must not fall back to app-wide sessions.
   if (input.externalUserIds?.size === 0) {
-    return { items: [], nextCursor: null, openMeterConfigured: true };
+    return [];
   }
 
   // Prefetched when admin All Usage omits clientIds (platform-wide).
   let prefetchedEvents: IngestedEventLike[] | null = null;
 
   if (!clientIdFilter || clientIdFilter.size === 0) {
-    const discovered = await discoverAdminAllAppsClientIds({
-      omClient,
-      externalUserIds: input.externalUserIds,
-      from,
-      to,
-    });
+    const discovered = input.allowPlatformDiscovery
+      ? await discoverAdminAllAppsClientIds({ omClient, from, to })
+      : null;
     if (!discovered) {
-      return { items: [], nextCursor: null, openMeterConfigured: true };
+      return [];
     }
     prefetchedEvents = discovered.prefetchedEvents;
     clientIdFilter = discovered.clientIds;
@@ -774,10 +907,16 @@ async function listSignedTicketSessionsForClientIds(input: {
     externalUserIds: input.externalUserIds,
   });
 
-  const items = batches
+  return batches
     .flat()
     .map((row) => enrichSessionRowWithEventStats(row, eventStats));
+}
 
+function pageSignedTicketSessions(
+  items: SignedTicketSessionRow[],
+  limit: number,
+  offset: number,
+): ListSignedTicketSessionsResult {
   items.sort(compareSignedTicketSessions);
 
   const page = items.slice(offset, offset + limit);
@@ -798,15 +937,12 @@ async function listSignedTicketSessionsForClientIds(input: {
  */
 async function discoverAdminAllAppsClientIds(input: {
   omClient: OpenMeter | null;
-  externalUserIds?: ReadonlySet<string> | null;
   from: string;
   to: string;
 }): Promise<{
   clientIds: Set<string>;
   prefetchedEvents: IngestedEventLike[];
 } | null> {
-  // Viewer/end-user session lists always need an app filter.
-  if (input.externalUserIds != null) return null;
   if (!input.omClient) return null;
 
   // UI omits clientIds so request history can use the unrestricted event list.
@@ -941,7 +1077,7 @@ export function aggregateManifestSessionEventStats(
     if (opts?.clientIds && opts.clientIds.size > 0 && !opts.clientIds.has(clientId)) {
       continue;
     }
-    if (!eventMatchesSessionExternalFilter(ev, externalKeys)) continue;
+    if (!eventMatchesUsageSubjectKeys(ev, externalKeys)) continue;
 
     const data = ev.event.data ?? {};
     const manifestId = stringField(data, "manifest_id") || "unknown";
@@ -962,36 +1098,56 @@ function buildSessionExternalSubjectKeys(opts?: {
   externalUserId?: string | null;
   externalUserIds?: ReadonlySet<string> | null;
 }): Set<string> | null {
-  let subjectSet: ReadonlySet<string> | null = null;
   if (opts?.externalUserIds != null) {
-    subjectSet = opts.externalUserIds;
-  } else {
-    const trimmed = opts?.externalUserId?.trim();
-    if (trimmed) subjectSet = new Set([trimmed]);
+    return buildSubjectMatchKeys(opts.externalUserIds);
   }
-  if (subjectSet == null) return null;
+  const trimmed = opts?.externalUserId?.trim();
+  return trimmed ? buildSubjectMatchKeys([trimmed]) : null;
+}
 
+/**
+ * Expand usage subjects into the forms events carry: as supplied, normalized
+ * (`user:`/`owner:` stripped) and the `owner:{id}` wire form.
+ * `null` in / `null` out means "no filter"; an empty input matches nothing.
+ */
+export function buildSubjectMatchKeys(
+  subjects?: Iterable<string> | null,
+): Set<string> | null {
+  if (subjects == null) return null;
   const keys = new Set<string>();
-  for (const subject of subjectSet) {
-    keys.add(subject);
-    keys.add(normalizePlatformUserId(subject));
-    keys.add(buildOwnerWireSubject(normalizePlatformUserId(subject)));
+  for (const subject of subjects) {
+    const trimmed = subject.trim();
+    if (!trimmed) continue;
+    const normalized = normalizePlatformUserId(trimmed);
+    keys.add(trimmed);
+    keys.add(normalized);
+    keys.add(buildOwnerWireSubject(normalized));
   }
   return keys;
 }
 
-function eventMatchesSessionExternalFilter(
+/** Match an event's actor (`external_user_id`) against expanded subject keys. */
+export function eventMatchesUsageSubjectKeys(
   ev: IngestedEventLike,
-  externalKeys: ReadonlySet<string> | null,
+  keys: ReadonlySet<string> | null,
 ): boolean {
-  if (!externalKeys) return true;
-  if (externalKeys.size === 0) return false;
+  if (!keys) return true;
+  if (keys.size === 0) return false;
   const usageSubject = eventUsageSubject(ev);
   if (!usageSubject) return false;
   return (
-    externalKeys.has(usageSubject) ||
-    externalKeys.has(normalizePlatformUserId(usageSubject))
+    keys.has(usageSubject) || keys.has(normalizePlatformUserId(usageSubject))
   );
+}
+
+/** Identity filter from request params: `null`/empty means "all identities". */
+function normalizeIdentityFilter(
+  externalUserIds?: string[] | null,
+): Set<string> | null {
+  const ids = (externalUserIds ?? [])
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  return ids.length > 0 ? new Set(ids) : null;
 }
 
 function accumulateSessionEventStat(
