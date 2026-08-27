@@ -72,24 +72,33 @@ test("deviceAuthVerificationUris keeps verification_uri on the authorization ser
   assert.equal(uris.verification_uri, "https://op.example/oidc/device");
 });
 
-test("deviceAuthVerificationUris targets the RP when the app federates approval", () => {
+test("deviceAuthVerificationUris routes complete via initiate-login on the AS", () => {
   const complete = deviceAuthVerificationUris({
     userCode: "ABCD-EFGH",
     clientId: "app_x",
     issuer: getIssuer(),
     externalOrigin: "https://op.example",
     initiateLoginUri: "https://rp.example/device",
+    loginHint: "user@example.com",
   }).verification_uri_complete;
 
   assert.ok(complete);
   const url = new URL(complete);
-  assert.equal(url.origin + url.pathname, "https://rp.example/device");
-  assert.equal(url.searchParams.get("iss"), getIssuer());
+  assert.equal(url.origin, "https://op.example");
+  assert.equal(url.pathname, "/oidc/device/initiate-login");
+  assert.equal(url.searchParams.get("client_id"), "app_x");
+  assert.equal(url.searchParams.get("login_hint"), "user@example.com");
   assert.equal(
     userCodeFromDeviceTargetLinkUri(
       url.searchParams.get("target_link_uri") ?? "",
     ),
     "ABCD-EFGH",
+  );
+  // Complete stays on the AS (same origin as verification_uri) so the skip
+  // cookie can be set before the RP hop.
+  assert.equal(
+    new URL(complete).origin,
+    new URL("https://op.example/oidc/device").origin,
   );
 });
 
