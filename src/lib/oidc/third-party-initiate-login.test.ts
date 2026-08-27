@@ -7,6 +7,7 @@ import {
   validateInitiateLoginUri,
   validateDeviceFlowTargetLinkUri,
   buildInitiateLoginRedirectUrl,
+  deviceAuthVerificationUris,
   userCodeFromDeviceTargetLinkUri,
 } from "./third-party-initiate-login";
 import { thirdPartyInitiateSkipCookieName } from "./third-party-initiate-skip-cookie";
@@ -58,6 +59,84 @@ test("userCodeFromDeviceTargetLinkUri reads user_code query", () => {
   const u = `${origin}/oidc/device?user_code=AA-BB&client_id=app_1`;
   assert.equal(userCodeFromDeviceTargetLinkUri(u), "AA-BB");
   assert.equal(userCodeFromDeviceTargetLinkUri("not-a-url"), undefined);
+});
+
+test("deviceAuthVerificationUris keeps verification_uri on the authorization server", () => {
+  const uris = deviceAuthVerificationUris({
+    userCode: "ABCD-EFGH",
+    clientId: "app_x",
+    issuer: getIssuer(),
+    externalOrigin: "https://op.example",
+    initiateLoginUri: "https://rp.example/device",
+  });
+  assert.equal(uris.verification_uri, "https://op.example/oidc/device");
+});
+
+test("deviceAuthVerificationUris routes complete via initiate-login on the AS", () => {
+  const complete = deviceAuthVerificationUris({
+    userCode: "ABCD-EFGH",
+    clientId: "app_x",
+    issuer: getIssuer(),
+    externalOrigin: "https://op.example",
+    initiateLoginUri: "https://rp.example/device",
+    loginHint: "user@example.com",
+  }).verification_uri_complete;
+
+  assert.ok(complete);
+  const url = new URL(complete);
+  assert.equal(url.origin, "https://op.example");
+  assert.equal(url.pathname, "/oidc/device/initiate-login");
+  assert.equal(url.searchParams.get("client_id"), "app_x");
+  assert.equal(url.searchParams.get("login_hint"), "user@example.com");
+  assert.equal(
+    userCodeFromDeviceTargetLinkUri(
+      url.searchParams.get("target_link_uri") ?? "",
+    ),
+    "ABCD-EFGH",
+  );
+  // Complete stays on the AS (same origin as verification_uri) so the skip
+  // cookie can be set before the RP hop.
+  assert.equal(
+    new URL(complete).origin,
+    new URL("https://op.example/oidc/device").origin,
+  );
+});
+
+test("deviceAuthVerificationUris falls back to the authorization server", () => {
+  const base = {
+    userCode: "ABCD-EFGH",
+    clientId: "app_x",
+    issuer: getIssuer(),
+    externalOrigin: "https://op.example",
+  };
+  const expected = `https://op.example/oidc/device?user_code=ABCD-EFGH&client_id=app_x&iss=${encodeURIComponent(getIssuer())}`;
+
+  // No third-party login configured for the app.
+  assert.equal(
+    deviceAuthVerificationUris({ ...base, initiateLoginUri: null })
+      .verification_uri_complete,
+    expected,
+  );
+  // Registered initiate_login_uri fails validation (plain HTTP, non-loopback).
+  assert.equal(
+    deviceAuthVerificationUris({
+      ...base,
+      initiateLoginUri: "http://rp.example/device",
+    }).verification_uri_complete,
+    expected,
+  );
+});
+
+test("deviceAuthVerificationUris omits verification_uri_complete without a user_code", () => {
+  const uris = deviceAuthVerificationUris({
+    userCode: null,
+    clientId: "app_x",
+    issuer: getIssuer(),
+    externalOrigin: "https://op.example",
+    initiateLoginUri: "https://rp.example/device",
+  });
+  assert.equal(uris.verification_uri, "https://op.example/oidc/device");
+  assert.equal(uris.verification_uri_complete, undefined);
 });
 
 test("buildInitiateLoginRedirectUrl validates both URIs", () => {

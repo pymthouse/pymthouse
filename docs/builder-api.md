@@ -243,11 +243,11 @@ Device login uses the **OIDC token endpoint** `POST {issuer}/token` with `grant_
 For device code clients, `/device/auth` responses use:
 
 - **`verification_uri`** — Short URL: `{public origin}/oidc/device`
-- **`verification_uri_complete`** — Includes `user_code`, `client_id`, and `iss` so the browser can resume without retyping the code
+- **`verification_uri_complete`** — Prefer this for browser open. When third-party device login is enabled, it points at `{public origin}/oidc/device/initiate-login` with `client_id` + `target_link_uri` (which embeds `user_code`, `client_id`, and `iss`). That hop sets a short-lived skip cookie, then **302**s to your registered **`initiate_login_uri`**. When third-party login is off (or the initiate URI is invalid), complete is the device page with `user_code`, `client_id`, and `iss` query params.
 
-Unauthenticated users may be redirected once to your registered **`initiate_login_uri`** (third-party initiate login) when the app opts in. The redirect target is loaded **from the database for `client_id`** (open-redirect safe).
+Unauthenticated users who open the plain **`verification_uri`** (or typed device page) may also be redirected once through `/oidc/device/initiate-login` when the app opts in. The redirect target is loaded **from the database for `client_id`** (open-redirect safe). Federated apps should complete approval via RFC 8693 on the RP (not the OP device form with a local PymtHouse session).
 
-**Opt-in:** Enable **Redirect device verification to initiate login URI** and set **Initiate login URI** to your HTTPS endpoint that accepts `iss`, `target_link_uri`, and optional `login_hint`. Validate `iss` against discovery and validate `target_link_uri`. **Option B (NaaP):** after login, mint a user JWT via Builder, then call `POST {issuer}/token` with token exchange and `resource=urn:pmth:device_code:<user_code>` (M2M Basic auth), and show `/oidc/device-approved` instead of sending the browser back to `target_link_uri`.
+**Opt-in:** Enable **Redirect device verification to initiate login URI** and set **Initiate login URI** to your HTTPS endpoint that accepts `iss`, `target_link_uri`, and optional `login_hint`. Validate `iss` against discovery and validate `target_link_uri`. **Option B (NaaP):** after login, mint a user JWT via Builder, then call `POST {issuer}/token` with token exchange and `resource=urn:pmth:device_code:<user_code>` (M2M Basic auth), and show `/oidc/device-approved` instead of sending the browser back to `target_link_uri`. If you do return to `target_link_uri`, the skip cookie from initiate-login prevents a redirect loop.
 
 Treat `initiate_login_uri` as a sensitive redirect (HTTPS in production; HTTP on localhost in dev). Avoid open redirects; use CSRF protection on forms that start login.
 

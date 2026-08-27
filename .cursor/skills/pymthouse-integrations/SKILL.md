@@ -65,8 +65,8 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 ## Device flow (RFC 8628) + third-party initiate
 
 1. CLI/SDK: `POST .../oidc/device/auth` with **public** `client_id`; poll `POST .../oidc/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` and optional RFC 8707 `resource` (issuer URL).
-2. Browser: `verification_uri_complete` → PymtHouse may **302** to integrator `initiate_login_uri` with `iss` + `target_link_uri` (must be OP origin + path `/oidc/device` with query params).
-3. After login, backend **binds** the pending device grant via **RFC 8693** (not a proprietary `/device/approve` URL): mint user JWT, then `POST {issuer}/token` with token-exchange and `resource=urn:pmth:device_code:<user_code>`. Implementation: `src/lib/oidc/device-token-exchange.ts`.
+2. Browser: `verification_uri_complete` (when third-party device login is enabled) is OP `/oidc/device/initiate-login` with `client_id` + `target_link_uri`. That route sets a skip cookie, then **302**s to integrator `initiate_login_uri` with `iss` + `target_link_uri` (must be OP origin + path `/oidc/device` with query params). Hand-typed `verification_uri` (`/oidc/device`) uses the same initiate hop when opted in. Do not point complete at the RP directly — that would skip the cookie and loop if the RP returns to `target_link_uri`.
+3. After login, backend **binds** the pending device grant via **RFC 8693** (not a proprietary `/device/approve` URL): mint user JWT, then `POST {issuer}/token` with token-exchange and `resource=urn:pmth:device_code:<user_code>`. Implementation: `src/lib/oidc/device-token-exchange.ts`. Federated apps should complete on the RP (not the OP device form with a local PymtHouse session).
 4. **Account id for the grant** must resolve through **`findAccount`** (`src/lib/oidc/account.ts` — `users` / `end_users`). Device approval exchange maps `subject_token.sub` (app user id) → `end_users` via `findOrCreateAppEndUser` before binding (`device-token-exchange.ts`).
 
 Public client must have **device third-party initiate** enabled where required (`device_third_party_initiate_login`).

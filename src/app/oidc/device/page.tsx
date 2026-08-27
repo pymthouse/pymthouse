@@ -68,41 +68,45 @@ export default async function DeviceVerificationPage({
     clientIdParam,
   );
 
-  if (!session?.user) {
-    const skipCookieName = authoritativeClientId
-      ? thirdPartyInitiateSkipCookieName(authoritativeClientId, userCode)
-      : null;
-    const skipThirdParty =
-      skipCookieName !== null
-        ? (await cookies()).get(skipCookieName)?.value === "1"
-        : true;
+  const skipCookieName = authoritativeClientId
+    ? thirdPartyInitiateSkipCookieName(authoritativeClientId, userCode)
+    : null;
+  const skipThirdParty =
+    skipCookieName !== null
+      ? (await cookies()).get(skipCookieName)?.value === "1"
+      : true;
 
-    if (
-      authoritativeClientId &&
-      issParam &&
-      issuerMatchesExpected(issParam, expectedIssuer) &&
-      !skipThirdParty
-    ) {
-      const initiateLoginUri = await getInitiateLoginUriForDeviceFlow(
-        authoritativeClientId,
-      );
-      if (initiateLoginUri) {
-        const targetLinkUri = buildDeviceFlowTargetLinkUri({
-          user_code: userCode,
+  // Deliberately ahead of the session check. When an app federates device
+  // approval, the approving subject must come from the RP; approving with a
+  // local session here would bind the device code to a pymthouse account
+  // instead of the app's end user.
+  if (
+    authoritativeClientId &&
+    issParam &&
+    issuerMatchesExpected(issParam, expectedIssuer) &&
+    !skipThirdParty
+  ) {
+    const initiateLoginUri = await getInitiateLoginUriForDeviceFlow(
+      authoritativeClientId,
+    );
+    if (initiateLoginUri) {
+      const targetLinkUri = buildDeviceFlowTargetLinkUri({
+        user_code: userCode,
+        client_id: authoritativeClientId,
+        iss: issParam,
+        login_hint: loginHintParam,
+      });
+      redirect(
+        `/oidc/device/initiate-login?${new URLSearchParams({
           client_id: authoritativeClientId,
-          iss: issParam,
-          login_hint: loginHintParam,
-        });
-        redirect(
-          `/oidc/device/initiate-login?${new URLSearchParams({
-            client_id: authoritativeClientId,
-            target_link_uri: targetLinkUri,
-            ...(loginHintParam ? { login_hint: loginHintParam } : {}),
-          }).toString()}`,
-        );
-      }
+          target_link_uri: targetLinkUri,
+          ...(loginHintParam ? { login_hint: loginHintParam } : {}),
+        }).toString()}`,
+      );
     }
+  }
 
+  if (!session?.user) {
     const qs = new URLSearchParams();
     if (userCode) qs.set("user_code", userCode);
     if (authoritativeClientId) qs.set("client_id", authoritativeClientId);
