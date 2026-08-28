@@ -5,10 +5,13 @@ import { authOptions } from "@/lib/next-auth-options";
 import {
   listAdminSignedTicketRequests,
   listAdminSignedTicketSessions,
-  listViewerSignedTicketRequests,
-  listViewerSignedTicketSessions,
+  listDeveloperSignedTicketRequests,
+  listDeveloperSignedTicketSessions,
 } from "@/lib/openmeter/signed-ticket-events";
-import { resolveViewerUsageClientIds } from "@/lib/viewer-usage-clients";
+import {
+  resolveViewerUsageClientScopes,
+  type ViewerUsageClientScopes,
+} from "@/lib/viewer-usage-clients";
 import {
   isValidBoundedDateRange,
   MAX_DATE_RANGE_DAYS,
@@ -24,6 +27,35 @@ function parseUniqueClientIds(params: URLSearchParams): string[] {
       []),
   ];
   return [...new Set(clientIds)];
+}
+
+/** Optional identity filter (`?externalUserId=` repeated, or comma-separated). */
+function parseExternalUserIds(params: URLSearchParams): string[] {
+  const ids = [
+    ...params.getAll("externalUserId").map((id) => id.trim()).filter(Boolean),
+    ...(params
+      .get("externalUserIds")
+      ?.split(",")
+      .map((id) => id.trim())
+      .filter(Boolean) ?? []),
+  ];
+  return [...new Set(ids)];
+}
+
+/**
+ * Restrict requested apps to what the viewer may read, keeping the
+ * managed/membership split so managed apps can be read app-wide.
+ */
+function restrictScopesToRequested(
+  scopes: ViewerUsageClientScopes,
+  requested: string[],
+): ViewerUsageClientScopes {
+  if (requested.length === 0) return scopes;
+  const wanted = new Set(requested);
+  return {
+    managed: scopes.managed.filter((id) => wanted.has(id)),
+    member: scopes.member.filter((id) => wanted.has(id)),
+  };
 }
 
 function validateMeUsageRequestsParams(
@@ -60,20 +92,6 @@ function validateMeUsageRequestsParams(
       ),
     };
   }
-  // Never accept externalUserId — own scope is viewer subjects; all scope is
-  // platform-wide by clientId filter, not by arbitrary end-user id.
-  if (params.has("externalUserId") || params.has("external_user_id")) {
-    return {
-      error: NextResponse.json(
-        {
-          error:
-            "externalUserId is not allowed; use scope=own (viewer) or scope=all (admin) with clientId filters",
-        },
-        { status: 400 },
-      ),
-    };
-  }
-
   return { scope, groupBy };
 }
 
@@ -125,13 +143,17 @@ export async function handleMeUsageRequestsGet(
   const { scope, groupBy } = validated;
 
   const uniqueClientIds = parseUniqueClientIds(params);
-  // scope=own with no explicit filter: authorize the viewer's owned/admin apps
-  // plus app_users memberships (including personal network on the default app).
-  // Sessions require a concrete clientId set; request history benefits too.
-  let resolvedClientIds = uniqueClientIds;
-  if (scope === "own" && resolvedClientIds.length === 0) {
-    resolvedClientIds = await resolveViewerUsageClientIds(userId);
-  }
+  const externalUserIds = parseExternalUserIds(params);
+  // scope=own always resolves against the viewer's own authorization: apps they
+  // own or administer (readable app-wide, every identity) plus app_users
+  // memberships (their own subjects only). Requested clientIds only narrow it.
+  const viewerScopes =
+    scope === "own"
+      ? restrictScopesToRequested(
+          await resolveViewerUsageClientScopes(userId),
+          uniqueClientIds,
+        )
+      : { managed: [], member: [] };
 
   const cursor = params.get("cursor")?.trim() || undefined;
   const manifestId = params.get("manifestId")?.trim() || undefined;
@@ -144,22 +166,29 @@ export async function handleMeUsageRequestsGet(
   }
 
   const listInput = {
-    clientIds: resolvedClientIds.length > 0 ? resolvedClientIds : undefined,
+    externalUserIds: externalUserIds.length > 0 ? externalUserIds : undefined,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
     from: dateRange.from,
     to: dateRange.to,
+  };
+  const adminInput = {
+    ...listInput,
+    clientIds: uniqueClientIds.length > 0 ? uniqueClientIds : undefined,
+  };
+  const developerInput = {
+    ...listInput,
+    userId,
+    managedClientIds: viewerScopes.managed,
+    memberClientIds: viewerScopes.member,
   };
 
   try {
     if (groupBy === "session") {
       const result =
         scope === "all"
-          ? await listAdminSignedTicketSessions(listInput)
-          : await listViewerSignedTicketSessions({
-              userId,
-              ...listInput,
-            });
+          ? await listAdminSignedTicketSessions(adminInput)
+          : await listDeveloperSignedTicketSessions(developerInput);
 
       return NextResponse.json({
         items: result.items,
@@ -170,17 +199,12 @@ export async function handleMeUsageRequestsGet(
       });
     }
 
-    const requestInput = {
-      ...listInput,
-      manifestId,
-    };
-
     const result =
       scope === "all"
-        ? await listAdminSignedTicketRequests(requestInput)
-        : await listViewerSignedTicketRequests({
-            userId,
-            ...requestInput,
+        ? await listAdminSignedTicketRequests({ ...adminInput, manifestId })
+        : await listDeveloperSignedTicketRequests({
+            ...developerInput,
+            manifestId,
           });
 
     return NextResponse.json({

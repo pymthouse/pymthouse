@@ -500,9 +500,10 @@ Session-authenticated (NextAuth). Default UI view is **sessions** (`groupBy=sess
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
 | `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`). Repeatable / comma-separated `clientIds` for multi-app filters. **Required for `groupBy=session`.** |
-| `scope` | `own` (default) — signed-in viewer’s usage subject(s) only. `all` — **platform admins only**; platform-wide history for the selected `clientId`(s) (All Usage tab). Non-admins receive `403`. |
+| `scope` | `own` (default) — apps the viewer owns or administers (every identity on them) plus apps where the viewer only holds an `app_users` membership (their own usage subjects there). `all` — **platform admins only**; platform-wide history for the selected `clientId`(s) (All Usage tab). Non-admins receive `403`. |
+| `externalUserId` | Optional identity filter (repeatable, or comma-separated `externalUserIds`). Narrows rows to those `external_user_id` values within whatever the scope already authorizes. |
 
-Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, `scope`, and `groupBy`.
+`scope=own` never trusts the requested `clientId`s on their own: the server intersects them with the viewer's owned/administered apps and memberships, so an unauthorized app returns no rows. The identity filter likewise only narrows — on membership-only apps it is intersected with the viewer's own subjects (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, `scope`, and `groupBy`.
 
 Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full sub-micro precision). Session fees are rounded up once at the session/read boundary (same policy as Usage API `groupBy=manifest` totals).
 

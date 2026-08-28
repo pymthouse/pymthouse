@@ -16,6 +16,7 @@ import {
   formatUsdMicrosString,
   formatUsdMicrosSummary,
 } from "@/lib/format-usd-micros";
+import { truncateMiddle } from "@/lib/truncate-middle";
 import {
   buildRequestsCsv,
   buildRequestsCsvFilename,
@@ -79,13 +80,37 @@ function normalizeClientIds(
   ].sort((a, b) => a.localeCompare(b));
 }
 
-function historyCopy(scope: HistoryScope): {
+function historyCopy(
+  scope: HistoryScope,
+  identityIds: string[],
+): {
   title: string;
   /** Scope shown as a chip beside the title, not as prose. */
   scopeChip: string;
+  /** Chip holds a raw identity id, so render it monospaced. */
+  scopeChipMono?: boolean;
   emptySessions: string;
   emptyRequests: string;
 } {
+  if (identityIds.length === 1) {
+    return {
+      title: "Requests",
+      scopeChip: identityIds[0],
+      scopeChipMono: true,
+      emptySessions: "No sessions for this identity in this billing cycle.",
+      emptyRequests: "No requests for this identity in this billing cycle.",
+    };
+  }
+  if (identityIds.length > 1) {
+    return {
+      title: "Requests",
+      scopeChip: `${identityIds.length} identities`,
+      emptySessions:
+        "No sessions for the selected identities in this billing cycle.",
+      emptyRequests:
+        "No requests for the selected identities in this billing cycle.",
+    };
+  }
   if (scope === "all") {
     return {
       title: "Requests",
@@ -96,9 +121,9 @@ function historyCopy(scope: HistoryScope): {
   }
   return {
     title: "Requests",
-    scopeChip: "Your usage identity",
-    emptySessions: "No sessions for your usage identity in this billing cycle.",
-    emptyRequests: "No requests for your usage identity in this billing cycle.",
+    scopeChip: "All identities on your apps",
+    emptySessions: "No sessions for your apps in this billing cycle.",
+    emptyRequests: "No requests for your apps in this billing cycle.",
   };
 }
 
@@ -150,10 +175,10 @@ function RequestRow({
           {row.externalUserId ? (
             <Link
               href={`/apps/${encodeURIComponent(row.clientId)}/identities/${encodeURIComponent(row.externalUserId)}`}
-              className="block max-w-[10rem] truncate font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
+              className="block max-w-[10rem] font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
               title={row.externalUserId}
             >
-              {row.externalUserId}
+              {truncateMiddle(row.externalUserId, 20)}
             </Link>
           ) : (
             <span className="text-xs text-zinc-600">—</span>
@@ -572,11 +597,13 @@ function HistoryToolbar({
   fromDate,
   toDate,
   rangeActive,
+  identityFilterActive,
   viewMode,
   requests,
   onFromDateChange,
   onToDateChange,
   onClearRange,
+  onClearIdentityFilter,
   onDownloadCsv,
   onViewModeChange,
 }: Readonly<{
@@ -584,11 +611,13 @@ function HistoryToolbar({
   fromDate: string;
   toDate: string;
   rangeActive: boolean;
+  identityFilterActive: boolean;
   viewMode: ViewMode;
   requests: SignedTicketRequestRow[];
   onFromDateChange: (value: string) => void;
   onToDateChange: (value: string) => void;
   onClearRange: () => void;
+  onClearIdentityFilter?: () => void;
   onDownloadCsv: () => void;
   onViewModeChange: (mode: ViewMode) => void;
 }>) {
@@ -598,12 +627,27 @@ function HistoryToolbar({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
           <span
-            className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
-            title="Rows are limited to this identity scope. Change it with the identity filter above."
+            className="inline-flex max-w-full items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
+            title={
+              identityFilterActive
+                ? `Rows are limited to ${copy.scopeChip}. Change it with the Identities filter above.`
+                : "Rows cover every identity on the selected apps. Narrow them with the Identities filter above."
+            }
           >
             <span className="text-zinc-600">Scope</span>
-            {copy.scopeChip}
+            <span className={`truncate ${copy.scopeChipMono ? "font-mono" : ""}`}>
+              {copy.scopeChipMono ? truncateMiddle(copy.scopeChip, 24) : copy.scopeChip}
+            </span>
           </span>
+          {identityFilterActive && onClearIdentityFilter ? (
+            <button
+              type="button"
+              onClick={onClearIdentityFilter}
+              className="text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+            >
+              Show all identities
+            </button>
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1 text-[11px] text-zinc-500">
@@ -753,16 +797,22 @@ export default function SignedTicketRequestHistory({
   clientId,
   clientIds,
   historyScope = "own",
+  externalUserIds,
+  onClearIdentityFilter,
 }: Readonly<{
   /** Public OIDC client_id when scoped to a single app. */
   clientId?: string | null;
   /** Public OIDC client_ids when scoped to a subset of apps. */
   clientIds?: string[] | null;
   /**
-   * `own` — viewer usage subjects only (default).
+   * `own` — apps the viewer owns or administers, every identity (default).
    * `all` — platform-wide history for admins (All Usage tab).
    */
   historyScope?: HistoryScope;
+  /** Identity filter (external_user_id); empty means all identities. */
+  externalUserIds?: string[] | null;
+  /** Resets the page-level Identities filter from inside this panel. */
+  onClearIdentityFilter?: () => void;
 }>) {
   const [viewMode, setViewMode] = useState<ViewMode>("session");
   const [sessions, setSessions] = useState<SignedTicketSessionRow[]>([]);
@@ -775,7 +825,18 @@ export default function SignedTicketRequestHistory({
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-  const copy = historyCopy(historyScope);
+  const resolvedIdentityIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          (externalUserIds ?? []).map((id) => id.trim()).filter(Boolean),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [externalUserIds],
+  );
+  const identityIdsKey = resolvedIdentityIds.join(",");
+
+  const copy = historyCopy(historyScope, resolvedIdentityIds);
   // Both bounds are required together; the API rejects a half-open range.
   const rangeActive = Boolean(fromDate && toDate);
 
@@ -805,6 +866,9 @@ export default function SignedTicketRequestHistory({
       for (const id of resolvedClientIds) {
         params.append("clientId", id);
       }
+      for (const id of resolvedIdentityIds) {
+        params.append("externalUserId", id);
+      }
 
       const res = await fetch(`/api/v1/me/usage/requests?${params.toString()}`, {
         method: "GET",
@@ -827,7 +891,7 @@ export default function SignedTicketRequestHistory({
         mode,
       };
     },
-    [resolvedClientIds, historyScope, fromDate, toDate],
+    [resolvedClientIds, resolvedIdentityIds, historyScope, fromDate, toDate],
   );
 
   useEffect(() => {
@@ -864,7 +928,15 @@ export default function SignedTicketRequestHistory({
     return () => {
       cancelled = true;
     };
-  }, [fetchPage, clientIdsKey, historyScope, viewMode, fromDate, toDate]);
+  }, [
+    fetchPage,
+    clientIdsKey,
+    identityIdsKey,
+    historyScope,
+    viewMode,
+    fromDate,
+    toDate,
+  ]);
 
   async function onLoadMore() {
     if (!nextCursor || loadingMore) {
@@ -901,6 +973,7 @@ export default function SignedTicketRequestHistory({
         fromDate={fromDate}
         toDate={toDate}
         rangeActive={rangeActive}
+        identityFilterActive={resolvedIdentityIds.length > 0}
         viewMode={viewMode}
         requests={requests}
         onFromDateChange={setFromDate}
@@ -909,6 +982,7 @@ export default function SignedTicketRequestHistory({
           setFromDate("");
           setToDate("");
         }}
+        onClearIdentityFilter={onClearIdentityFilter}
         onDownloadCsv={downloadCsv}
         onViewModeChange={setViewMode}
       />
