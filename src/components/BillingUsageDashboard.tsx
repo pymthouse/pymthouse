@@ -22,6 +22,10 @@ import type {
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
+import {
+  deriveFilteredView,
+  type ChartDimension,
+} from "@/lib/usage/dashboard-filtered-view";
 
 /** Client-safe dashboard payload (bigints as strings). */
 type BillingUsageDashboardClientPayload = {
@@ -46,9 +50,6 @@ type BillingUsageDashboardClientPayload = {
 };
 
 type UsageTab = "mine" | "all";
-
-/** Chart series split: app × pipeline/model (default) or app × identity. */
-type ChartDimension = "pipeline" | "identity";
 
 type LoadState =
   | { status: "loading" }
@@ -104,90 +105,6 @@ function UsageLoadingShell({
       </div>
     </div>
   );
-}
-
-function deriveFilteredView(
-  data: BillingUsageDashboardClientPayload,
-  selectedPublicClientIds: string[],
-  historyScope: "own" | "all",
-  chartDimension: ChartDimension,
-  selectedIdentityIds: string[],
-  allIdentityIds: string[],
-) {
-  const allIds = data.orderedApps.map((a) => a.publicClientId);
-  const allSelected =
-    allIds.length > 0 && selectedPublicClientIds.length === allIds.length;
-  const noneSelected = selectedPublicClientIds.length === 0;
-  const selectedSet = new Set(selectedPublicClientIds);
-
-  const allIdentitiesSelected =
-    allIdentityIds.length === 0 ||
-    selectedIdentityIds.length === allIdentityIds.length;
-  const identitySet = new Set(selectedIdentityIds);
-
-  const baseSeries =
-    chartDimension === "identity" ? data.chartSeriesByIdentity : data.chartSeries;
-
-  let filteredSeries = baseSeries;
-  if (!allSelected) {
-    filteredSeries = noneSelected
-      ? []
-      : baseSeries.filter((s) => selectedSet.has(s.appId));
-  }
-  // Identity series carry the identity in `jobType`, so the filter applies only
-  // to that dimension; pipeline/model series stay app-filtered.
-  if (chartDimension === "identity" && !allIdentitiesSelected) {
-    filteredSeries = filteredSeries.filter((s) => identitySet.has(s.jobType));
-  }
-
-  let filteredAppUsage = data.appUsage;
-  if (!allSelected) {
-    filteredAppUsage = noneSelected
-      ? []
-      : data.appUsage.filter((e) => selectedSet.has(e.app.publicClientId));
-  }
-  if (!allIdentitiesSelected) {
-    filteredAppUsage = filteredAppUsage
-      .map((entry) => {
-        const byUser = entry.byUser.filter((u) =>
-          identitySet.has(u.externalUserId ?? u.endUserId),
-        );
-        const requestCount = byUser.reduce((sum, u) => sum + u.requestCount, 0);
-        const networkFeeUsdMicros = byUser
-          .reduce((sum, u) => sum + BigInt(u.networkFeeUsdMicros || "0"), 0n)
-          .toString();
-        return {
-          ...entry,
-          byUser,
-          requestCount,
-          networkFeeUsdMicros,
-          endUserBillableUsdMicros: networkFeeUsdMicros,
-        };
-      })
-      .filter((entry) => entry.byUser.length > 0);
-  }
-  filteredAppUsage = filteredAppUsage.filter((e) => e.requestCount > 0);
-
-  // Admin All Usage + all apps selected: omit clientId filter so request
-  // history uses the unrestricted platform event list (avoids a huge id-set
-  // post-filter). Session list discovers apps from those events server-side.
-  // Subset selection still passes the dropdown ids. Own scope unchanged.
-  let historyClientIds: string[];
-  if (allSelected && historyScope === "all") {
-    historyClientIds = [];
-  } else if (allSelected) {
-    historyClientIds = data.orderedApps.map((a) => a.publicClientId);
-  } else {
-    historyClientIds = selectedPublicClientIds;
-  }
-
-  return {
-    filteredSeries,
-    filteredAppUsage,
-    historyClientIds,
-    // Request history covers every identity unless the filter narrows it.
-    historyIdentityIds: allIdentitiesSelected ? [] : selectedIdentityIds,
-  };
 }
 
 function ActiveSubscriptionSummary({
@@ -494,6 +411,10 @@ function BillingPeriodPanel({
               label="Identities"
               emptyLabel="No identities"
               allLabel="All identities"
+              searchable
+              searchPlaceholder="Search identities…"
+              searchMatch="startsWith"
+              maxLabelLength={24}
             />
           ) : null}
         </div>

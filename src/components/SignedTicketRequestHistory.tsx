@@ -16,6 +16,7 @@ import {
   formatUsdMicrosString,
   formatUsdMicrosSummary,
 } from "@/lib/format-usd-micros";
+import { truncateMiddle } from "@/lib/truncate-middle";
 import {
   buildRequestsCsv,
   buildRequestsCsvFilename,
@@ -174,10 +175,10 @@ function RequestRow({
           {row.externalUserId ? (
             <Link
               href={`/apps/${encodeURIComponent(row.clientId)}/identities/${encodeURIComponent(row.externalUserId)}`}
-              className="block max-w-[10rem] truncate font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
+              className="block max-w-[10rem] font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
               title={row.externalUserId}
             >
-              {row.externalUserId}
+              {truncateMiddle(row.externalUserId, 20)}
             </Link>
           ) : (
             <span className="text-xs text-zinc-600">—</span>
@@ -635,7 +636,7 @@ function HistoryToolbar({
           >
             <span className="text-zinc-600">Scope</span>
             <span className={`truncate ${copy.scopeChipMono ? "font-mono" : ""}`}>
-              {copy.scopeChip}
+              {copy.scopeChipMono ? truncateMiddle(copy.scopeChip, 24) : copy.scopeChip}
             </span>
           </span>
           {identityFilterActive && onClearIdentityFilter ? (
