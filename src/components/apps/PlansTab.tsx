@@ -14,7 +14,10 @@ import {
   pickerValuesFromExcludedDocument,
 } from "@/lib/discovery-allowlist";
 import { planDisplayName } from "@/lib/network-default-plan-display";
-import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
+import {
+  isStarterPlanEnabled,
+  planDisplayNameWithStarter,
+} from "@/lib/starter-default-plan-display";
 import {
   markupPercentToRetailRateUsd,
   retailRateUsdPerMillion,
@@ -1334,6 +1337,14 @@ function NetworkPricePlanCard({
 
 // ── Starter plan card ─────────────────────────────────────────────────────────
 
+function starterPlanDisplayName(plan: PlanRow): string {
+  return planDisplayNameWithStarter({
+    name: plan.name,
+    isNetworkDefault: false,
+    isStarterDefault: true,
+  });
+}
+
 function StarterPlanCard({
   appId,
   plan,
@@ -1345,7 +1356,11 @@ function StarterPlanCard({
   canEdit: boolean;
   onSaved: () => void | Promise<void>;
 }>) {
+  const enabled = isStarterPlanEnabled(plan.status);
+  const displayName = starterPlanDisplayName(plan);
   const [expanded, setExpanded] = useState(false);
+  const [name, setName] = useState(displayName);
+  const [enabledDraft, setEnabledDraft] = useState(enabled);
   const [includedUsdDisplay, setIncludedUsdDisplay] = useState(() =>
     usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "0"),
   );
@@ -1355,13 +1370,20 @@ function StarterPlanCard({
 
   useEffect(() => {
     if (expanded) {
+      setName(starterPlanDisplayName(plan));
+      setEnabledDraft(isStarterPlanEnabled(plan.status));
       setIncludedUsdDisplay(usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "0"));
       setError(null);
     }
-  }, [expanded, plan.includedUsdMicros]);
+  }, [expanded, plan]);
 
   const save = async () => {
     if (!canEdit) return;
+    const nameCheck = validateCustomPlanName(name);
+    if (!nameCheck.ok) {
+      setError(nameCheck.error);
+      return;
+    }
     const micros = usdCentsDisplayToMicros(includedUsdDisplay);
     if (micros == null) {
       setError("Allowance must be a valid dollar amount (e.g. 5.00)");
@@ -1373,7 +1395,11 @@ function StarterPlanCard({
       const res = await fetch(`/api/v1/apps/${appId}/starter-plan`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ includedUsdMicros: micros }),
+        body: JSON.stringify({
+          name: nameCheck.value,
+          status: enabledDraft ? "active" : "draft",
+          includedUsdMicros: micros,
+        }),
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
@@ -1399,16 +1425,22 @@ function StarterPlanCard({
   };
 
   const collapsedEditable = canEdit && !expanded;
+  const cardBorder = enabled
+    ? "border-sky-500/25"
+    : "border-zinc-700";
+  const cardHover = collapsedEditable
+    ? enabled
+      ? "hover:border-sky-500/40 hover:bg-zinc-900/50"
+      : "hover:border-zinc-600 hover:bg-zinc-900/50"
+    : "";
 
   return (
     <article
-      className={`group relative rounded-xl border border-sky-500/25 bg-zinc-900/40 p-5 space-y-3 transition-colors ${
-        collapsedEditable ? "hover:border-sky-500/40 hover:bg-zinc-900/50" : ""
-      }`}
+      className={`group relative rounded-xl border bg-zinc-900/40 p-5 space-y-3 transition-colors ${cardBorder} ${cardHover}`}
     >
       <CollapsedPlanCardHitArea
         enabled={collapsedEditable}
-        ariaLabel="Edit Starter allowance"
+        ariaLabel={`Edit ${displayName} free plan`}
         onActivate={() => setExpanded(true)}
       />
       <div
@@ -1418,21 +1450,23 @@ function StarterPlanCard({
       >
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
-            {planDisplayNameWithStarter({
-              name: plan.name,
-              isNetworkDefault: false,
-              isStarterDefault: true,
-            })}
+            {displayName}
             <span className="text-[10px] font-medium uppercase tracking-wide text-sky-400/90 border border-sky-500/30 rounded px-1.5 py-0.5">
               Free tier
             </span>
+            {!enabled && (
+              <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 border border-zinc-600 rounded px-1.5 py-0.5">
+                Disabled
+              </span>
+            )}
           </h3>
           <p className="text-xs text-zinc-500 mt-1">
-            Included usage for new end users via OpenMeter subscription entitlements (network
-            pass-through pricing)
+            {enabled
+              ? "Included usage for new end users via OpenMeter subscription entitlements (network pass-through pricing)"
+              : "Disabled — new end users are not enrolled. Existing subscribers keep this plan until they change."}
           </p>
           {!expanded && plan.includedUsdMicros && (
-            <p className="text-sm text-sky-300/90 mt-2">
+            <p className={`text-sm mt-2 ${enabled ? "text-sky-300/90" : "text-zinc-400"}`}>
               {formatUsdMicrosDisplay(plan.includedUsdMicros)} included per billing period
             </p>
           )}
@@ -1441,8 +1475,14 @@ function StarterPlanCard({
           )}
         </div>
         {collapsedEditable && (
-          <span className="shrink-0 text-sm font-medium text-sky-400 group-hover:text-sky-300">
-            Edit allowance
+          <span
+            className={`shrink-0 text-sm font-medium ${
+              enabled
+                ? "text-sky-400 group-hover:text-sky-300"
+                : "text-zinc-400 group-hover:text-zinc-300"
+            }`}
+          >
+            Edit
           </span>
         )}
       </div>
@@ -1456,6 +1496,50 @@ function StarterPlanCard({
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
           <div>
+            <label htmlFor="starter-plan-name" className="mb-1 block text-sm text-zinc-300">
+              Plan name
+            </label>
+            <input
+              id="starter-plan-name"
+              value={name}
+              onChange={(e) =>
+                setName(
+                  sanitizePlanNameInput(e.target.value).slice(0, CUSTOM_PLAN_NAME_MAX_LENGTH),
+                )
+              }
+              placeholder="Starter"
+              maxLength={CUSTOM_PLAN_NAME_MAX_LENGTH}
+              disabled={!canEdit}
+              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              Shown to end users on invoices and the billing portal. Letters, numbers, spaces,
+              hyphens, underscores, and periods only (max {CUSTOM_PLAN_NAME_MAX_LENGTH} chars).
+            </p>
+          </div>
+          <label
+            htmlFor="starter-plan-enabled"
+            className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3"
+          >
+            <input
+              id="starter-plan-enabled"
+              type="checkbox"
+              checked={enabledDraft}
+              onChange={(e) => setEnabledDraft(e.target.checked)}
+              disabled={!canEdit}
+              className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-sky-500 focus:ring-sky-500/40 shrink-0 disabled:opacity-50"
+            />
+            <span>
+              <span className="block text-sm font-medium text-zinc-200">
+                Offer this free plan to new end users
+              </span>
+              <span className="block text-xs text-zinc-500 mt-0.5">
+                When off, new users are not auto-enrolled and cannot subscribe to this plan.
+                Existing subscribers keep it until they change.
+              </span>
+            </span>
+          </label>
+          <div>
             <label
               htmlFor="starter-included-usd"
               className="mb-1 flex items-center gap-1.5 text-sm text-zinc-300"
@@ -1466,7 +1550,7 @@ function StarterPlanCard({
                 wide
                 label={
                   "Maps to OpenMeter rate-card discounts.usage (metered entitlement grant).\n" +
-                  "Free included USD micros each cycle for new end users on Starter."
+                  "Free included USD micros each cycle for new end users on this plan."
                 }
               />
             </label>
@@ -2121,7 +2205,7 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
               blockedConcreteKeys={blockedConcreteKeys}
               replacementOptions={[
                 ...(starterPlan
-                  ? [{ id: starterPlan.id, name: starterPlan.name }]
+                  ? [{ id: starterPlan.id, name: starterPlanDisplayName(starterPlan) }]
                   : []),
                 ...customPlans
                   .filter((p) => p.id !== plan.id && p.status !== "phase_out")
