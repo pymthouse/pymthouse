@@ -231,6 +231,23 @@ curl -sS \
 - Requested scope must be a subset of the **public app client’s** allowed scopes (see product-specific validation in code).
 - `admin` is explicitly rejected.
 - Default scope when omitted: `sign:job`.
+- Lifetimes are **not** the interactive OIDC TTLs: access is 15 minutes, refresh is 30 days. `OIDC_ACCESS_TOKEN_TTL_SECONDS` / `OIDC_REFRESH_TOKEN_TTL_SECONDS` do not apply here.
+
+---
+
+## OIDC access and refresh TTLs
+
+Interactive OIDC tokens (authorization code, device flow, DCR — e.g. Claude Desktop after MCP connect) use node-oidc-provider TTLs:
+
+| Token | Env | Default |
+| --- | --- | --- |
+| Access JWT | `OIDC_ACCESS_TOKEN_TTL_SECONDS` | `3600` (1 hour) |
+| Refresh (rotated on use) | `OIDC_REFRESH_TOKEN_TTL_SECONDS` | `7776000` (90 days) |
+| Grant / Session | follow refresh | same as refresh |
+
+Keep access at 1 hour unless you have a reason to shorten it. Lengthening access only grows the stolen-token window; clients should refresh. Grant and Session must stay at least as long as refresh or a rotated refresh dies when the grant expires.
+
+Signer session JWTs from RFC 8693 exchange stay **5 minutes** and are not env-driven.
 
 ---
 
