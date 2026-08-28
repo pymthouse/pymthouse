@@ -259,7 +259,7 @@ export default function AppFilterDropdown({
         className="inline-flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-zinc-800/80"
       >
         <span className="text-zinc-500">{label}</span>
-        <span className={`max-w-[12rem] truncate ${maxLabelLength ? "font-mono" : ""}`}>
+        <span className={`max-w-[12rem] ${maxLabelLength ? "font-mono whitespace-nowrap" : "truncate"}`}>
           {buttonLabel}
         </span>
         <svg
