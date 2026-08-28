@@ -152,4 +152,15 @@ test("resolveAppUserSubscriptionPlanName uses starter/network display names", ()
     }),
     "Network Discovery",
   );
+  assert.equal(
+    resolveAppUserSubscriptionPlanName({
+      plan: {
+        ...paidPlan,
+        name: "Free Trial",
+        isStarterDefault: true,
+      },
+      planKey: null,
+    }),
+    "Free Trial",
+  );
 });

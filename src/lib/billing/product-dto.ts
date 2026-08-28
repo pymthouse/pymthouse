@@ -9,6 +9,7 @@ import {
   isPayPerUsePlanType,
   resolvedPayPerUseBehavior,
 } from "./pay-per-use-threshold";
+import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
 
 export function deriveSyncState(plan: ResolvedPlanRow["plan"]): BillingSyncState {
   if (plan.type === "free" || plan.isNetworkDefault) {
@@ -82,7 +83,7 @@ export function toBillingProduct(input: {
   return {
     id: plan.id,
     clientId: input.clientId,
-    name: plan.name,
+    name: planDisplayNameWithStarter(plan),
     type: plan.type,
     status: plan.status,
     priceAmount: plan.priceAmount,
@@ -112,7 +113,7 @@ export function toPlanApiRow(input: {
   const base: Record<string, unknown> = {
     id: plan.id,
     clientId: input.clientId,
-    name: plan.name,
+    name: planDisplayNameWithStarter(plan),
     type: plan.type,
     priceAmount: plan.priceAmount,
     priceCurrency: plan.priceCurrency,

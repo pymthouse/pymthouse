@@ -6,12 +6,17 @@ import { developerApps, oidcClients, plans } from "@/db/schema";
 import {
   STARTER_DEFAULT_PLAN_INTERNAL_NAME,
   defaultStarterIncludedUsdMicros,
+  planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
 
 export {
   STARTER_DEFAULT_PLAN_DISPLAY_NAME,
   STARTER_DEFAULT_PLAN_INTERNAL_NAME,
+  STARTER_PLAN_DISABLED_STATUS,
+  STARTER_PLAN_ENABLED_STATUS,
   defaultStarterIncludedUsdMicros,
+  isNameTakenByStarter,
+  isStarterPlanEnabled,
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
 
@@ -83,6 +88,38 @@ export async function selectStarterDefaultPlan(
     return selectStarterDefaultPlanByClientId(clientId.trim(), executor);
   }
   return undefined;
+}
+
+export async function findConflictingPlanName(
+  clientId: string,
+  name: string,
+  exceptPlanId?: string,
+  executor: Pick<typeof db, "select"> = db,
+): Promise<{ id: string; name: string } | undefined> {
+  const plansClientId = await resolveDeveloperAppIdForPlans(clientId, executor);
+  const load = (ownerId: string) =>
+    executor
+      .select({
+        id: plans.id,
+        name: plans.name,
+        isNetworkDefault: plans.isNetworkDefault,
+        isStarterDefault: plans.isStarterDefault,
+      })
+      .from(plans)
+      .where(eq(plans.clientId, ownerId));
+  const rows = [...(await load(plansClientId))];
+  if (plansClientId !== clientId.trim()) {
+    rows.push(...(await load(clientId.trim())));
+  }
+  return rows.find((row) => {
+    if (exceptPlanId && row.id === exceptPlanId) {
+      return false;
+    }
+    return (
+      row.name === name ||
+      planDisplayNameWithStarter(row) === name
+    );
+  });
 }
 
 export async function getOrCreateStarterPlan(

@@ -4,6 +4,7 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { isStarterPlanEnabled } from "@/lib/starter-default-plan-display";
 import {
   applyFreeBillingProfileToCustomer,
   getAppBillingConfig,
@@ -55,6 +56,10 @@ function getStarterPlanSyncedCache() {
 
 export function resetStarterPlanSyncedCacheForTests(): void {
   starterPlanSyncedCache = null;
+}
+
+export function invalidateStarterPlanSyncedCache(clientId: string): void {
+  getStarterPlanSyncedCache().delete(clientId);
 }
 
 export async function ensureStarterPlanSynced(clientId: string): Promise<typeof plans.$inferSelect> {
@@ -413,6 +418,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   openmeterSubscriptionId: string | null;
   planId: string;
   created: boolean;
+  skipped: boolean;
 }> {
   if (!isHostedAdminClientAvailable()) {
     const { resolveOpenMeterBillingIdentity } = await import(
@@ -427,6 +433,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       openmeterSubscriptionId: null,
       planId: starter.id,
       created: false,
+      skipped: !isStarterPlanEnabled(starter.status),
     };
   }
 
@@ -459,6 +466,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       openmeterSubscriptionId: ensured.openmeterSubscriptionId,
       planId: starter.id,
       created: ensured.created,
+      skipped: false,
     };
   }
 
@@ -501,6 +509,14 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   let created = false;
   let activeStarter = starter;
   if (!omSubscription) {
+    if (!isStarterPlanEnabled(starter.status)) {
+      return {
+        openmeterSubscriptionId: null,
+        planId: starter.id,
+        created: false,
+        skipped: true,
+      };
+    }
     // Profile recovery on Stripe-setup 409 lives in
     // createStarterSubscriptionWithBillingRecovery (Custom Invoicing for
     // merchant apps; sandbox free profile otherwise).
@@ -526,5 +542,6 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     openmeterSubscriptionId: omSubscription.id,
     planId: activeStarter.id,
     created,
+    skipped: false,
   };
 }

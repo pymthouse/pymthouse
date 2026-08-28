@@ -23,7 +23,7 @@ import {
   defaultRetailRateUsd,
   parseRetailRateUsd,
 } from "@/lib/plan-pricing";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { defaultStarterIncludedUsdMicros, planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureCapabilityOpenMeterFeature } from "./capability-features";
 import {
@@ -268,14 +268,14 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
         useKonnectBody
           ? buildKonnectFlatFeeRateCard({
               key: "subscription_fee",
-              name: `${toOpenMeterDisplayName(plan.name)} subscription`,
+              name: `${toOpenMeterDisplayName(planDisplayNameWithStarter(plan))} subscription`,
               amount: flatAmount,
               billingCadence,
             })
           : {
               type: "flat_fee",
               key: "subscription_fee",
-              name: `${toOpenMeterDisplayName(plan.name)} subscription`,
+              name: `${toOpenMeterDisplayName(planDisplayNameWithStarter(plan))} subscription`,
               billingCadence,
               price: {
                 type: "flat",
@@ -312,7 +312,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
   }
 
   const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
-  const planName = toOpenMeterDisplayName(plan.name);
+  const planName = toOpenMeterDisplayName(planDisplayNameWithStarter(plan));
   const currency = (plan.priceCurrency || "USD").toUpperCase() as "USD";
 
   if (useKonnectBody) {
@@ -394,7 +394,15 @@ export async function verifyOpenMeterPlanId(
 function resolveActivePlanClientId(
   plan: typeof plans.$inferSelect | undefined,
 ): { ok: true; clientId: string } | { ok: false; error: string } {
-  if (plan?.status !== "active") {
+  if (!plan) {
+    return { ok: false, error: "Plan not active" };
+  }
+  // Starter may be `draft` (disabled for new users) while existing
+  // subscribers still need name/allowance updates published to OpenMeter.
+  const syncable =
+    plan.status === "active" ||
+    (plan.isStarterDefault && plan.status === "draft");
+  if (!syncable) {
     return { ok: false, error: "Plan not active" };
   }
   // Platform-scoped plans (Owner Starter) have no owning app and are synced by

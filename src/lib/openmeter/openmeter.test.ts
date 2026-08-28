@@ -1797,6 +1797,7 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   });
 
   assert.ok(omPlan);
+  assert.equal(omPlan.name, "Starter");
   const phase = omPlan.phases[0];
   assert.ok(phase);
   const starterCards = rateCardsFromPlanPhase(phase);
