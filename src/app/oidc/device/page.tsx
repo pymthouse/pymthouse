@@ -7,7 +7,7 @@ import { resolveHostContext } from "@/lib/oidc/host-resolution";
 import { getInitiateLoginUriForDeviceFlow } from "@/lib/oidc/clients";
 import { SqliteAdapter } from "@/lib/oidc/adapter";
 import { normalizeUserCode } from "@/lib/oidc/device";
-import { isDeviceCodeBound } from "@/lib/oidc/device-approval";
+import { isDeviceCodeBound, isDeviceCodeDenied } from "@/lib/oidc/device-approval";
 import {
   buildDeviceFlowTargetLinkUri,
   issuerMatchesExpected,
@@ -20,6 +20,7 @@ type SearchParams = Record<string, string | string[] | undefined>;
 type DeviceCodePageLookup = {
   clientId?: string;
   bound: boolean;
+  denied: boolean;
 };
 
 function clientIdFromDevicePayload(
@@ -50,13 +51,14 @@ async function lookupDeviceCodeForPage(
         return {
           clientId: clientIdFromDevicePayload(record) ?? clientIdParam,
           bound: isDeviceCodeBound(record),
+          denied: isDeviceCodeDenied(record),
         };
       }
     } catch {
       /* ignore */
     }
   }
-  return { clientId: clientIdParam, bound: false };
+  return { clientId: clientIdParam, bound: false, denied: false };
 }
 
 function DeviceApprovedPanel({
@@ -86,6 +88,33 @@ function DeviceApprovedPanel({
   );
 }
 
+function DeviceDeniedPanel({
+  brandName,
+}: {
+  brandName: string;
+}) {
+  return (
+    <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+      <div className="max-w-md w-full border border-zinc-800 bg-zinc-900/60 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-black/30">
+        <div className="inline-flex items-center rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-rose-300">
+          Device Authorization
+        </div>
+        <h1 className="text-2xl font-semibold text-zinc-100 mt-3">
+          Device denied
+        </h1>
+        <p className="text-sm text-zinc-400 mt-2">
+          This authorization request was denied. Start a new device sign-in
+          from the app if you still need access.
+        </p>
+        <p className="text-xs text-zinc-600 text-center mt-6">
+          Identity powered by{" "}
+          <span className="text-zinc-500">{brandName}</span>
+        </p>
+      </div>
+    </main>
+  );
+}
+
 export default async function DeviceVerificationPage({
   searchParams,
 }: Readonly<{
@@ -104,7 +133,11 @@ export default async function DeviceVerificationPage({
     typeof params.login_hint === "string" ? params.login_hint : undefined;
 
   const expectedIssuer = getIssuer();
-  const { clientId: authoritativeClientId, bound: deviceAlreadyBound } =
+  const {
+    clientId: authoritativeClientId,
+    bound: deviceAlreadyBound,
+    denied: deviceAlreadyDenied,
+  } =
     await lookupDeviceCodeForPage(userCode, clientIdParam);
 
   // Bound DeviceCodes must never re-federate — this is the durable guard that
@@ -112,6 +145,13 @@ export default async function DeviceVerificationPage({
   if (deviceAlreadyBound) {
     return (
       <DeviceApprovedPanel brandName={hostContext.branding.displayName} />
+    );
+  }
+
+  // Denied DeviceCodes are also terminal — do not re-federate or re-prompt.
+  if (deviceAlreadyDenied) {
+    return (
+      <DeviceDeniedPanel brandName={hostContext.branding.displayName} />
     );
   }
 
