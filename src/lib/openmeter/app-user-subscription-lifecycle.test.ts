@@ -32,6 +32,9 @@ function sub(partial: Partial<OpenMeterSubscriptionView> & { id: string }): Open
   };
 }
 
+/** Occupying cancel-at-period-end must be after Date.now(); keep this far-future. */
+const OCCUPYING_UNTIL = "2099-01-01T00:00:00.000Z";
+
 test("cancelAppUserSubscription rejects without confirm", async () => {
   await assert.rejects(
     () =>
@@ -278,7 +281,7 @@ test("resolveAppUserResumeTarget prefers canceled paid, else live paid + schedul
         id: "paid_canceled",
         planKey: "paid",
         status: "canceled",
-        activeTo: "2026-09-01T00:00:00.000Z",
+        activeTo: OCCUPYING_UNTIL,
       }),
     ],
     "app_starter",
@@ -314,7 +317,7 @@ test("deriveAppUserPendingCancel returns canceled paid row", () => {
         id: "paid_canceled",
         planKey: "paid",
         status: "canceled",
-        activeTo: "2026-09-01T00:00:00.000Z",
+        activeTo: OCCUPYING_UNTIL,
       }),
       planId: "local_plan",
       planName: "Pro",
@@ -324,7 +327,7 @@ test("deriveAppUserPendingCancel returns canceled paid row", () => {
       planId: "local_plan",
       planKey: "paid",
       planName: "Pro",
-      effectiveAt: "2026-09-01T00:00:00.000Z",
+      effectiveAt: OCCUPYING_UNTIL,
     },
   );
 });
@@ -336,7 +339,7 @@ test("deriveAppUserPendingCancel surfaces cancel-at-period-end Starter", () => {
         id: "starter_canceled",
         planKey: "app_starter",
         status: "canceled",
-        activeTo: "2026-09-07T17:35:18.109Z",
+        activeTo: OCCUPYING_UNTIL,
       }),
       planId: "starter_local",
       planName: "Starter",
@@ -346,7 +349,7 @@ test("deriveAppUserPendingCancel surfaces cancel-at-period-end Starter", () => {
       planId: "starter_local",
       planKey: "app_starter",
       planName: "Starter",
-      effectiveAt: "2026-09-07T17:35:18.109Z",
+      effectiveAt: OCCUPYING_UNTIL,
     },
   );
 });
@@ -362,7 +365,7 @@ test("deriveAppUserPendingCancel dates the banner from the enriched window", () 
         planKey: "a6c95d934_plan_397fcf2f",
         status: "canceled",
         activeFrom: "2026-08-06T23:02:17.378589Z",
-        activeTo: "2026-09-06T23:02:17.378589Z",
+        activeTo: OCCUPYING_UNTIL,
       }),
       planId: "397fcf2f",
       planName: "Pay as you go",
@@ -372,7 +375,7 @@ test("deriveAppUserPendingCancel dates the banner from the enriched window", () 
       planId: "397fcf2f",
       planKey: "a6c95d934_plan_397fcf2f",
       planName: "Pay as you go",
-      effectiveAt: "2026-09-06T23:02:17.378589Z",
+      effectiveAt: OCCUPYING_UNTIL,
     },
   );
 });
@@ -411,13 +414,13 @@ test("resolveAppUserResumeTarget resumes CAPE primary when a scheduled successor
       planKey: "paid",
       status: "canceled",
       activeFrom: "2026-08-08T03:00:31.842771Z",
-      activeTo: "2026-09-08T03:00:31.842771Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
     sub({
       id: "starter_scheduled",
       planKey: "app_starter",
       status: "scheduled",
-      activeFrom: "2026-09-08T03:00:31.842771Z",
+      activeFrom: OCCUPYING_UNTIL,
     }),
     sub({ id: "superseded", planKey: "app_starter", status: "inactive" }),
   ];
@@ -439,13 +442,13 @@ test("resolveAppUserResumeTarget resumes CAPE when scheduled successor is paid",
       planKey: "paid_a",
       status: "canceled",
       activeFrom: "2026-08-11T00:35:58.500843Z",
-      activeTo: "2026-09-10T23:08:53.491143Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
     sub({
       id: "sched_paid_b",
       planKey: "paid_b",
       status: "scheduled",
-      activeFrom: "2026-09-10T23:08:53.491143Z",
+      activeFrom: OCCUPYING_UNTIL,
     }),
   ];
   const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
@@ -461,7 +464,7 @@ test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable"
     planKey: "paid",
     status: "canceled",
     activeFrom: "2026-08-08T03:00:31.842771Z",
-    activeTo: "2026-09-08T03:00:31.842771Z",
+    activeTo: OCCUPYING_UNTIL,
   });
   const listed = [
     canceled,
@@ -483,7 +486,7 @@ test("resolveAppUserResumeTarget resumes occupying CAPE after paid→paid change
     planKey: "paid_b",
     status: "canceled",
     activeFrom: "2026-08-08T03:00:31.842771Z",
-    activeTo: "2026-09-08T03:00:31.842771Z",
+    activeTo: OCCUPYING_UNTIL,
   });
   const listed = [
     sub({ id: "paid_a_ended", planKey: "paid_a", status: "inactive" }),
@@ -666,13 +669,13 @@ test("resumeAppUserSubscriptionFromList restores when a scheduled successor exis
       id: "paid_cape",
       planKey: "paid",
       status: "canceled",
-      activeTo: "2026-09-01T00:00:00.000Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
     sub({
       id: "sched_starter",
       planKey: "app_starter",
       status: "scheduled",
-      activeFrom: "2026-09-01T00:00:00.000Z",
+      activeFrom: OCCUPYING_UNTIL,
     }),
   ];
 
@@ -706,7 +709,7 @@ test("resumeAppUserSubscriptionFromList unschedules when no successor exists", a
       id: "paid_cape",
       planKey: "paid",
       status: "canceled",
-      activeTo: "2026-09-01T00:00:00.000Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
   ];
 
@@ -748,7 +751,7 @@ test("resumeAppUserSubscriptionFromList falls back to restore on unschedule 409"
       id: "paid_cape",
       planKey: "paid",
       status: "canceled",
-      activeTo: "2026-09-01T00:00:00.000Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
   ];
 
@@ -794,7 +797,7 @@ test("immediateCancelOccupyingCapePaid restores then changes onto Starter", asyn
       id: "paid_cape",
       planKey: "paid",
       status: "canceled",
-      activeTo: "2026-09-01T00:00:00.000Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
     scheduledIds: ["sched_starter"],
     clientId: "app_missing_plans_ok",
