@@ -4,7 +4,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
 import { appBillingConfig, developerApps, oidcClients, plans } from "@/db/schema";
-import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
+import { calendarMonthBoundsUtc, resolveBillingCycle } from "@/lib/billing-utils";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   getHostedAdminClient,
@@ -703,6 +703,7 @@ export async function listOwnerActiveSubscriptions(
   options?: Readonly<{
     ownedApps?: OwnedApp[];
     ownerWalletSubjects?: string[];
+    cycle?: { start: string; end: string };
   }>,
 ): Promise<OwnerBillingSubscriptionRow[]> {
   const trimmed = userId.trim();
@@ -714,7 +715,7 @@ export async function listOwnerActiveSubscriptions(
   }
 
   const client = getHostedAdminClient();
-  const cycleBounds = calendarMonthBoundsUtc(new Date());
+  const cycleBounds = options?.cycle ?? calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
   const ownedApps = options?.ownedApps ?? (await listOwnedApps(trimmed));
   const ownerWalletSubjects =
@@ -792,6 +793,7 @@ export async function listOwnerActiveSubscriptions(
  */
 export async function getOwnerBillingData(
   rawUserId?: string,
+  options?: Readonly<{ cycleKey?: string | null }>,
 ): Promise<OwnerBillingResult> {
   let userId = rawUserId?.trim() ?? "";
   if (!userId) {
@@ -807,8 +809,8 @@ export async function getOwnerBillingData(
     return { ok: false, reason: "no_session" };
   }
 
-  const cycleBounds = calendarMonthBoundsUtc(new Date());
-  const cycle = { start: cycleBounds.start, end: cycleBounds.end };
+  const selectedCycle = resolveBillingCycle(options?.cycleKey);
+  const cycle = { start: selectedCycle.start, end: selectedCycle.end };
 
   if (!requireOpenMeterForUsageReads() || !isHostedAdminClientAvailable()) {
     return { ok: false, reason: "openmeter_unconfigured" };
@@ -866,6 +868,7 @@ export async function getOwnerBillingData(
         listOwnerActiveSubscriptions(userId, {
           ownedApps,
           ownerWalletSubjects,
+          cycle,
         }),
         8_000,
         [] as OwnerBillingSubscriptionRow[],

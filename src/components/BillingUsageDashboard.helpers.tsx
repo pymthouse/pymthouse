@@ -82,8 +82,8 @@ export function BillingDashboardHeader({
             ) : null}
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 mt-1">
-            Usage and per-identity breakdown for this application in the current billing
-            cycle.
+            Usage and per-identity breakdown for this application in the selected
+            billing cycle.
           </p>
           {cycleLine}
         </div>
@@ -112,7 +112,8 @@ export function BillingDashboardHeader({
       <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Usage</h1>
       <p className="text-xs sm:text-sm text-zinc-500 mt-1">
         Applications are ordered by requests this billing cycle; apps owned by Test User appear
-        after all others, with per-user billing breakdowns.
+        after all others, with per-user billing breakdowns. Pick a prior month to review
+        closed cycles.
       </p>
       {cycleLine}
     </>

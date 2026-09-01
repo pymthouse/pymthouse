@@ -3,7 +3,10 @@ import { eq, inArray, or } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
-import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import {
+  dateKeysInclusiveUtc,
+  resolveBillingCycle,
+} from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import {
@@ -185,7 +188,7 @@ export type BillingUsageDashboardResult =
 
 export async function getBillingUsageDashboardData(
   filterAppId?: string | null,
-  options?: { ownAppsOnly?: boolean },
+  options?: { ownAppsOnly?: boolean; cycleKey?: string | null },
 ): Promise<BillingUsageDashboardResult> {
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as Record<string, unknown> | undefined;
@@ -307,7 +310,7 @@ export async function getBillingUsageDashboardDataForUser(
   userId: string,
   role: string | undefined,
   filterAppId?: string | null,
-  options?: { ownAppsOnly?: boolean },
+  options?: { ownAppsOnly?: boolean; cycleKey?: string | null },
 ): Promise<BillingUsageDashboardResult> {
   const isAdmin = role === "admin";
   const ownAppsOnly = options?.ownAppsOnly === true;
@@ -330,7 +333,11 @@ export async function getBillingUsageDashboardDataForUser(
     scope = "all";
   }
 
-  const cycleBounds = calendarMonthBoundsUtc(new Date());
+  const selectedCycle = resolveBillingCycle(options?.cycleKey);
+  const cycleBounds = {
+    start: selectedCycle.start,
+    end: selectedCycle.end,
+  };
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
 
   if (!requireOpenMeterForUsageReads()) {
@@ -408,7 +415,7 @@ async function buildOpenMeterBillingDashboard(input: {
   const [omResults, activeSubscriptions, creditAllowance, paymentMethods] =
     await Promise.all([
       queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
-      listOwnerActiveSubscriptions(input.userId).catch((err) => {
+      listOwnerActiveSubscriptions(input.userId, { cycle: input.cycle }).catch((err) => {
         console.warn(
           "billing-usage-dashboard: subscription summary failed",
           err instanceof Error ? err.message : String(err),

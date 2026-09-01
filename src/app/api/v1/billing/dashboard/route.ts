@@ -5,13 +5,15 @@ import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data
 
 /**
  * JSON billing/usage dashboard payload for the Usage page.
- * Query: appId (optional single app), scope=own|all (all = platform-wide for admins).
+ * Query: appId (optional single app), scope=own|all (all = platform-wide for admins),
+ * cycle=YYYY-MM (UTC month; omitted = current month).
  * Bigints are stringified for transport.
  */
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const appId = url.searchParams.get("appId");
   const scopeParam = url.searchParams.get("scope");
+  const cycleKey = url.searchParams.get("cycle");
 
   const session = await getServerSession(authOptions);
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
@@ -22,6 +24,7 @@ export async function GET(request: NextRequest) {
 
   const result = await getBillingUsageDashboardData(appId || undefined, {
     ownAppsOnly: appId ? false : ownAppsOnly,
+    cycleKey,
   });
 
   if (!result.ok) {

@@ -8,6 +8,7 @@ import {
   type LedgerEntryType,
 } from "@/lib/billing/transactions-ledger";
 import { formatBillingUtcDate } from "@/lib/billing-format";
+import { resolveBillingCycle } from "@/lib/billing-utils";
 import {
   formatUsdMicrosExactTitle,
   formatUsdMicrosSummary,
@@ -119,11 +120,32 @@ function LedgerInvoiceDescription({ entry }: Readonly<{ entry: LedgerEntry }>) {
  */
 export default function TransactionsLedger({
   entries,
-}: Readonly<{ entries: LedgerEntry[] }>) {
+  cycle,
+}: Readonly<{
+  entries: LedgerEntry[];
+  cycle?: { start: string; end: string };
+}>) {
+  const selectedCycle = cycle
+    ? resolveBillingCycle(cycle.start.slice(0, 7))
+    : null;
+  const cycleFrom = selectedCycle && !selectedCycle.isCurrent
+    ? selectedCycle.start.slice(0, 10)
+    : "";
+  const cycleTo = selectedCycle && !selectedCycle.isCurrent
+    ? selectedCycle.end.slice(0, 10)
+    : "";
   const [typeFilter, setTypeFilter] = useState<LedgerEntryType | "all">("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(cycleFrom);
+  const [to, setTo] = useState(cycleTo);
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const cycleBoundKey = `${cycleFrom}\0${cycleTo}`;
+  const [prevCycleBoundKey, setPrevCycleBoundKey] = useState(cycleBoundKey);
+  if (prevCycleBoundKey !== cycleBoundKey) {
+    setPrevCycleBoundKey(cycleBoundKey);
+    setFrom(cycleFrom);
+    setTo(cycleTo);
+    setVisible(PAGE_SIZE);
+  }
 
   const filtered = useMemo(
     () =>
@@ -286,7 +308,7 @@ export default function TransactionsLedger({
 
       {hasDerived ? (
         <p className="mt-2 text-[11px] text-zinc-600">
-          Usage rows are derived from metered spend for the current cycle and settle
+          Usage rows are derived from metered spend for the selected cycle and settle
           against the plan allowance before prepaid credits.
         </p>
       ) : null}
