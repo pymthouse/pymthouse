@@ -122,9 +122,17 @@ function IdentityApiKeyCell({
 export default function IdentitiesTable({
   appId,
   identities,
-}: Readonly<{ appId: string; identities: AppIdentityRow[] }>) {
+  cycleKey,
+}: Readonly<{
+  appId: string;
+  identities: AppIdentityRow[];
+  /** UTC `YYYY-MM` when viewing a prior cycle; omitted for the current month. */
+  cycleKey?: string | null;
+}>) {
   const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_SORT);
   const sorted = useMemo(() => sortIdentities(identities, sortKey), [identities, sortKey]);
+  const cycleQuery =
+    cycleKey && cycleKey.trim() ? `?cycle=${encodeURIComponent(cycleKey)}` : "";
 
   if (identities.length === 0) {
     return (
@@ -180,7 +188,7 @@ export default function IdentitiesTable({
             >
               <td className="px-4 py-3 sm:px-5">
                 <Link
-                  href={`/apps/${appId}/identities/${encodeURIComponent(row.externalUserId)}`}
+                  href={`/apps/${appId}/identities/${encodeURIComponent(row.externalUserId)}${cycleQuery}`}
                   className="font-mono text-xs text-zinc-200 hover:text-emerald-400 transition-colors"
                   title={row.externalUserId}
                 >

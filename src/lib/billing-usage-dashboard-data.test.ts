@@ -365,3 +365,32 @@ test("admin All Usage keeps full tenant aggregate on platform default", async (t
     assert.equal(usage.byUser.length, 2);
   });
 });
+
+test("usage dashboard reads the requested UTC billing month", async (t) => {
+  const owned = await seedDeveloperAppWithClient({
+    name: `Cycle ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(owned);
+  });
+
+  __testSetOpenMeterDashboardUsage(owned.clientId, {
+    byUser: [],
+    byPipelineModel: [],
+    byUserPipelineModel: [],
+    byDailyPipeline: [],
+    requestsByDay: new Map(),
+  });
+  t.after(() => __testClearOpenMeterUsageStubs());
+
+  const result = await getBillingUsageDashboardDataForUser(
+    owned.userId,
+    "developer",
+    undefined,
+    { ownAppsOnly: true, cycleKey: "2026-01" },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.data.cycle.start, "2026-01-01T00:00:00.000Z");
+  assert.equal(result.data.cycle.end, "2026-01-31T23:59:59.999Z");
+});

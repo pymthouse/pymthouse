@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
@@ -10,6 +10,7 @@ import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import CostWaterfall from "@/components/billing/CostWaterfall";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
+import BillingCyclePicker from "@/components/billing/BillingCyclePicker";
 import {
   AppUsageSection,
   BillingDashboardHeader,
@@ -22,6 +23,10 @@ import type {
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
+import {
+  BILLING_CYCLE_PARAM,
+  resolveBillingCycle,
+} from "@/lib/billing-utils";
 import {
   deriveFilteredView,
   type ChartDimension,
@@ -237,7 +242,7 @@ function chartEmptyMessage(selectedCount: number): string {
   if (selectedCount === 0) {
     return "Select at least one application to view the chart.";
   }
-  return "No usage in the current billing period yet.";
+  return "No usage in this billing period yet.";
 }
 
 function SignedTicketsBlock({
@@ -248,6 +253,7 @@ function SignedTicketsBlock({
   historyClientIds,
   historyIdentityIds,
   onClearIdentityFilter,
+  cycle,
 }: Readonly<{
   needsSelection: boolean;
   scope: "all" | "single";
@@ -258,6 +264,7 @@ function SignedTicketsBlock({
   /** Identity filter from the Identities dropdown; empty means all. */
   historyIdentityIds: string[];
   onClearIdentityFilter: () => void;
+  cycle: { start: string; end: string };
 }>) {
   if (needsSelection) {
     return (
@@ -277,6 +284,8 @@ function SignedTicketsBlock({
         historyScope={historyScope}
         externalUserIds={historyIdentityIds}
         onClearIdentityFilter={onClearIdentityFilter}
+        from={cycle.start}
+        to={cycle.end}
       />
     </div>
   );
@@ -384,7 +393,7 @@ function BillingPeriodPanel({
 }>) {
   const periodCopy =
     activeTab === "all" && showTabs
-      ? "Platform-wide usage for the current cycle."
+      ? "Platform-wide usage for the selected cycle."
       : "Usage for apps you own or administer.";
   const showMineSubscriptions = activeTab === "mine" || !showTabs;
 
@@ -392,7 +401,7 @@ function BillingPeriodPanel({
     <div className="mb-6 sm:mb-8 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="font-semibold text-zinc-100">This billing period</h3>
+          <h3 className="font-semibold text-zinc-100">Billing period</h3>
           <p className="text-xs text-zinc-500 mt-1">{periodCopy}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -561,6 +570,11 @@ function BillingUsageBody({
     allIdentityIds,
   );
 
+  const cycleKey = cycle.start.slice(0, 7);
+  const cycleQuery = resolveBillingCycle(cycleKey).isCurrent
+    ? ""
+    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`;
+
   return (
     <>
       <div className="mb-6 sm:mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -571,16 +585,19 @@ function BillingUsageBody({
           isOpenMeter={isOpenMeter}
           appId={scope === "single" ? orderedApps[0]?.id : null}
         />
-        {showTabs ? (
-          <div className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5">
-            <TabLink active={activeTab === "mine"} href="/usage">
-              My Usage
-            </TabLink>
-            <TabLink active={activeTab === "all"} href="/usage/all">
-              All Usage
-            </TabLink>
-          </div>
-        ) : null}
+        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+          {showTabs ? (
+            <div className="flex items-center gap-1 rounded-lg bg-black/20 p-0.5">
+              <TabLink active={activeTab === "mine"} href={`/usage${cycleQuery}`}>
+                My Usage
+              </TabLink>
+              <TabLink active={activeTab === "all"} href={`/usage/all${cycleQuery}`}>
+                All Usage
+              </TabLink>
+            </div>
+          ) : null}
+          <BillingCyclePicker />
+        </div>
       </div>
 
       <BillingPeriodPanel
@@ -607,6 +624,7 @@ function BillingUsageBody({
         historyClientIds={derived.historyClientIds}
         historyIdentityIds={derived.historyIdentityIds}
         onClearIdentityFilter={() => setSelectedIdentityIds(allIdentityIds)}
+        cycle={cycle}
       />
 
       <AppUsageList
@@ -640,6 +658,7 @@ export default function BillingUsageDashboard({
   const { data: session, status: authStatus } = useSession();
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
     | string
     | undefined;
@@ -647,6 +666,7 @@ export default function BillingUsageDashboard({
   const showTabs = isAdmin && !filterAppId;
   const wantsAllUsage = !filterAppId && pathname.startsWith("/usage/all");
   const activeTab: UsageTab = showTabs && wantsAllUsage ? "all" : "mine";
+  const cycleKey = resolveBillingCycle(searchParams.get(BILLING_CYCLE_PARAM)).key;
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);
@@ -673,6 +693,10 @@ export default function BillingUsageDashboard({
         params.set("scope", "all");
       } else {
         params.set("scope", "own");
+      }
+      const selectedCycle = resolveBillingCycle(cycleKey);
+      if (!selectedCycle.isCurrent) {
+        params.set(BILLING_CYCLE_PARAM, selectedCycle.key);
       }
       const url = `/api/v1/billing/dashboard?${params.toString()}`;
 
@@ -709,25 +733,34 @@ export default function BillingUsageDashboard({
     return () => {
       cancelled = true;
     };
-  }, [filterAppId, activeTab, retryToken, showTabs]);
+  }, [filterAppId, activeTab, retryToken, showTabs, cycleKey]);
 
   const body = (
     <>
       {fundPanel}
       {state.status === "loading" ? (
         <>
-          {showTabs ? (
-            <div className="mb-4 flex justify-end">
+          <div className="mb-4 flex flex-col items-end gap-3">
+            {showTabs ? (
               <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
-                <TabLink active={activeTab === "mine"} href="/usage">
+                <TabLink active={activeTab === "mine"} href={`/usage${
+                  resolveBillingCycle(cycleKey).isCurrent
+                    ? ""
+                    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`
+                }`}>
                   My Usage
                 </TabLink>
-                <TabLink active={activeTab === "all"} href="/usage/all">
+                <TabLink active={activeTab === "all"} href={`/usage/all${
+                  resolveBillingCycle(cycleKey).isCurrent
+                    ? ""
+                    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`
+                }`}>
                   All Usage
                 </TabLink>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+            <BillingCyclePicker />
+          </div>
           <UsageLoadingShell
             filterAppId={filterAppId}
             showingAll={activeTab === "all"}

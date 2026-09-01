@@ -799,6 +799,8 @@ export default function SignedTicketRequestHistory({
   historyScope = "own",
   externalUserIds,
   onClearIdentityFilter,
+  from,
+  to,
 }: Readonly<{
   /** Public OIDC client_id when scoped to a single app. */
   clientId?: string | null;
@@ -813,7 +815,12 @@ export default function SignedTicketRequestHistory({
   externalUserIds?: string[] | null;
   /** Resets the page-level Identities filter from inside this panel. */
   onClearIdentityFilter?: () => void;
+  /** Optional cycle bounds (ISO). Seeds the date range and API window. */
+  from?: string | null;
+  to?: string | null;
 }>) {
+  const cycleFromKey = from?.slice(0, 10) ?? "";
+  const cycleToKey = to?.slice(0, 10) ?? "";
   const [viewMode, setViewMode] = useState<ViewMode>("session");
   const [sessions, setSessions] = useState<SignedTicketSessionRow[]>([]);
   const [requests, setRequests] = useState<SignedTicketRequestRow[]>([]);
@@ -822,8 +829,17 @@ export default function SignedTicketRequestHistory({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(cycleFromKey);
+  const [toDate, setToDate] = useState(cycleToKey);
+  const [prevCycleRange, setPrevCycleRange] = useState(
+    `${cycleFromKey}\0${cycleToKey}`,
+  );
+  const cycleRangeKey = `${cycleFromKey}\0${cycleToKey}`;
+  if (prevCycleRange !== cycleRangeKey) {
+    setPrevCycleRange(cycleRangeKey);
+    setFromDate(cycleFromKey);
+    setToDate(cycleToKey);
+  }
 
   const resolvedIdentityIds = useMemo(
     () =>
@@ -860,8 +876,11 @@ export default function SignedTicketRequestHistory({
         params.set("cursor", cursor);
       }
       if (fromDate && toDate) {
-        params.set("from", fromDate);
-        params.set("to", toDate);
+        params.set(
+          "from",
+          from && fromDate === cycleFromKey ? from : fromDate,
+        );
+        params.set("to", to && toDate === cycleToKey ? to : toDate);
       }
       for (const id of resolvedClientIds) {
         params.append("clientId", id);
@@ -891,7 +910,7 @@ export default function SignedTicketRequestHistory({
         mode,
       };
     },
-    [resolvedClientIds, resolvedIdentityIds, historyScope, fromDate, toDate],
+    [resolvedClientIds, resolvedIdentityIds, historyScope, fromDate, toDate, from, to, cycleFromKey, cycleToKey],
   );
 
   useEffect(() => {

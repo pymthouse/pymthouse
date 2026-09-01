@@ -20,7 +20,14 @@ type RequestsResponse = {
 export default function IdentityRequestLog({
   appId,
   externalUserId,
-}: Readonly<{ appId: string; externalUserId: string }>) {
+  from,
+  to,
+}: Readonly<{
+  appId: string;
+  externalUserId: string;
+  from?: string | null;
+  to?: string | null;
+}>) {
   const [items, setItems] = useState<SignedTicketRequestRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [openMeterConfigured, setOpenMeterConfigured] = useState(true);
@@ -35,6 +42,8 @@ export default function IdentityRequestLog({
       const params = new URLSearchParams();
       params.set("limit", "25");
       if (cursor) params.set("cursor", cursor);
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
 
       const res = await fetch(`${endpoint}?${params.toString()}`, {
         method: "GET",
@@ -48,7 +57,7 @@ export default function IdentityRequestLog({
         body ?? { items: [], nextCursor: null, openMeterConfigured: true }
       );
     },
-    [endpoint],
+    [endpoint, from, to],
   );
 
   useEffect(() => {
@@ -117,7 +126,7 @@ export default function IdentityRequestLog({
         ) : null}
         {openMeterConfigured && !loading && !error && items.length === 0 ? (
           <p className="py-6 text-center text-sm text-zinc-500">
-            No requests for this identity in the current cycle.
+            No requests for this identity in this cycle.
           </p>
         ) : null}
         {openMeterConfigured && !loading && !error && items.length > 0 ? (
