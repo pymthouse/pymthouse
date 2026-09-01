@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense, useId } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -9,16 +10,22 @@ import {
   resolveBillingCycle,
 } from "@/lib/billing-utils";
 
-/**
- * UTC month selector persisted in `?cycle=YYYY-MM`.
- * The current month omits the query param so existing bookmarks stay current.
- */
-export default function BillingCyclePicker({
+function BillingCyclePickerFallback({ className }: Readonly<{ className?: string }>) {
+  return (
+    <div
+      className={`h-7 w-52 animate-pulse rounded-md bg-white/5 ${className ?? ""}`}
+      aria-hidden
+    />
+  );
+}
+
+function BillingCyclePickerInner({
   className,
 }: Readonly<{ className?: string }>) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const selectId = useId();
   const selected = resolveBillingCycle(searchParams.get(BILLING_CYCLE_PARAM));
   const options = billingCycleSelectOptions({ selectedKey: selected.key });
   const selectedIndex = options.findIndex((option) => option.key === selected.key);
@@ -54,11 +61,11 @@ export default function BillingCyclePicker({
       >
         ←
       </button>
-      <label className="sr-only" htmlFor="billing-cycle-select">
+      <label className="sr-only" htmlFor={selectId}>
         Billing cycle
       </label>
       <select
-        id="billing-cycle-select"
+        id={selectId}
         value={selected.key}
         onChange={(event) => navigateTo(event.target.value)}
         className="max-w-[11rem] rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs font-medium text-zinc-100"
@@ -84,5 +91,19 @@ export default function BillingCyclePicker({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * UTC month selector persisted in `?cycle=YYYY-MM`.
+ * The current month omits the query param so existing bookmarks stay current.
+ */
+export default function BillingCyclePicker({
+  className,
+}: Readonly<{ className?: string }>) {
+  return (
+    <Suspense fallback={<BillingCyclePickerFallback className={className} />}>
+      <BillingCyclePickerInner className={className} />
+    </Suspense>
   );
 }
