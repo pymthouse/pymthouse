@@ -7,13 +7,25 @@ import {
 } from "@turnkey/react-wallet-kit";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { AuthComponent } from "@/lib/turnkey-auth-component";
 import { GitHubTurnkeyLoginButton } from "@/components/GitHubTurnkeyLoginButton";
 import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
+import {
+  clearTurnkeyOauthRedirect,
+  peekTurnkeyOauthRedirect,
+  shouldResumeTurnkeyOauthCallback,
+  turnkeyOauthOpenInPageParams,
+} from "@/lib/turnkey-oauth-redirect";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
@@ -93,7 +105,10 @@ function TurnkeyEmbeddedAuthInner({
   const {
     authState,
     clientState,
+    config,
     getSession,
+    handleDiscordOauth,
+    handleGoogleOauth,
     refreshWallets,
     refreshUser,
     user,
@@ -111,11 +126,15 @@ function TurnkeyEmbeddedAuthInner({
   const [error, setError] = useState<string | null>(null);
   const [hasGoogleOAuthAction, setHasGoogleOAuthAction] = useState(false);
   const [hasDiscordOAuthAction, setHasDiscordOAuthAction] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState<"google" | "discord" | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
   // Incremented to remount AuthComponent after a session expiry, giving it fresh state.
   const [authComponentKey, setAuthComponentKey] = useState(0);
   // Shown when an existing Turnkey session expires while the login page is open.
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
   const authSectionRef = useRef<HTMLElement | null>(null);
+  // Snapshot before Wallet Kit strips OAuth hash/query from the URL.
+  const oauthReturnHref = useRef("");
   // True once Turnkey has been Unauthenticated on this page — a later
   // Authenticated state is a fresh login we should bridge to NextAuth.
   const sawUnauthenticated = useRef(false);
@@ -214,12 +233,32 @@ function TurnkeyEmbeddedAuthInner({
     return () => observer.disconnect();
   }, [clientState, authState, retryNonce]);
 
-  const triggerEmbeddedAuthAction = (testId: string) => {
-    const target = authSectionRef.current?.querySelector(
-      `button[data-testid='${testId}']`,
-    ) as HTMLButtonElement | null;
-    target?.click();
+  const googleEnabled =
+    config?.ui?.authModal?.methods?.googleOauthEnabled ?? hasGoogleOAuthAction;
+  const discordEnabled =
+    config?.ui?.authModal?.methods?.discordOauthEnabled ?? hasDiscordOAuthAction;
+
+  const startInPageOauth = async (
+    provider: "google" | "discord",
+    start: () => Promise<void>,
+  ) => {
+    if (oauthBusy) return;
+    setOauthBusy(provider);
+    setOauthError(null);
+    try {
+      await start();
+    } catch (err) {
+      clearTurnkeyOauthRedirect();
+      setOauthError(
+        err instanceof Error ? err.message : `${provider} sign-in failed`,
+      );
+      setOauthBusy(null);
+    }
   };
+
+  useLayoutEffect(() => {
+    oauthReturnHref.current = window.location.href;
+  }, []);
 
   // On first Ready tick: clear a leftover Turnkey session so the form is usable.
   // Must not run again after a fresh OTP/passkey login or it races the bridge.
@@ -231,21 +270,40 @@ function TurnkeyEmbeddedAuthInner({
 
     initialSessionHandled.current = true;
 
-    if (
-      nextAuthStatus === "unauthenticated" &&
-      authState === AuthState.Authenticated
-    ) {
-      selfLogoutInFlight.current = true;
-      logout().catch(() => {
-        // Ignore — AuthComponent can still proceed after a failed clear.
-        selfLogoutInFlight.current = false;
-      });
-      return;
-    }
+    // Same-tab Google/Discord success return: the kit session is fresh.
+    // Skip leftover logout only when the URL + resume digest prove this start
+    // completed; a canceled start must not disable leftover logout.
+    const href = oauthReturnHref.current || window.location.href;
+    void (async () => {
+      if (
+        await shouldResumeTurnkeyOauthCallback({
+          pathname: window.location.pathname,
+          href,
+          pending: peekTurnkeyOauthRedirect(),
+          turnkeyAuthenticated: authState === AuthState.Authenticated,
+          nextAuthAuthenticated: nextAuthStatus === "authenticated",
+        })
+      ) {
+        return;
+      }
+      clearTurnkeyOauthRedirect();
 
-    if (authState === AuthState.Unauthenticated) {
-      sawUnauthenticated.current = true;
-    }
+      if (
+        nextAuthStatus === "unauthenticated" &&
+        authState === AuthState.Authenticated
+      ) {
+        selfLogoutInFlight.current = true;
+        logout().catch(() => {
+          // Ignore — AuthComponent can still proceed after a failed clear.
+          selfLogoutInFlight.current = false;
+        });
+        return;
+      }
+
+      if (authState === AuthState.Unauthenticated) {
+        sawUnauthenticated.current = true;
+      }
+    })();
   }, [authState, clientState, logout, nextAuthStatus]);
 
   // Dismiss the "session expired" notice once the user is no longer unauthenticated.
@@ -356,16 +414,22 @@ function TurnkeyEmbeddedAuthInner({
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
             Continue with
           </p>
-          {hasGoogleOAuthAction && (
+          {googleEnabled && (
             <button
               type="button"
               onClick={() => {
-                triggerEmbeddedAuthAction("oauth-google");
+                void startInPageOauth("google", async () => {
+                  const params = await turnkeyOauthOpenInPageParams(callbackUrl);
+                  await handleGoogleOauth(params);
+                });
               }}
-              className={AUTH_BUTTON_CLASS}
+              disabled={oauthBusy !== null || clientState === undefined}
+              className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               <GoogleMark className="h-4 w-4" />
-              Continue with Google
+              {oauthBusy === "google"
+                ? "Redirecting to Google…"
+                : "Continue with Google"}
             </button>
           )}
           <GitHubTurnkeyLoginButton
@@ -373,18 +437,29 @@ function TurnkeyEmbeddedAuthInner({
             sectionLabel={null}
             containerClassName="space-y-2"
           />
-          {hasDiscordOAuthAction && (
+          {discordEnabled && (
             <button
               type="button"
               onClick={() => {
-                triggerEmbeddedAuthAction("oauth-discord");
+                void startInPageOauth("discord", async () => {
+                  const params = await turnkeyOauthOpenInPageParams(callbackUrl);
+                  await handleDiscordOauth(params);
+                });
               }}
-              className={AUTH_BUTTON_CLASS}
+              disabled={oauthBusy !== null || clientState === undefined}
+              className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               <DiscordMark className="h-4 w-4" />
-              Continue with Discord
+              {oauthBusy === "discord"
+                ? "Redirecting to Discord…"
+                : "Continue with Discord"}
             </button>
           )}
+          {oauthError ? (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {oauthError}
+            </p>
+          ) : null}
         </section>
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
           Or continue with

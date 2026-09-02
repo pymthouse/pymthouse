@@ -308,7 +308,11 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 
 **Turnkey social logins (wallets for all funders):** enable Google (etc.) under
 Embedded Wallets → Configuration → Social logins. Redirect URL and Google’s
-authorized redirect URI must match. **GitHub** uses in-app BYO OIDC (see
+authorized redirect URI must match (`/auth/callback` is preferred so the
+same-tab return can bridge NextAuth). Google and Discord open in the current
+tab — not a popup — matching GitHub’s `window.location` start, because Chrome
+blocks Wallet Kit’s default popup after async key generation. **GitHub** uses
+in-app BYO OIDC (see
 [Turnkey social logins](https://docs.turnkey.com/features/authentication/social-logins)
 + [bring your own auth](https://docs.turnkey.com/features/authentication/bring-your-own-auth)):
 set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` plus Turnkey API keys
