@@ -235,9 +235,9 @@ export async function mintDefaultAppNetworkKey(input: {
     });
   }
 
-  // Personal apiKey stays bare for usage/self-serve; sdkToken must use the
-  // composite presentation so pathless remote-signer webhooks can recover
-  // {clientId} and exchange to a JWT (bare pmth_* → 401 "not a JWT").
+  // Personal apiKey stays bare (`pmth_*`). The remote-signer webhook exchanges
+  // that Bearer via issuer-path RFC 8693 (app resolved from the stored key).
+  // sdkToken still embeds the composite form for older webhook deployments.
   let sdkToken: string | null = null;
   try {
     sdkToken = createLivepeerPythonSdkToken({
