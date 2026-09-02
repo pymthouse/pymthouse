@@ -14,6 +14,11 @@ import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
+import {
+  peekTurnkeyOauthRedirect,
+  storeTurnkeyOauthRedirect,
+  turnkeyOauthOpenInPageParams,
+} from "@/lib/turnkey-oauth-redirect";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
@@ -93,7 +98,10 @@ function TurnkeyEmbeddedAuthInner({
   const {
     authState,
     clientState,
+    config,
     getSession,
+    handleDiscordOauth,
+    handleGoogleOauth,
     refreshWallets,
     refreshUser,
     user,
@@ -111,6 +119,8 @@ function TurnkeyEmbeddedAuthInner({
   const [error, setError] = useState<string | null>(null);
   const [hasGoogleOAuthAction, setHasGoogleOAuthAction] = useState(false);
   const [hasDiscordOAuthAction, setHasDiscordOAuthAction] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState<"google" | "discord" | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
   // Incremented to remount AuthComponent after a session expiry, giving it fresh state.
   const [authComponentKey, setAuthComponentKey] = useState(0);
   // Shown when an existing Turnkey session expires while the login page is open.
@@ -214,11 +224,27 @@ function TurnkeyEmbeddedAuthInner({
     return () => observer.disconnect();
   }, [clientState, authState, retryNonce]);
 
-  const triggerEmbeddedAuthAction = (testId: string) => {
-    const target = authSectionRef.current?.querySelector(
-      `button[data-testid='${testId}']`,
-    ) as HTMLButtonElement | null;
-    target?.click();
+  const googleEnabled =
+    config?.ui?.authModal?.methods?.googleOauthEnabled ?? hasGoogleOAuthAction;
+  const discordEnabled =
+    config?.ui?.authModal?.methods?.discordOauthEnabled ?? hasDiscordOAuthAction;
+
+  const startInPageOauth = async (
+    provider: "google" | "discord",
+    start: () => Promise<void>,
+  ) => {
+    if (oauthBusy) return;
+    setOauthBusy(provider);
+    setOauthError(null);
+    try {
+      storeTurnkeyOauthRedirect({ callbackUrl });
+      await start();
+    } catch (err) {
+      setOauthError(
+        err instanceof Error ? err.message : `${provider} sign-in failed`,
+      );
+      setOauthBusy(null);
+    }
   };
 
   // On first Ready tick: clear a leftover Turnkey session so the form is usable.
@@ -230,6 +256,12 @@ function TurnkeyEmbeddedAuthInner({
     if (nextAuthStatus === "loading") return;
 
     initialSessionHandled.current = true;
+
+    // Same-tab Google/Discord return: the kit session is fresh, not leftover.
+    // /login would otherwise logout() before /auth/callback can bridge NextAuth.
+    if (peekTurnkeyOauthRedirect()) {
+      return;
+    }
 
     if (
       nextAuthStatus === "unauthenticated" &&
@@ -356,16 +388,21 @@ function TurnkeyEmbeddedAuthInner({
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
             Continue with
           </p>
-          {hasGoogleOAuthAction && (
+          {googleEnabled && (
             <button
               type="button"
               onClick={() => {
-                triggerEmbeddedAuthAction("oauth-google");
+                void startInPageOauth("google", () =>
+                  handleGoogleOauth(turnkeyOauthOpenInPageParams(callbackUrl)),
+                );
               }}
-              className={AUTH_BUTTON_CLASS}
+              disabled={oauthBusy !== null || clientState === undefined}
+              className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               <GoogleMark className="h-4 w-4" />
-              Continue with Google
+              {oauthBusy === "google"
+                ? "Redirecting to Google…"
+                : "Continue with Google"}
             </button>
           )}
           <GitHubTurnkeyLoginButton
@@ -373,18 +410,28 @@ function TurnkeyEmbeddedAuthInner({
             sectionLabel={null}
             containerClassName="space-y-2"
           />
-          {hasDiscordOAuthAction && (
+          {discordEnabled && (
             <button
               type="button"
               onClick={() => {
-                triggerEmbeddedAuthAction("oauth-discord");
+                void startInPageOauth("discord", () =>
+                  handleDiscordOauth(turnkeyOauthOpenInPageParams(callbackUrl)),
+                );
               }}
-              className={AUTH_BUTTON_CLASS}
+              disabled={oauthBusy !== null || clientState === undefined}
+              className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               <DiscordMark className="h-4 w-4" />
-              Continue with Discord
+              {oauthBusy === "discord"
+                ? "Redirecting to Discord…"
+                : "Continue with Discord"}
             </button>
           )}
+          {oauthError ? (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {oauthError}
+            </p>
+          ) : null}
         </section>
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
           Or continue with
