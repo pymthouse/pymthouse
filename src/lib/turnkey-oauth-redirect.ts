@@ -227,7 +227,7 @@ export function extractTurnkeyOauthUrlReturn(
     let state = url.searchParams.get("state");
 
     if (hash.startsWith("state=provider=apple")) {
-      idToken = hash.match(/(?:^|&)id_token=([^&]+)/)?.[1] ?? null;
+      idToken = /(?:^|&)id_token=([^&]+)/.exec(hash)?.[1] ?? null;
       const stateEnd = hash.search(/&(?:code|id_token)=/);
       state =
         stateEnd === -1

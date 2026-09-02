@@ -211,6 +211,12 @@ describe("hasTurnkeyOauthReturnParams", () => {
       true,
     );
     assert.equal(
+      hasTurnkeyOauthReturnParams(
+        "http://localhost:3001/#state=provider=apple&flow=redirect&publicKey=abc123&resume=resume-token-1&code=c&id_token=jwt",
+      ),
+      true,
+    );
+    assert.equal(
       extractTurnkeyOauthUrlReturn(
         `http://localhost:3001/?code=abc&state=${encodeState(KIT_DISCORD_STATE)}`,
       )?.resumeNonce,
