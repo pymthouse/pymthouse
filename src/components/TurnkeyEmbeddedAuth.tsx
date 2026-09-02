@@ -271,37 +271,39 @@ function TurnkeyEmbeddedAuthInner({
     initialSessionHandled.current = true;
 
     // Same-tab Google/Discord success return: the kit session is fresh.
-    // Skip leftover logout only when the URL + resume token prove this start
+    // Skip leftover logout only when the URL + resume digest prove this start
     // completed; a canceled start must not disable leftover logout.
     const href = oauthReturnHref.current || window.location.href;
-    if (
-      shouldResumeTurnkeyOauthCallback({
-        pathname: window.location.pathname,
-        href,
-        pending: peekTurnkeyOauthRedirect(),
-        turnkeyAuthenticated: authState === AuthState.Authenticated,
-        nextAuthAuthenticated: nextAuthStatus === "authenticated",
-      })
-    ) {
-      return;
-    }
-    clearTurnkeyOauthRedirect();
+    void (async () => {
+      if (
+        await shouldResumeTurnkeyOauthCallback({
+          pathname: window.location.pathname,
+          href,
+          pending: peekTurnkeyOauthRedirect(),
+          turnkeyAuthenticated: authState === AuthState.Authenticated,
+          nextAuthAuthenticated: nextAuthStatus === "authenticated",
+        })
+      ) {
+        return;
+      }
+      clearTurnkeyOauthRedirect();
 
-    if (
-      nextAuthStatus === "unauthenticated" &&
-      authState === AuthState.Authenticated
-    ) {
-      selfLogoutInFlight.current = true;
-      logout().catch(() => {
-        // Ignore — AuthComponent can still proceed after a failed clear.
-        selfLogoutInFlight.current = false;
-      });
-      return;
-    }
+      if (
+        nextAuthStatus === "unauthenticated" &&
+        authState === AuthState.Authenticated
+      ) {
+        selfLogoutInFlight.current = true;
+        logout().catch(() => {
+          // Ignore — AuthComponent can still proceed after a failed clear.
+          selfLogoutInFlight.current = false;
+        });
+        return;
+      }
 
-    if (authState === AuthState.Unauthenticated) {
-      sawUnauthenticated.current = true;
-    }
+      if (authState === AuthState.Unauthenticated) {
+        sawUnauthenticated.current = true;
+      }
+    })();
   }, [authState, clientState, logout, nextAuthStatus]);
 
   // Dismiss the "session expired" notice once the user is no longer unauthenticated.
@@ -416,9 +418,10 @@ function TurnkeyEmbeddedAuthInner({
             <button
               type="button"
               onClick={() => {
-                void startInPageOauth("google", () =>
-                  handleGoogleOauth(turnkeyOauthOpenInPageParams(callbackUrl)),
-                );
+                void startInPageOauth("google", async () => {
+                  const params = await turnkeyOauthOpenInPageParams(callbackUrl);
+                  await handleGoogleOauth(params);
+                });
               }}
               disabled={oauthBusy !== null || clientState === undefined}
               className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
@@ -438,9 +441,10 @@ function TurnkeyEmbeddedAuthInner({
             <button
               type="button"
               onClick={() => {
-                void startInPageOauth("discord", () =>
-                  handleDiscordOauth(turnkeyOauthOpenInPageParams(callbackUrl)),
-                );
+                void startInPageOauth("discord", async () => {
+                  const params = await turnkeyOauthOpenInPageParams(callbackUrl);
+                  await handleDiscordOauth(params);
+                });
               }}
               disabled={oauthBusy !== null || clientState === undefined}
               className={`${AUTH_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}

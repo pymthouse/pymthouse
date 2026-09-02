@@ -36,20 +36,27 @@ export function TurnkeyOauthRedirectResume() {
       clearTurnkeyOauthRedirect();
       return;
     }
-    const pending = peekTurnkeyOauthRedirect();
-    if (
-      !pending ||
-      !shouldResumeTurnkeyOauthCallback({
-        pathname: window.location.pathname,
-        href,
-        pending,
-        turnkeyAuthenticated: authState === AuthState.Authenticated,
-        nextAuthAuthenticated: status === "authenticated",
-      })
-    ) {
-      return;
-    }
-    window.location.replace(oauthCallbackResumeUrl(pending.callbackUrl));
+    let cancelled = false;
+    void (async () => {
+      const pending = peekTurnkeyOauthRedirect();
+      if (
+        !pending ||
+        !(await shouldResumeTurnkeyOauthCallback({
+          pathname: window.location.pathname,
+          href,
+          pending,
+          turnkeyAuthenticated: authState === AuthState.Authenticated,
+          nextAuthAuthenticated: status === "authenticated",
+        }))
+      ) {
+        return;
+      }
+      if (cancelled) return;
+      window.location.replace(oauthCallbackResumeUrl(pending.callbackUrl));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [authState, clientState, status]);
 
   return null;

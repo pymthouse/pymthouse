@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   clearTurnkeyOauthRedirect,
   consumeTurnkeyOauthRedirect,
+  digestOauthResume,
   extractTurnkeyOauthUrlReturn,
   hasTurnkeyOauthErrorReturn,
   hasTurnkeyOauthReturnParams,
@@ -48,12 +49,16 @@ function encodeState(state: string): string {
 
 function pending(overrides?: {
   callbackUrl?: string;
-  resumeNonce?: string;
+  resumeDigest?: string;
   startedAt?: number;
-}) {
+}): {
+  callbackUrl: string;
+  resumeDigest: string;
+  startedAt: number;
+} {
   return {
     callbackUrl: "/apps",
-    resumeNonce: "resume-token-1",
+    resumeDigest: "pending-digest",
     startedAt: Date.now(),
     ...overrides,
   };
@@ -69,22 +74,25 @@ describe("turnkeyOauthOpenInPageParams", { concurrency: false }, () => {
     });
   });
 
-  it("forces same-tab redirect, stores resume CSRF, and sanitizes callbackUrl", () => {
+  it("forces same-tab redirect, stores resume CSRF, and sanitizes callbackUrl", async () => {
     Object.defineProperty(globalThis, "sessionStorage", {
       configurable: true,
       value: new MemoryStorage(),
     });
 
-    const params = turnkeyOauthOpenInPageParams("/apps?x=1");
+    const params = await turnkeyOauthOpenInPageParams("/apps?x=1");
     assert.equal(params.openInPage, true);
     assert.equal(params.additionalState.callbackUrl, "/apps?x=1");
     assert.equal(typeof params.additionalState.resume, "string");
     assert.equal(params.additionalState.resume.length > 8, true);
     const stored = peekTurnkeyOauthRedirect();
     assert.equal(stored?.callbackUrl, "/apps?x=1");
-    assert.equal(stored?.resumeNonce, params.additionalState.resume);
+    assert.equal(
+      stored?.resumeDigest,
+      await digestOauthResume(params.additionalState.resume),
+    );
 
-    const rejected = turnkeyOauthOpenInPageParams("https://evil.example/phish");
+    const rejected = await turnkeyOauthOpenInPageParams("https://evil.example/phish");
     assert.equal(rejected.additionalState.callbackUrl, "/onboarding");
   });
 });
@@ -102,21 +110,21 @@ describe("parseTurnkeyOauthRedirect", () => {
       parseTurnkeyOauthRedirect(
         JSON.stringify({
           callbackUrl: "/oidc/device",
-          resumeNonce: "tok",
+          resumeDigest: "tok",
           startedAt: 1,
         }),
       ),
-      { callbackUrl: "/oidc/device", resumeNonce: "tok", startedAt: 1 },
+      { callbackUrl: "/oidc/device", resumeDigest: "tok", startedAt: 1 },
     );
     assert.deepEqual(
       parseTurnkeyOauthRedirect(
         JSON.stringify({
           callbackUrl: "https://evil.example",
-          resumeNonce: "tok",
+          resumeDigest: "tok",
           startedAt: 1,
         }),
       ),
-      { callbackUrl: "/onboarding", resumeNonce: "tok", startedAt: 1 },
+      { callbackUrl: "/onboarding", resumeDigest: "tok", startedAt: 1 },
     );
   });
 });
@@ -139,7 +147,7 @@ describe("turnkey oauth redirect sessionStorage", { concurrency: false }, () => 
 
     storeTurnkeyOauthRedirect({
       callbackUrl: "/onboarding?persona=builder",
-      resumeNonce: "tok",
+      resumeDigest: "tok",
     });
     assert.equal(
       sessionStorage.getItem(TURNKEY_OAUTH_REDIRECT_STORAGE_KEY)?.includes(
@@ -149,7 +157,7 @@ describe("turnkey oauth redirect sessionStorage", { concurrency: false }, () => 
     );
     const peeked = peekTurnkeyOauthRedirect();
     assert.equal(peeked?.callbackUrl, "/onboarding?persona=builder");
-    assert.equal(peeked?.resumeNonce, "tok");
+    assert.equal(peeked?.resumeDigest, "tok");
     assert.equal(consumeTurnkeyOauthRedirect()?.callbackUrl, "/onboarding?persona=builder");
     assert.equal(peekTurnkeyOauthRedirect(), null);
   });
@@ -159,7 +167,7 @@ describe("turnkey oauth redirect sessionStorage", { concurrency: false }, () => 
       configurable: true,
       value: new MemoryStorage(),
     });
-    storeTurnkeyOauthRedirect({ callbackUrl: "/apps", resumeNonce: "tok" });
+    storeTurnkeyOauthRedirect({ callbackUrl: "/apps", resumeDigest: "tok" });
     assert.equal(takeTurnkeyOauthRedirectOnce()?.callbackUrl, "/apps");
     assert.equal(takeTurnkeyOauthRedirectOnce()?.callbackUrl, "/apps");
     assert.equal(peekTurnkeyOauthRedirect(), null);
@@ -172,7 +180,7 @@ describe("turnkey oauth redirect sessionStorage", { concurrency: false }, () => 
     });
     storeTurnkeyOauthRedirect({
       callbackUrl: "/apps",
-      resumeNonce: "tok",
+      resumeDigest: "tok",
       startedAt: Date.now() - TURNKEY_OAUTH_REDIRECT_TTL_MS - 1,
     });
     assert.equal(peekTurnkeyOauthRedirect(), null);
@@ -190,7 +198,7 @@ describe("turnkey oauth redirect sessionStorage", { concurrency: false }, () => 
       configurable: true,
       value: new MemoryStorage(),
     });
-    storeTurnkeyOauthRedirect({ callbackUrl: "/apps", resumeNonce: "tok" });
+    storeTurnkeyOauthRedirect({ callbackUrl: "/apps", resumeDigest: "tok" });
     clearTurnkeyOauthRedirect();
     assert.equal(peekTurnkeyOauthRedirect(), null);
   });
@@ -219,7 +227,7 @@ describe("hasTurnkeyOauthReturnParams", () => {
     assert.equal(
       extractTurnkeyOauthUrlReturn(
         `http://localhost:3001/?code=abc&state=${encodeState(KIT_DISCORD_STATE)}`,
-      )?.resumeNonce,
+      )?.resume,
       "resume-token-1",
     );
   });
@@ -277,7 +285,7 @@ describe("hasTurnkeyOauthReturnParams", () => {
 });
 
 describe("shouldResumeTurnkeyOauthCallback", () => {
-  it("resumes only after a matching same-tab OAuth return outside /auth/callback", () => {
+  it("resumes only after a matching same-tab OAuth return outside /auth/callback", async () => {
     assert.equal(isTurnkeyOauthCallbackPath(TURNKEY_OAUTH_CALLBACK_PATH), true);
     assert.equal(
       oauthCallbackResumeUrl("/apps"),
@@ -288,48 +296,50 @@ describe("shouldResumeTurnkeyOauthCallback", () => {
     const base = {
       pathname: "/",
       href,
-      pending: pending(),
+      pending: pending({
+        resumeDigest: await digestOauthResume("resume-token-1"),
+      }),
       turnkeyAuthenticated: true,
       nextAuthAuthenticated: false,
     };
-    assert.equal(shouldResumeTurnkeyOauthCallback(base), true);
+    assert.equal(await shouldResumeTurnkeyOauthCallback(base), true);
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
         pathname: TURNKEY_OAUTH_CALLBACK_PATH,
       }),
       false,
     );
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
         href: "http://localhost:3001/#section",
       }),
       false,
     );
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
         pending: null,
       }),
       false,
     );
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
-        pending: pending({ resumeNonce: "other-token" }),
+        pending: pending({ resumeDigest: "other-digest" }),
       }),
       false,
     );
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
         nextAuthAuthenticated: true,
       }),
       false,
     );
     assert.equal(
-      shouldResumeTurnkeyOauthCallback({
+      await shouldResumeTurnkeyOauthCallback({
         ...base,
         href: `http://localhost:3001/?error=access_denied&state=${encodeState(KIT_GOOGLE_STATE)}`,
       }),
