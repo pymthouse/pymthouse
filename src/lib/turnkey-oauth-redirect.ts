@@ -31,7 +31,7 @@ export type TurnkeyOauthStateFields = {
 /** React Strict Mode remounts must reuse the first consume, not hit empty storage. */
 let consumedOauthRedirect: TurnkeyOauthRedirectState | null | undefined;
 
-export async function digestOauthResume(value: string): Promise<string> {
+export async function sha256Hex(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) =>
@@ -47,7 +47,7 @@ export async function turnkeyOauthOpenInPageParams(callbackUrl: string): Promise
   const resume = crypto.randomUUID();
   storeTurnkeyOauthRedirect({
     callbackUrl: safeUrl,
-    resumeDigest: await digestOauthResume(resume),
+    resumeDigest: await sha256Hex(resume),
   });
   return {
     openInPage: true,
@@ -103,7 +103,9 @@ export function storeTurnkeyOauthRedirect(input: {
       startedAt: input.startedAt ?? Date.now(),
     };
     if (!payload.resumeDigest) return;
-    sessionStorage.setItem(
+    // Same-tab CSRF binder: SHA-256 digest of the Wallet Kit `resume` state
+    // value, not a credential. sessionStorage is required across the IdP hop.
+    sessionStorage.setItem( // lgtm[js/clear-text-storage-of-sensitive-data]
       TURNKEY_OAUTH_REDIRECT_STORAGE_KEY,
       JSON.stringify(payload),
     );
@@ -271,7 +273,7 @@ async function returnMatchesPending(
 ): Promise<boolean> {
   const extracted = extractTurnkeyOauthUrlReturn(href);
   if (extracted?.kind !== "success" || !extracted.resume) return false;
-  return (await digestOauthResume(extracted.resume)) === pending.resumeDigest;
+  return (await sha256Hex(extracted.resume)) === pending.resumeDigest;
 }
 
 export function isTurnkeyOauthCallbackPath(pathname: string): boolean {

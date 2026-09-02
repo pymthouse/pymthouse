@@ -3,7 +3,6 @@ import { afterEach, describe, it } from "node:test";
 import {
   clearTurnkeyOauthRedirect,
   consumeTurnkeyOauthRedirect,
-  digestOauthResume,
   extractTurnkeyOauthUrlReturn,
   hasTurnkeyOauthErrorReturn,
   hasTurnkeyOauthReturnParams,
@@ -13,6 +12,7 @@ import {
   parseOauthStatePairs,
   parseTurnkeyOauthRedirect,
   peekTurnkeyOauthRedirect,
+  sha256Hex,
   shouldResumeTurnkeyOauthCallback,
   storeTurnkeyOauthRedirect,
   takeTurnkeyOauthRedirectOnce,
@@ -89,7 +89,7 @@ describe("turnkeyOauthOpenInPageParams", { concurrency: false }, () => {
     assert.equal(stored?.callbackUrl, "/apps?x=1");
     assert.equal(
       stored?.resumeDigest,
-      await digestOauthResume(params.additionalState.resume),
+      await sha256Hex(params.additionalState.resume),
     );
 
     const rejected = await turnkeyOauthOpenInPageParams("https://evil.example/phish");
@@ -297,7 +297,7 @@ describe("shouldResumeTurnkeyOauthCallback", () => {
       pathname: "/",
       href,
       pending: pending({
-        resumeDigest: await digestOauthResume("resume-token-1"),
+        resumeDigest: await sha256Hex("resume-token-1"),
       }),
       turnkeyAuthenticated: true,
       nextAuthAuthenticated: false,
