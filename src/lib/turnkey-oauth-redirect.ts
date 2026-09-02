@@ -17,14 +17,21 @@ const TURNKEY_OAUTH_PROVIDERS = new Set([
 
 export type TurnkeyOauthRedirectState = {
   callbackUrl: string;
-  resumeToken: string;
+  resumeNonce: string;
   startedAt: number;
+};
+
+export type TurnkeyOauthStateFields = {
+  provider: string;
+  flow: string;
+  publicKey: string;
+  resume: string;
 };
 
 /** React Strict Mode remounts must reuse the first consume, not hit empty storage. */
 let consumedOauthRedirect: TurnkeyOauthRedirectState | null | undefined;
 
-function createOauthResumeToken(): string {
+function newOauthResumeNonce(): string {
   return crypto.randomUUID();
 }
 
@@ -33,10 +40,10 @@ export function turnkeyOauthOpenInPageParams(callbackUrl: string): {
   additionalState: { callbackUrl: string; resume: string };
 } {
   const safeUrl = safeCallbackUrl(callbackUrl);
-  const resume = createOauthResumeToken();
+  const resume = newOauthResumeNonce();
   storeTurnkeyOauthRedirect({
     callbackUrl: safeUrl,
-    resumeToken: resume,
+    resumeNonce: resume,
   });
   return {
     openInPage: true,
@@ -54,11 +61,11 @@ export function parseTurnkeyOauthRedirect(
   try {
     const parsed = JSON.parse(raw) as {
       callbackUrl?: unknown;
-      resumeToken?: unknown;
+      resumeNonce?: unknown;
       startedAt?: unknown;
     };
     if (typeof parsed.callbackUrl !== "string") return null;
-    if (typeof parsed.resumeToken !== "string" || !parsed.resumeToken.trim()) {
+    if (typeof parsed.resumeNonce !== "string" || !parsed.resumeNonce.trim()) {
       return null;
     }
     if (typeof parsed.startedAt !== "number" || !Number.isFinite(parsed.startedAt)) {
@@ -66,7 +73,7 @@ export function parseTurnkeyOauthRedirect(
     }
     return {
       callbackUrl: safeCallbackUrl(parsed.callbackUrl),
-      resumeToken: parsed.resumeToken.trim(),
+      resumeNonce: parsed.resumeNonce.trim(),
       startedAt: parsed.startedAt,
     };
   } catch {
@@ -82,16 +89,16 @@ function isFreshRedirect(state: TurnkeyOauthRedirectState, nowMs: number): boole
 /** Persist post-login path and resume CSRF across the same-tab redirect. */
 export function storeTurnkeyOauthRedirect(input: {
   callbackUrl: string;
-  resumeToken: string;
+  resumeNonce: string;
   startedAt?: number;
 }): void {
   try {
     const payload: TurnkeyOauthRedirectState = {
       callbackUrl: safeCallbackUrl(input.callbackUrl),
-      resumeToken: input.resumeToken.trim(),
+      resumeNonce: input.resumeNonce.trim(),
       startedAt: input.startedAt ?? Date.now(),
     };
-    if (!payload.resumeToken) return;
+    if (!payload.resumeNonce) return;
     sessionStorage.setItem(
       TURNKEY_OAUTH_REDIRECT_STORAGE_KEY,
       JSON.stringify(payload),
@@ -145,21 +152,43 @@ export function takeTurnkeyOauthRedirectOnce(): TurnkeyOauthRedirectState | null
 
 export function parseOauthStatePairs(
   state: string | null | undefined,
-): Record<string, string> {
-  if (!state) return {};
-  const result: Record<string, string> = {};
+): TurnkeyOauthStateFields {
+  const parsed: TurnkeyOauthStateFields = {
+    provider: "",
+    flow: "",
+    publicKey: "",
+    resume: "",
+  };
+  if (!state) return parsed;
   for (const pair of state.split("&")) {
     const eq = pair.indexOf("=");
     if (eq === -1) continue;
+    let key: string;
+    let value: string;
     try {
-      const key = decodeURIComponent(pair.slice(0, eq));
-      const value = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
-      if (key) result[key] = value;
+      key = decodeURIComponent(pair.slice(0, eq));
+      value = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
     } catch {
-      /* skip malformed pair */
+      continue;
+    }
+    switch (key) {
+      case "provider":
+        parsed.provider = value;
+        break;
+      case "flow":
+        parsed.flow = value;
+        break;
+      case "publicKey":
+        parsed.publicKey = value;
+        break;
+      case "resume":
+        parsed.resume = value;
+        break;
+      default:
+        break;
     }
   }
-  return result;
+  return parsed;
 }
 
 /** Wallet Kit redirect state always includes provider, flow=redirect, publicKey. */
@@ -168,16 +197,16 @@ export function isTurnkeyWalletKitRedirectState(
 ): boolean {
   const parsed = parseOauthStatePairs(state);
   return (
-    TURNKEY_OAUTH_PROVIDERS.has(parsed.provider ?? "") &&
+    TURNKEY_OAUTH_PROVIDERS.has(parsed.provider) &&
     parsed.flow === "redirect" &&
-    Boolean(parsed.publicKey?.trim())
+    Boolean(parsed.publicKey.trim())
   );
 }
 
 export type TurnkeyOauthUrlReturn = {
   kind: "success" | "error";
   state: string;
-  resumeToken: string | null;
+  resumeNonce: string | null;
 };
 
 /**
@@ -213,10 +242,10 @@ export function extractTurnkeyOauthUrlReturn(
       code ||= hashParams.get("code");
     }
 
-    if (!isTurnkeyWalletKitRedirectState(state)) return null;
-    const resumeToken = parseOauthStatePairs(state).resume?.trim() || null;
-    if (error) return { kind: "error", state: state!, resumeToken };
-    if (idToken || code) return { kind: "success", state: state!, resumeToken };
+    if (!state || !isTurnkeyWalletKitRedirectState(state)) return null;
+    const resumeNonce = parseOauthStatePairs(state).resume.trim() || null;
+    if (error) return { kind: "error", state, resumeNonce };
+    if (idToken || code) return { kind: "success", state, resumeNonce };
     return null;
   } catch {
     return null;
@@ -238,7 +267,7 @@ function returnMatchesPending(
 ): boolean {
   const extracted = extractTurnkeyOauthUrlReturn(href);
   if (extracted?.kind !== "success") return false;
-  return extracted.resumeToken === pending.resumeToken;
+  return extracted.resumeNonce === pending.resumeNonce;
 }
 
 export function isTurnkeyOauthCallbackPath(pathname: string): boolean {
