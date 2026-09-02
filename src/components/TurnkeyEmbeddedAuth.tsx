@@ -7,7 +7,13 @@ import {
 } from "@turnkey/react-wallet-kit";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { AuthComponent } from "@/lib/turnkey-auth-component";
 import { GitHubTurnkeyLoginButton } from "@/components/GitHubTurnkeyLoginButton";
 import {
@@ -15,8 +21,9 @@ import {
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
 import {
+  clearTurnkeyOauthRedirect,
   peekTurnkeyOauthRedirect,
-  storeTurnkeyOauthRedirect,
+  shouldResumeTurnkeyOauthCallback,
   turnkeyOauthOpenInPageParams,
 } from "@/lib/turnkey-oauth-redirect";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
@@ -126,6 +133,8 @@ function TurnkeyEmbeddedAuthInner({
   // Shown when an existing Turnkey session expires while the login page is open.
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
   const authSectionRef = useRef<HTMLElement | null>(null);
+  // Snapshot before Wallet Kit strips OAuth hash/query from the URL.
+  const oauthReturnHref = useRef("");
   // True once Turnkey has been Unauthenticated on this page — a later
   // Authenticated state is a fresh login we should bridge to NextAuth.
   const sawUnauthenticated = useRef(false);
@@ -237,15 +246,19 @@ function TurnkeyEmbeddedAuthInner({
     setOauthBusy(provider);
     setOauthError(null);
     try {
-      storeTurnkeyOauthRedirect({ callbackUrl });
       await start();
     } catch (err) {
+      clearTurnkeyOauthRedirect();
       setOauthError(
         err instanceof Error ? err.message : `${provider} sign-in failed`,
       );
       setOauthBusy(null);
     }
   };
+
+  useLayoutEffect(() => {
+    oauthReturnHref.current = window.location.href;
+  }, []);
 
   // On first Ready tick: clear a leftover Turnkey session so the form is usable.
   // Must not run again after a fresh OTP/passkey login or it races the bridge.
@@ -257,11 +270,22 @@ function TurnkeyEmbeddedAuthInner({
 
     initialSessionHandled.current = true;
 
-    // Same-tab Google/Discord return: the kit session is fresh, not leftover.
-    // /login would otherwise logout() before /auth/callback can bridge NextAuth.
-    if (peekTurnkeyOauthRedirect()) {
+    // Same-tab Google/Discord success return: the kit session is fresh.
+    // Skip leftover logout only when the URL + resume token prove this start
+    // completed; a canceled start must not disable leftover logout.
+    const href = oauthReturnHref.current || window.location.href;
+    if (
+      shouldResumeTurnkeyOauthCallback({
+        pathname: window.location.pathname,
+        href,
+        pending: peekTurnkeyOauthRedirect(),
+        turnkeyAuthenticated: authState === AuthState.Authenticated,
+        nextAuthAuthenticated: nextAuthStatus === "authenticated",
+      })
+    ) {
       return;
     }
+    clearTurnkeyOauthRedirect();
 
     if (
       nextAuthStatus === "unauthenticated" &&

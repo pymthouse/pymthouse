@@ -17,8 +17,8 @@ import { takeTurnkeyOauthRedirectOnce } from "@/lib/turnkey-oauth-redirect";
 /**
  * OAuth return surface for Turnkey Wallet Kit social logins.
  * Google/Discord use a same-tab redirect (not a popup) so Chrome cannot
- * block the start. Does NOT clear leftover Turnkey sessions (that would
- * race the OAuth return). Completes the NextAuth bridge here.
+ * block the start. Bridges NextAuth only when this tab started OAuth
+ * (pending resume token in sessionStorage).
  */
 export function OAuthCallbackClient() {
   const {
@@ -54,6 +54,13 @@ export function OAuthCallbackClient() {
     if (nextAuthStatus !== "unauthenticated") return;
     if (authState !== AuthState.Authenticated) return;
     if (clientState !== ClientState.Ready) return;
+    // Only bridge a Turnkey session from this tab's OAuth start (resume CSRF
+    // in sessionStorage). A leftover wallet session on a cold /auth/callback
+    // visit must not mint NextAuth.
+    if (!storedRedirect.current) {
+      router.replace("/login");
+      return;
+    }
 
     bridging.current = true;
 
