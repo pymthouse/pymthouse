@@ -62,7 +62,7 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
 | Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest) | Personal mint returns bare `pmth_*`; Builder mint returns composite presentation of the same secret |
-| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes pathless exchange / webhooks |
+| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes path-scoped exchange without a DB lookup |
 | Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
@@ -88,12 +88,12 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
 - Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite and `subject_token_type=urn:pymthouse:oauth:token-type:api_key`
 
-Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer. Personal network keys keep a bare `apiKey` for usage, but mint `sdkToken` with the same composite Authorization header.
+Composite remains the default presentation for Builder keys so pathless callers can recover the public client id from a single Bearer without a DB lookup. Personal network keys stay bare `pmth_*`; the remote-signer identity webhook exchanges that Bearer on the issuer path (`POST /api/v1/oidc/token`) by resolving the stored key. Personal `sdkToken` embeds the same bare Authorization header.
 
 **Design notes**
 
-- Personal keys stay bare for usage/self-serve; `sdkToken` (livepeer-python-sdk `--token`) embeds the composite `app_*_*` form so pathless signer webhooks can recover `{clientId}`.
-- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) for the same reason.
+- Personal keys stay bare for usage/self-serve, as `Authorization: Bearer` on the remote signer, and inside personal `sdkToken` (`--token`). The webhook treats `pmth_*` as an API key (not a JWT) and resolves the app from the credential.
+- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) so pathless callers can recover `{clientId}` without a lookup.
 - Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
 - `formatCompositeApiKey` / `splitCompositeApiKey` parse the composite presentation form.
 
@@ -104,6 +104,7 @@ Do not pass M2M client secrets as `subject_token` on the signer session exchange
 - [x] Issue bare `pmth_*` from personal key mint; composite `app_*_*` from Builder app-user key mint.
 - [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
 - [x] End-user usage at `/api/v1/user/usage*` (app from credential) and `/api/v1/apps/{clientId}/me/usage*` (path-scoped).
+- [x] Remote-signer webhook exchanges bare personal `pmth_*` Bearers via issuer-path RFC 8693 (app from the stored key).
 
 ## Authentication
 
