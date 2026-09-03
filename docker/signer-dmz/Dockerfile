@@ -18,9 +18,9 @@ ARG MOD_AUTHNZ_JWT_COMMIT=ba43b3f0c7a98603eb83ccbe83a37f0d33bc0700
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     make \
     automake \
-    git \
     g++ \
     libtool \
     pkg-config \
@@ -35,20 +35,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-RUN git clone https://github.com/benmcollins/libjwt.git && \
-    cd libjwt && \
-    git -c advice.detachedHead=false checkout "${LIBJWT_COMMIT}" && \
-    git rev-parse --verify "${LIBJWT_COMMIT}^{commit}" >/dev/null && \
+# Fetch commit archives over HTTPS (not git clone). Railway builders get
+# GitHub credential prompts on anonymous git-over-HTTPS:
+#   fatal: could not read Username for 'https://github.com'
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://github.com/benmcollins/libjwt/archive/${LIBJWT_COMMIT}.tar.gz" \
+      | tar -xz && \
+    cd "libjwt-${LIBJWT_COMMIT}" && \
     autoreconf -i && \
     ./configure && \
     make && \
     make install && \
     ldconfig
 
-RUN git clone https://github.com/AnthonyDeroche/mod_authnz_jwt.git && \
-    cd mod_authnz_jwt && \
-    git -c advice.detachedHead=false checkout "${MOD_AUTHNZ_JWT_COMMIT}" && \
-    git rev-parse --verify "${MOD_AUTHNZ_JWT_COMMIT}^{commit}" >/dev/null && \
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://github.com/AnthonyDeroche/mod_authnz_jwt/archive/${MOD_AUTHNZ_JWT_COMMIT}.tar.gz" \
+      | tar -xz && \
+    cd "mod_authnz_jwt-${MOD_AUTHNZ_JWT_COMMIT}" && \
     autoreconf -ivf && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure && \
     make && \
