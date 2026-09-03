@@ -616,7 +616,7 @@ async function ingestViaKafka(state: RunState): Promise<void> {
       computed_fee: Number(feeWei),
       billable_secs: 1,
       pixels: "0",
-      pipeline: "live-video-to-video:e2e",
+      pipeline: "live-video-to-video",
       manifest_id: requestId,
       request_id: requestId,
       session_id: requestId,

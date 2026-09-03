@@ -11,6 +11,7 @@ import type {
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
 
 type AppUsageEntry = BillingAppUsageSummary;
 type UserUsage = BillingUserUsageRow;
@@ -265,9 +266,7 @@ export function AppUsageSection({
 }
 
 function formatPipelineModelLabel(pipeline: string, modelId: string): string {
-  const model =
-    modelId.length > 24 ? `${modelId.slice(0, 22)}…` : modelId;
-  return `${pipeline} / ${model}`;
+  return formatModelAttributionLabel(pipeline, modelId);
 }
 
 function AppUsageUserTable({

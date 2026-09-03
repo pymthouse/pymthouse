@@ -47,7 +47,7 @@ function sampleEvent(overrides?: {
         usage_subject: "user-123",
         gateway_request_id: "req-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
         fee_wei: "100",
         pixels: "64",
@@ -111,7 +111,7 @@ test("eventMatchesViewerSubjects matches owner wallet CE subjects", () => {
         usage_subject: `owner:${ownerId}`,
         gateway_request_id: "req-owner-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
       },
     },
@@ -231,6 +231,47 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.ethUsdPrice, "3456.78");
   assert.equal(row?.billableSecs, 12.5);
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
+});
+
+test("normalizeSignedTicketEvent uses signer app for model attribution", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live",
+        app: "livepeer-example/hello-world",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live");
+  assert.equal(row?.modelId, "livepeer-example/hello-world");
+});
+
+test("normalizeSignedTicketEvent uses live-video-to-video pipeline when app is empty", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        app: "",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video");
+});
+
+test("normalizeSignedTicketEvent keeps historical model_id when app is missing", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "text-to-image",
+        app: "",
+        model_id: "sdxl",
+      },
+    }),
+  );
+  assert.equal(row?.modelId, "sdxl");
 });
 
 test("coerceIngestedEvent accepts wrapped IngestedEvent", () => {

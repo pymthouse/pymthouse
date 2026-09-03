@@ -27,21 +27,21 @@
 # - data.external_user_id = actor (integrator external id) for meter groupBy.
 # - data.billing_subject_key / billing_subject_kind / actor_end_user_id added in schema v2.
 # - data.client_id retains the app id for tenant attribution.
-#
-# Kong / OpenMeter meter backward compatibility:
-# - Existing meters (network_fee_usd_micros, signed_ticket_count, analytics) still
-#   groupBy only $.client_id + $.external_user_id. No meter slug or groupBy changes.
 # - No "#" in the wire → same CE subject / external_user_id mapping as pre-v2
 #   (owner: strip; end-user compound auth_id subject). Safe to deploy before JWT
 #   producers start emitting payer#actor.
-# - Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
 #
-# Pipeline / model (wire -> CloudEvent dims):
-# - Preferred: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
-#   the first ':' into data.pipeline + data.model_id.
-# - Legacy: separate Kafka model_id (pre-encode images) is still accepted and preferred
-#   when present.
-# - Also passthrough (CloudEvent data only, not meter dimensions): app, session_status,
+# Kong / OpenMeter meter dimensions:
+# - Billing + analytics meters groupBy client_id, external_user_id, pipeline, and app
+#   (model attribution). Recreate meters if an existing tenant still has model_id instead
+#   of app. Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
+#
+# Pipeline / app (wire -> CloudEvent dims):
+# - Remote signer sends model attribution on Kafka `app` (e.g. livepeer-example/hello-world).
+# - `model_id` is no longer populated and is not emitted on the CloudEvent.
+# - live-video-to-video still writes a pipeline but an empty app — use the pipeline
+#   name as data.app in that case only.
+# - Also passthrough (CloudEvent data only, not meter dimensions): session_status,
 #   orch_address, num_tickets.
 
 
@@ -227,37 +227,26 @@ pipeline:
         }
         let manifest_id_out = if $manifest_id != "" { $manifest_id } else { "unknown" }
 
-        # Pipeline / model: prefer legacy Kafka model_id; else split base:model.
+        # Pipeline / app: signer model attribution is `app`. Do not split pipeline
+        # on ':' and do not emit model_id. live-video-to-video uses pipeline as app.
         let pipeline_raw = if $data.pipeline != "" && $data.pipeline != null {
           $data.pipeline.string().trim()
         } else {
           ""
         }
-        let legacy_model_id = if $data.model_id != "" && $data.model_id != null {
-          $data.model_id.string().trim()
-        } else {
-          ""
-        }
-        let pipeline_colon = $pipeline_raw.index_of(":")
-        let pipeline_has_model = $pipeline_colon > 0 && $pipeline_colon < $pipeline_raw.length() - 1
-        let pipeline_out = if $pipeline_raw == "" {
-          "unknown"
-        } else if $legacy_model_id != "" {
-          $pipeline_raw
-        } else if $pipeline_has_model {
-          $pipeline_raw.slice(0, $pipeline_colon)
-        } else {
-          $pipeline_raw
-        }
-        let model_id_out = if $legacy_model_id != "" {
-          $legacy_model_id
-        } else if $pipeline_has_model {
-          $pipeline_raw.slice($pipeline_colon + 1)
+        let pipeline_out = if $pipeline_raw == "" { "unknown" } else { $pipeline_raw }
+
+        let app_raw = $data.app.or("").string().trim()
+        let app_out = if $app_raw != "" && $app_raw != "unknown" {
+          $app_raw
+        } else if $pipeline_out == "live-video-to-video" {
+          $pipeline_out
+        } else if $app_raw != "" {
+          $app_raw
         } else {
           "unknown"
         }
 
-        let app_out = $data.app.or("").string()
         let session_status_out = $data.session_status.or("").string()
         let orch_address_out = $data.orch_address.or("").string()
         let num_tickets_out = $data.num_tickets.number().or(0)
@@ -283,9 +272,8 @@ pipeline:
               "actor_end_user_id": $actor_end_user_id_out,
               "network_fee_usd_micros": $fee_usd_micros,
               "pipeline": $pipeline_out,
-              "model_id": $model_id_out,
-              "manifest_id": $manifest_id_out,
               "app": $app_out,
+              "manifest_id": $manifest_id_out,
               "session_status": $session_status_out,
               "orch_address": $orch_address_out,
               "num_tickets": $num_tickets_out,

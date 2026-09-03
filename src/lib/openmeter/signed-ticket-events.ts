@@ -24,6 +24,7 @@ import {
 } from "@/lib/openmeter/customer-key";
 import { millisToSecsString } from "@/lib/openmeter/usage-read";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+import { resolveSignedTicketAppAttribution } from "@/lib/openmeter/signed-ticket-attribution";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
@@ -392,7 +393,11 @@ export function normalizeSignedTicketEvent(
     externalUserId,
     gatewayRequestId,
     pipeline: stringField(data, "pipeline") || "unknown",
-    modelId: stringField(data, "model_id") || "unknown",
+    modelId: resolveSignedTicketAppAttribution({
+      app: stringField(data, "app"),
+      pipeline: stringField(data, "pipeline"),
+      modelId: stringField(data, "model_id"),
+    }),
     networkFeeUsdMicros,
     feeWei: stringField(data, "fee_wei") || undefined,
     pixels: stringField(data, "pixels") || undefined,

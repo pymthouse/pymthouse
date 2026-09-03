@@ -20,6 +20,7 @@ import {
   readKonnectUsdCreditBalance,
   usdMicrosToDecimalDollars,
 } from "./konnect-credits";
+import { resolveSignedTicketAppAttribution } from "./signed-ticket-attribution";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
@@ -244,6 +245,9 @@ export type SignedTicketOpenMeterEvent = {
   feeWei?: string;
   pixels?: string;
   pipeline?: string;
+  /** Signer model attribution (`data.app`). Preferred over `modelId`. */
+  app?: string;
+  /** @deprecated Historical ingest field; mapped onto `app` when `app` is empty. */
   modelId?: string;
   manifestId?: string;
   billableSecs?: number;
@@ -287,6 +291,12 @@ export async function ingestSignedTicketEvent(input: {
     input.event.billableSecs != null && Number.isFinite(input.event.billableSecs)
       ? input.event.billableSecs
       : 0;
+  const pipeline = input.event.pipeline || "unknown";
+  const app = resolveSignedTicketAppAttribution({
+    app: input.event.app,
+    pipeline,
+    modelId: input.event.modelId,
+  });
 
   await input.client.events.ingest({
     specversion: "1.0",
@@ -312,8 +322,8 @@ export async function ingestSignedTicketEvent(input: {
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: feeWei,
       pixels: input.event.pixels,
-      pipeline: input.event.pipeline || "unknown",
-      model_id: input.event.modelId || "unknown",
+      pipeline,
+      app,
       manifest_id: input.event.manifestId?.trim() || "unknown",
       billable_secs: billableSecs,
       gateway_request_id: input.event.gatewayRequestId,
@@ -346,7 +356,7 @@ const ANALYTICS_METER_GROUP_BY = {
   client_id: "$.client_id",
   external_user_id: "$.external_user_id",
   pipeline: "$.pipeline",
-  model_id: "$.model_id",
+  app: "$.app",
   manifest_id: "$.manifest_id",
 } as const;
 
@@ -354,7 +364,7 @@ export const OPENMETER_METER_DEFINITIONS = [
   {
     slug: NETWORK_FEE_USD_MICROS_METER,
     description:
-      "Livepeer signed-ticket network fee (USD micros) — SUM of signer computed_fee_usd_micros; grouped by client, user, pipeline, model",
+      "Livepeer signed-ticket network fee (USD micros) — SUM of signer computed_fee_usd_micros; grouped by client, user, pipeline, app",
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
     valueProperty: "$.network_fee_usd_micros",
@@ -362,7 +372,7 @@ export const OPENMETER_METER_DEFINITIONS = [
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
       pipeline: "$.pipeline",
-      model_id: "$.model_id",
+      app: "$.app",
     },
   },
   {
@@ -374,13 +384,13 @@ export const OPENMETER_METER_DEFINITIONS = [
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
       pipeline: "$.pipeline",
-      model_id: "$.model_id",
+      app: "$.app",
     },
   },
   {
     slug: FEE_WEI_METER,
     description:
-      "Analytics: SUM of signed-ticket fee_wei (Wei); grouped by client, user, pipeline, model, manifest",
+      "Analytics: SUM of signed-ticket fee_wei (Wei); grouped by client, user, pipeline, app, manifest",
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
     valueProperty: "$.fee_wei",
@@ -398,7 +408,7 @@ export const OPENMETER_METER_DEFINITIONS = [
   {
     slug: BILLABLE_SECS_METER,
     description:
-      "Analytics: SUM of billable_secs; grouped by client, user, pipeline, model, manifest",
+      "Analytics: SUM of billable_secs; grouped by client, user, pipeline, app, manifest",
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
     valueProperty: "$.billable_secs",

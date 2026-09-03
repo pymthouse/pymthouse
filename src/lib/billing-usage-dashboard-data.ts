@@ -27,6 +27,7 @@ import {
   viewerHasAppUserMembership,
 } from "@/lib/viewer-usage-clients";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
 
 export type BillingUsageKind = "tenant" | "personal";
 
@@ -137,13 +138,9 @@ export type BillingChartSeries = {
   points: { date: string; value: number; feeUsdMicros?: string }[];
 };
 
-/** Chart legend label from OpenMeter pipeline + model_id (signer constraint). */
+/** Chart legend label from OpenMeter pipeline + signer app attribution. */
 export function formatUsageJobTypeLabel(pipeline: string, modelId: string): string {
-  const pipe = (pipeline || "unknown").trim() || "unknown";
-  const model = (modelId || "").trim();
-  if (!model || model === "unknown") return pipe;
-  const shortModel = model.length > 40 ? `${model.slice(0, 38)}…` : model;
-  return `${pipe} / ${shortModel}`;
+  return formatModelAttributionLabel(pipeline, modelId);
 }
 
 export type BillingUsageDashboardPayload = {

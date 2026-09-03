@@ -17,6 +17,7 @@ import {
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
+import { resolveSignedTicketAppAttribution } from "@/lib/openmeter/signed-ticket-attribution";
 import type { MeterQueryRow } from "@openmeter/sdk";
 
 function avoidOpenMeterNetworkInTests(): boolean {
@@ -185,13 +186,13 @@ const METER_GROUP_BY_DETAIL = [
   "client_id",
   "external_user_id",
   "pipeline",
-  "model_id",
+  "app",
 ] as const;
 const METER_GROUP_BY_MANIFEST = [
   "client_id",
   "external_user_id",
   "pipeline",
-  "model_id",
+  "app",
   "manifest_id",
 ] as const;
 
@@ -446,6 +447,29 @@ function groupByString(
   return fallback;
 }
 
+function optionalGroupString(
+  group: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = group[key];
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+}
+
+/** Signer `app`, else historical `model_id`, else live-video-to-video pipeline. */
+function attributionFromMeterGroup(group: Record<string, unknown>): string {
+  return resolveSignedTicketAppAttribution({
+    app: optionalGroupString(group, "app"),
+    pipeline: optionalGroupString(group, "pipeline"),
+    modelId: optionalGroupString(group, "model_id"),
+  });
+}
+
 function clientIdFromGroup(
   group: Record<string, unknown>,
   fallbackClientId: string,
@@ -564,7 +588,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = attributionFromMeterGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
@@ -587,7 +611,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = attributionFromMeterGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
@@ -658,7 +682,7 @@ export function aggregateManifestRows(input: {
       if (!metaByManifest.has(manifestId)) {
         metaByManifest.set(manifestId, {
           pipeline: groupByString(group, "pipeline", "unknown"),
-          modelId: groupByString(group, "model_id", "unknown"),
+          modelId: attributionFromMeterGroup(group),
         });
       }
       target.set(
@@ -749,7 +773,7 @@ function resolveUserPipelineModelMeta(
     matchKeys,
   );
   const pipeline = groupByString(group, "pipeline", "unknown");
-  const modelId = groupByString(group, "model_id", "unknown");
+  const modelId = attributionFromMeterGroup(group);
   return {
     externalUserId,
     pipeline,
@@ -995,7 +1019,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = attributionFromMeterGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -1023,7 +1047,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = attributionFromMeterGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
