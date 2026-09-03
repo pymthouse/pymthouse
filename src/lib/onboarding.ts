@@ -2,10 +2,7 @@ import { and, eq, isNull, ne } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { appUsers, developerApps, users } from "@/db/schema";
-import {
-  createAppUserApiKey,
-  formatCompositeApiKey,
-} from "@/lib/app-api-keys";
+import { createAppUserApiKey } from "@/lib/app-api-keys";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
@@ -235,13 +232,12 @@ export async function mintDefaultAppNetworkKey(input: {
     });
   }
 
-  // Personal apiKey stays bare (`pmth_*`). The remote-signer webhook exchanges
-  // that Bearer via issuer-path RFC 8693 (app resolved from the stored key).
-  // sdkToken still embeds the composite form for older webhook deployments.
+  // Personal apiKey and sdkToken Authorization both stay bare (`pmth_*`).
+  // The remote-signer webhook exchanges that Bearer via issuer-path RFC 8693.
   let sdkToken: string | null = null;
   try {
     sdkToken = createLivepeerPythonSdkToken({
-      apiKey: formatCompositeApiKey(clientId, created.apiKey),
+      apiKey: created.apiKey,
       signer: getClientSignerApiUrl(clientId),
     });
   } catch {

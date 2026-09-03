@@ -88,12 +88,11 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
 - Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite and `subject_token_type=urn:pymthouse:oauth:token-type:api_key`
 
-Composite remains the default presentation for Builder keys so pathless callers can recover the public client id from a single Bearer without a DB lookup. Personal network keys stay bare `pmth_*`; the remote-signer identity webhook exchanges that Bearer on the issuer path (`POST /api/v1/oidc/token`) by resolving the stored key. `sdkToken` still embeds the composite Authorization header for older webhook deployments.
+Composite remains the default presentation for Builder keys so pathless callers can recover the public client id from a single Bearer without a DB lookup. Personal network keys stay bare `pmth_*`; the remote-signer identity webhook exchanges that Bearer on the issuer path (`POST /api/v1/oidc/token`) by resolving the stored key. Personal `sdkToken` embeds the same bare Authorization header.
 
 **Design notes**
 
-- Personal keys stay bare for usage/self-serve and as `Authorization: Bearer` on the remote signer. The webhook treats `pmth_*` as an API key (not a JWT) and resolves the app from the credential.
-- `sdkToken` (livepeer-python-sdk `--token`) still embeds the composite `app_*_*` form for older webhook deployments that only parse a client id from the Bearer.
+- Personal keys stay bare for usage/self-serve, as `Authorization: Bearer` on the remote signer, and inside personal `sdkToken` (`--token`). The webhook treats `pmth_*` as an API key (not a JWT) and resolves the app from the credential.
 - Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) so pathless callers can recover `{clientId}` without a lookup.
 - Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
 - `formatCompositeApiKey` / `splitCompositeApiKey` parse the composite presentation form.
