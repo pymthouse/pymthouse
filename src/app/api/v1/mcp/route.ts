@@ -31,7 +31,7 @@ function metadataResponse(request: NextRequest) {
     name: "Livepeer MCP",
     mode: "hosted",
     description:
-      "User-scoped Livepeer MCP for the PymtHouse platform. Authenticate as developer, end-user, or M2M. Network tools follow each app's discovery settings. For run_capability / start_stream / call_live_runner, use the local client in livepeer-python-gateway/examples/comfypeer-mcp.",
+      "User-scoped Livepeer MCP for the PymtHouse platform. Authenticate as developer, end-user, or M2M. Network tools follow each app's discovery settings. For run_capability / call_live_runner, use livepeer-gateway[mcp] with LIVEPEER_MCP_URL set to this origin.",
     mcp_url: mcpUrl,
     issuer_url: issuerUrl,
     discovery_service_url: readDiscoveryServiceUrl(),
@@ -44,11 +44,14 @@ function metadataResponse(request: NextRequest) {
     },
     tools: [...HOSTED_TOOLS],
     local_client: {
-      path: "livepeer-python-gateway/examples/comfypeer-mcp",
+      package: "livepeer-gateway[mcp]",
+      command: "livepeer-mcp",
+      env: {
+        LIVEPEER_MCP_URL: mcpUrl,
+      },
       tools: [
         "list_capabilities",
         "run_capability",
-        "start_stream",
         "call_live_runner",
         "create_signer_session",
       ],

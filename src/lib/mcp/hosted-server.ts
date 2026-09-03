@@ -40,8 +40,8 @@ function errorResult(message: string) {
  * Hosted Livepeer MCP: user-scoped platform MCP on PymtHouse.
  * Auth is the caller's developer/end-user/M2M credential (no fixed app M2M behind MCP).
  * Network tools are scoped by the app's network discovery / manifest settings.
- * Execution (`run_capability` / `start_stream` / `call_live_runner`) stays in the local
- * livepeer-python-gateway examples/comfypeer-mcp client.
+ * Execution (`run_capability` / `call_live_runner`) stays in
+ * livepeer-gateway[mcp] (`livepeer-mcp`), pointed at this origin.
  */
 export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServer {
   const server = new McpServer({
@@ -51,8 +51,8 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       "Hosted Livepeer MCP on PymtHouse. Authenticate as developer, end-user, or M2M " +
       "(Authorization: Bearer <API key|JWT>, or Basic M2M). " +
       "Tools cover app network capabilities and create_signer_session. " +
-      "For run_capability / start_stream / call_live_runner, use " +
-      "livepeer-python-gateway/examples/comfypeer-mcp.",
+      "For run_capability / call_live_runner, use livepeer-gateway[mcp] " +
+      "with LIVEPEER_MCP_URL set to this origin.",
   });
 
   server.registerTool(
@@ -77,7 +77,7 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         developer_app_id: principal.developerAppId,
         discovery_service_url: readDiscoveryServiceUrl(),
         local_execution:
-          "livepeer-python-gateway/examples/comfypeer-mcp (run_capability / start_stream / call_live_runner)",
+          "livepeer-gateway[mcp] livepeer-mcp (run_capability / call_live_runner)",
       });
     },
   );
