@@ -233,6 +233,21 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
 });
 
+test("normalizeSignedTicketEvent prefers event app over empty model_id", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        model_id: "unknown",
+        app: "live-video-to-video/scope",
+      },
+    }),
+  );
+  assert.ok(row);
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video/scope");
+});
+
 test("coerceIngestedEvent accepts wrapped IngestedEvent", () => {
   const coerced = coerceIngestedEvent(sampleEvent());
   assert.ok(coerced);
@@ -836,4 +851,33 @@ test("enrichSessionRowWithEventStats attaches times and resolves duration", () =
   assert.equal(enriched.startedAt, "2026-07-20T15:00:00.000Z");
   assert.equal(enriched.endedAt, "2026-07-20T15:01:00.000Z");
   assert.equal(enriched.billableSecs, "12.5");
+});
+
+test("enrichSessionRowWithEventStats overlays app when meter model_id is unknown", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+        app: "live-video-to-video/scope",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video/scope");
 });

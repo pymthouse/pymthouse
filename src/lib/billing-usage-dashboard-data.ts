@@ -10,6 +10,7 @@ import {
   listOwnerPaymentMethods,
   type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
+import { formatUsageCapabilityLabel } from "@/lib/openmeter/usage-capability";
 import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
@@ -137,13 +138,9 @@ export type BillingChartSeries = {
   points: { date: string; value: number; feeUsdMicros?: string }[];
 };
 
-/** Chart legend label from OpenMeter pipeline + model_id (signer constraint). */
+/** Chart legend label from pipeline + Live Runner app (optional model_id fallback). */
 export function formatUsageJobTypeLabel(pipeline: string, modelId: string): string {
-  const pipe = (pipeline || "unknown").trim() || "unknown";
-  const model = (modelId || "").trim();
-  if (!model || model === "unknown") return pipe;
-  const shortModel = model.length > 40 ? `${model.slice(0, 38)}…` : model;
-  return `${pipe} / ${shortModel}`;
+  return formatUsageCapabilityLabel(pipeline, modelId);
 }
 
 export type BillingUsageDashboardPayload = {
