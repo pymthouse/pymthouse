@@ -36,13 +36,13 @@
 #   producers start emitting payer#actor.
 # - Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
 #
-# Pipeline / model (wire -> CloudEvent dims):
-# - Preferred: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
+# Pipeline / capability (wire -> CloudEvent dims):
+# - Preferred: Kafka `app` (Live Runner app, e.g. live-video-to-video/scope). Copied into
+#   data.model_id when model_id is absent so existing meters still group by capability.
+# - Legacy: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
 #   the first ':' into data.pipeline + data.model_id.
-# - Legacy: separate Kafka model_id (pre-encode images) is still accepted and preferred
-#   when present.
-# - Also passthrough (CloudEvent data only, not meter dimensions): app, session_status,
-#   orch_address, num_tickets.
+# - Legacy: separate Kafka model_id (pre-encode images) is still accepted when present.
+# - data.app is always passthrough when present (session_status, orch_address, num_tickets too).
 
 
 cache_resources:
@@ -227,7 +227,7 @@ pipeline:
         }
         let manifest_id_out = if $manifest_id != "" { $manifest_id } else { "unknown" }
 
-        # Pipeline / model: prefer legacy Kafka model_id; else split base:model.
+        # Pipeline / capability: prefer Kafka app when model_id is absent.
         let pipeline_raw = if $data.pipeline != "" && $data.pipeline != null {
           $data.pipeline.string().trim()
         } else {
@@ -238,6 +238,7 @@ pipeline:
         } else {
           ""
         }
+        let app_out = $data.app.or("").string().trim()
         let pipeline_colon = $pipeline_raw.index_of(":")
         let pipeline_has_model = $pipeline_colon > 0 && $pipeline_colon < $pipeline_raw.length() - 1
         let pipeline_out = if $pipeline_raw == "" {
@@ -253,11 +254,11 @@ pipeline:
           $legacy_model_id
         } else if $pipeline_has_model {
           $pipeline_raw.slice($pipeline_colon + 1)
+        } else if $app_out != "" {
+          $app_out
         } else {
           "unknown"
         }
-
-        let app_out = $data.app.or("").string()
         let session_status_out = $data.session_status.or("").string()
         let orch_address_out = $data.orch_address.or("").string()
         let num_tickets_out = $data.num_tickets.number().or(0)

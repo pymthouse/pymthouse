@@ -21,6 +21,7 @@ import {
   usdMicrosToDecimalDollars,
 } from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
+import { capabilityFromUsageFields } from "./usage-capability";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
 export { ensureOpenMeterCustomer } from "./customers";
@@ -244,7 +245,10 @@ export type SignedTicketOpenMeterEvent = {
   feeWei?: string;
   pixels?: string;
   pipeline?: string;
+  /** Optional; Live Runner traffic uses `app` instead. */
   modelId?: string;
+  /** Live Runner app name from the signed-ticket event (preferred capability). */
+  app?: string;
   manifestId?: string;
   billableSecs?: number;
   gatewayRequestId?: string;
@@ -313,7 +317,11 @@ export async function ingestSignedTicketEvent(input: {
       fee_wei: feeWei,
       pixels: input.event.pixels,
       pipeline: input.event.pipeline || "unknown",
-      model_id: input.event.modelId || "unknown",
+      model_id: capabilityFromUsageFields({
+        app: input.event.app,
+        modelId: input.event.modelId,
+      }),
+      app: input.event.app?.trim() || "",
       manifest_id: input.event.manifestId?.trim() || "unknown",
       billable_secs: billableSecs,
       gateway_request_id: input.event.gatewayRequestId,

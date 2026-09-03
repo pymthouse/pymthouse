@@ -17,6 +17,7 @@ import {
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
+import { capabilityFromUsageFields } from "@/lib/openmeter/usage-capability";
 import type { MeterQueryRow } from "@openmeter/sdk";
 
 function avoidOpenMeterNetworkInTests(): boolean {
@@ -181,6 +182,7 @@ type MeterWindowSize = "DAY" | "MONTH";
 
 /** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
 const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
+/** `model_id` is filled from event `app` at ingest when model_id is absent. */
 const METER_GROUP_BY_DETAIL = [
   "client_id",
   "external_user_id",
@@ -446,6 +448,14 @@ function groupByString(
   return fallback;
 }
 
+/** Meter/event capability: Live Runner `app`, with optional `model_id` fallback. */
+function capabilityFromGroup(group: Record<string, unknown>): string {
+  return capabilityFromUsageFields({
+    app: groupByString(group, "app", ""),
+    modelId: groupByString(group, "model_id", ""),
+  });
+}
+
 function clientIdFromGroup(
   group: Record<string, unknown>,
   fallbackClientId: string,
@@ -564,7 +574,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = capabilityFromGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
@@ -587,7 +597,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = capabilityFromGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
@@ -658,7 +668,7 @@ export function aggregateManifestRows(input: {
       if (!metaByManifest.has(manifestId)) {
         metaByManifest.set(manifestId, {
           pipeline: groupByString(group, "pipeline", "unknown"),
-          modelId: groupByString(group, "model_id", "unknown"),
+          modelId: capabilityFromGroup(group),
         });
       }
       target.set(
@@ -749,7 +759,7 @@ function resolveUserPipelineModelMeta(
     matchKeys,
   );
   const pipeline = groupByString(group, "pipeline", "unknown");
-  const modelId = groupByString(group, "model_id", "unknown");
+  const modelId = capabilityFromGroup(group);
   return {
     externalUserId,
     pipeline,
@@ -995,7 +1005,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = capabilityFromGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -1023,7 +1033,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = groupByString(group, "model_id", "unknown");
+    const modelId = capabilityFromGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -1165,6 +1175,7 @@ export function __testAccumulateOpenMeterUsage(input: {
   networkFeeUsdMicros: string;
   pipeline?: string;
   modelId?: string;
+  app?: string;
 }): void {
   if (process.env.NODE_ENV !== "test") {
     throw new Error("__testAccumulateOpenMeterUsage is only available in test");
@@ -1176,7 +1187,10 @@ export function __testAccumulateOpenMeterUsage(input: {
   }
 
   const pipeline = input.pipeline?.trim() || "unknown";
-  const modelId = input.modelId?.trim() || "unknown";
+  const modelId = capabilityFromUsageFields({
+    app: input.app,
+    modelId: input.modelId,
+  });
   const rows = testUsageRowsByClient.get(input.clientId) ?? [];
   const existing = rows.find((row) => row.externalUserId === input.externalUserId);
   if (existing) {

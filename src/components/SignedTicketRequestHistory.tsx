@@ -26,6 +26,7 @@ import type {
   SignedTicketRequestRow,
   SignedTicketSessionRow,
 } from "@/lib/openmeter/signed-ticket-events";
+import { formatUsageCapabilityLabel } from "@/lib/openmeter/usage-capability";
 
 type RequestsResponse = {
   items: SignedTicketRequestRow[];
@@ -128,7 +129,7 @@ function historyCopy(
 }
 
 function pipelineModelLabel(pipeline: string, modelId: string): string {
-  return modelId && modelId !== "unknown" ? `${pipeline} / ${modelId}` : pipeline;
+  return formatUsageCapabilityLabel(pipeline, modelId);
 }
 
 function requestFeeLabel(row: SignedTicketRequestRow): string {
