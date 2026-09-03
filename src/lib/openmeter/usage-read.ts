@@ -182,6 +182,7 @@ type MeterWindowSize = "DAY" | "MONTH";
 
 /** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
 const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
+/** `model_id` is filled from event `app` at ingest when model_id is absent. */
 const METER_GROUP_BY_DETAIL = [
   "client_id",
   "external_user_id",
@@ -1189,6 +1190,7 @@ export function __testAccumulateOpenMeterUsage(input: {
   networkFeeUsdMicros: string;
   pipeline?: string;
   modelId?: string;
+  app?: string;
 }): void {
   if (process.env.NODE_ENV !== "test") {
     throw new Error("__testAccumulateOpenMeterUsage is only available in test");
@@ -1200,7 +1202,10 @@ export function __testAccumulateOpenMeterUsage(input: {
   }
 
   const pipeline = input.pipeline?.trim() || "unknown";
-  const modelId = input.modelId?.trim() || "unknown";
+  const modelId = capabilityFromUsageFields({
+    app: input.app,
+    modelId: input.modelId,
+  });
   const rows = testUsageRowsByClient.get(input.clientId) ?? [];
   const existing = rows.find((row) => row.externalUserId === input.externalUserId);
   if (existing) {

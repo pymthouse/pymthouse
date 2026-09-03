@@ -286,6 +286,40 @@ test("aggregatePipelineModelRows prefers app and falls back to historical model_
   assert.equal(lv2v[0]?.modelId, "live-video-to-video");
 });
 
+test("aggregatePipelineModelRows prefers app over unknown model_id", () => {
+  const rows = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live-video-to-video",
+          model_id: "unknown",
+          app: "live-video-to-video/scope",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 4,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live-video-to-video",
+          model_id: "unknown",
+          app: "live-video-to-video/scope",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.pipeline, "live-video-to-video");
+  assert.equal(rows[0]?.modelId, "live-video-to-video/scope");
+  assert.equal(rows[0]?.requestCount, 4);
+});
+
 test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
   const feeRows = [
     {

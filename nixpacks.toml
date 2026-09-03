@@ -6,8 +6,8 @@ nixPkgs = ["wget", "gnutar", "coreutils"]
 
 [phases.install]
 cmds = [
-  "wget -q https://build.livepeer.live/go-livepeer/0a1919e0c58986375df158433445563a45a04df8/livepeer-linux-amd64.tar.gz -O livepeer-linux-amd64.tar.gz",
-  "echo '0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade  livepeer-linux-amd64.tar.gz' | sha256sum -c -",
+  "wget -q https://build.livepeer.live/go-livepeer/38eb47d12ab1d2d874fc4c7c061aa1900b7c0bad/livepeer-linux-amd64.tar.gz -O livepeer-linux-amd64.tar.gz",
+  "echo '823cf8bf19963b959cbc4f8139c619af41eebcd2fdd8481de92af1d15d38700d  livepeer-linux-amd64.tar.gz' | sha256sum -c -",
   "tar -xzf livepeer-linux-amd64.tar.gz",
   "mv livepeer-linux-amd64/livepeer ./livepeer",
   "chmod +x livepeer",

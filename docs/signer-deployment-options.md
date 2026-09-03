@@ -122,8 +122,8 @@ app = "pymthouse-signer"
 
 [build]
   [build.args]
-    LIVEPEER_COMMIT = "0a1919e0c58986375df158433445563a45a04df8"
-    LIVEPEER_SHA256 = "0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade"
+    LIVEPEER_COMMIT = "38eb47d12ab1d2d874fc4c7c061aa1900b7c0bad"
+    LIVEPEER_SHA256 = "823cf8bf19963b959cbc4f8139c619af41eebcd2fdd8481de92af1d15d38700d"
 
 [env]
   SIGNER_NETWORK = "arbitrum-one-mainnet"

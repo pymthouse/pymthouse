@@ -22,6 +22,10 @@ import {
   parseOpenMeterCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
+import {
+  capabilityFromUsageFields,
+  isUnknownUsageCapability,
+} from "@/lib/openmeter/usage-capability";
 import { millisToSecsString } from "@/lib/openmeter/usage-read";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 import { resolveSignedTicketAppAttribution } from "@/lib/openmeter/signed-ticket-attribution";
@@ -121,6 +125,8 @@ export type ManifestSessionEventStats = {
   firstSeen: string;
   lastSeen: string;
   billableSecs: number;
+  pipeline?: string;
+  app?: string;
 };
 
 export type ListSignedTicketSessionsResult = {
@@ -1020,8 +1026,18 @@ export function enrichSessionRowWithEventStats(
   const stats = eventStats.get(sessionEventStatsKey(row.clientId, row.manifestId));
   const startedAt = stats?.firstSeen;
   const endedAt = stats?.lastSeen;
+  const pipeline =
+    stats?.pipeline && !isUnknownUsageCapability(stats.pipeline)
+      ? stats.pipeline
+      : row.pipeline;
+  const modelId = capabilityFromUsageFields({
+    app: stats?.app,
+    modelId: row.modelId,
+  });
   return {
     ...row,
+    pipeline,
+    modelId,
     startedAt,
     endedAt,
     billableSecs: resolveSessionBillableSecs(
@@ -1094,6 +1110,11 @@ export function aggregateManifestSessionEventStats(
       sessionEventStatsKey(clientId, manifestId),
       time,
       secs,
+      stringField(data, "pipeline"),
+      capabilityFromUsageFields({
+        app: stringField(data, "app"),
+        modelId: stringField(data, "model_id"),
+      }),
     );
   }
   return out;
@@ -1160,6 +1181,8 @@ function accumulateSessionEventStat(
   key: string,
   time: string,
   secs: number,
+  pipeline?: string | null,
+  app?: string | null,
 ): void {
   const prev = out.get(key);
   if (!prev) {
@@ -1167,12 +1190,18 @@ function accumulateSessionEventStat(
       firstSeen: time,
       lastSeen: time,
       billableSecs: secs,
+      pipeline: pipeline?.trim() || undefined,
+      app: isUnknownUsageCapability(app) ? undefined : app?.trim(),
     });
     return;
   }
   if (time < prev.firstSeen) prev.firstSeen = time;
   if (time > prev.lastSeen) prev.lastSeen = time;
   if (secs > 0) prev.billableSecs += secs;
+  if (!prev.pipeline && pipeline?.trim()) prev.pipeline = pipeline.trim();
+  if (isUnknownUsageCapability(prev.app) && !isUnknownUsageCapability(app)) {
+    prev.app = app?.trim();
+  }
 }
 
 /** Prefer meter SUM; fall back to event SUM or wall-clock span when meter is 0. */

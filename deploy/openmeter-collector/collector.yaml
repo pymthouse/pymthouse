@@ -41,6 +41,8 @@
 # - `model_id` is no longer populated and is not emitted on the CloudEvent.
 # - live-video-to-video still writes a pipeline but an empty app — use the pipeline
 #   name as data.app in that case only.
+# - Legacy: Kafka pipeline "base:model" (e.g. live-video-to-video:comfyui) is still
+#   accepted on read paths via historical model_id grouping.
 # - Also passthrough (CloudEvent data only, not meter dimensions): session_status,
 #   orch_address, num_tickets.
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/oidc/issuer-urls";
 import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
 import { createLocalTokenExchangeFetch } from "@/lib/oidc/local-token-exchange-fetch";
+import { withPersonalApiKeyExchange } from "@/lib/oidc/personal-api-key-webhook-exchange";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
 import { wireUsageSubjectFromJwt } from "@/lib/openmeter/billing-identity";
@@ -182,25 +183,27 @@ function buildEndUserVerifier(
     isSelfIssuedJwtIssuer(jwtIssuer, resolveAppOrigin(source, original));
 
   if (!selfIssued) {
-    return createEndUserVerifierFromEnv(source);
+    return withPersonalApiKeyExchange(createEndUserVerifierFromEnv(source));
   }
 
   const appOrigin = resolveAppOrigin(source, original);
-  return createOidcVerifier({
-    jwtIssuer,
-    jwtAudience: trimEnv(source, "OIDC_AUDIENCE") || jwtIssuer,
-    jwks: createLocalSignerJwksResolver() as OidcVerifierJwks,
-    issuer: trimEnv(source, "IDENTITY_ISSUER") || jwtIssuer,
-    clientClaim: trimEnv(source, "OIDC_CLIENT_CLAIM") || undefined,
-    subjectClaim: trimEnv(source, "OIDC_SUBJECT_CLAIM") || undefined,
-    subjectTypeValue: trimEnv(source, "OIDC_SUBJECT_TYPE") || undefined,
-    requiredScopes: parseRequiredScopes(source),
-    tokenExchangeBaseUrl: trimEnv(source, "OIDC_TOKEN_EXCHANGE_BASE_URL") || undefined,
-    exchangeM2mClientId: trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_ID") || undefined,
-    exchangeM2mClientSecret:
-      trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_SECRET") || undefined,
-    fetchImpl: createLocalTokenExchangeFetch(appOrigin),
-  });
+  return withPersonalApiKeyExchange(
+    createOidcVerifier({
+      jwtIssuer,
+      jwtAudience: trimEnv(source, "OIDC_AUDIENCE") || jwtIssuer,
+      jwks: createLocalSignerJwksResolver() as OidcVerifierJwks,
+      issuer: trimEnv(source, "IDENTITY_ISSUER") || jwtIssuer,
+      clientClaim: trimEnv(source, "OIDC_CLIENT_CLAIM") || undefined,
+      subjectClaim: trimEnv(source, "OIDC_SUBJECT_CLAIM") || undefined,
+      subjectTypeValue: trimEnv(source, "OIDC_SUBJECT_TYPE") || undefined,
+      requiredScopes: parseRequiredScopes(source),
+      tokenExchangeBaseUrl: trimEnv(source, "OIDC_TOKEN_EXCHANGE_BASE_URL") || undefined,
+      exchangeM2mClientId: trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_ID") || undefined,
+      exchangeM2mClientSecret:
+        trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_SECRET") || undefined,
+      fetchImpl: createLocalTokenExchangeFetch(appOrigin),
+    }),
+  );
 }
 
 function withPhaseTiming(verifier: EndUserVerifier): EndUserVerifier {
