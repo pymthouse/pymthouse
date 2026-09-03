@@ -38,7 +38,8 @@ WORKDIR /build
 # Fetch commit archives over HTTPS (not git clone). Railway builders get
 # GitHub credential prompts on anonymous git-over-HTTPS:
 #   fatal: could not read Username for 'https://github.com'
-RUN curl -fsSL "https://github.com/benmcollins/libjwt/archive/${LIBJWT_COMMIT}.tar.gz" \
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://github.com/benmcollins/libjwt/archive/${LIBJWT_COMMIT}.tar.gz" \
       | tar -xz && \
     cd "libjwt-${LIBJWT_COMMIT}" && \
     autoreconf -i && \
@@ -47,7 +48,8 @@ RUN curl -fsSL "https://github.com/benmcollins/libjwt/archive/${LIBJWT_COMMIT}.t
     make install && \
     ldconfig
 
-RUN curl -fsSL "https://github.com/AnthonyDeroche/mod_authnz_jwt/archive/${MOD_AUTHNZ_JWT_COMMIT}.tar.gz" \
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://github.com/AnthonyDeroche/mod_authnz_jwt/archive/${MOD_AUTHNZ_JWT_COMMIT}.tar.gz" \
       | tar -xz && \
     cd "mod_authnz_jwt-${MOD_AUTHNZ_JWT_COMMIT}" && \
     autoreconf -ivf && \
