@@ -19,8 +19,10 @@ import {
   resolveOpenMeterBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
 
-const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
-const REFRESH_TOKEN_TTL_DAYS = 30;
+// Independent of node-oidc-provider TTLs (`OIDC_*_TOKEN_TTL_SECONDS`). Builder
+// mint stays 15m access + 30d refresh even when interactive OIDC refresh is 90d.
+export const PROGRAMMATIC_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+export const PROGRAMMATIC_REFRESH_TOKEN_TTL_DAYS = 30;
 
 export class ProgrammaticTokenError extends Error {
   code: string;
@@ -135,21 +137,21 @@ export async function issueProgrammaticTokens(input: {
     .setJti(uuidv4())
     .setIssuedAt(nowSeconds)
     .setNotBefore(nowSeconds)
-    .setExpirationTime(nowSeconds + ACCESS_TOKEN_TTL_SECONDS)
+    .setExpirationTime(nowSeconds + PROGRAMMATIC_ACCESS_TOKEN_TTL_SECONDS)
     .sign(keyPair.privateKey);
 
   const refresh = await createSession({
     appId: binding.oauthClientId,
     label: `app_user_refresh:${binding.appUserId}`,
     scopes: scope,
-    expiresInDays: REFRESH_TOKEN_TTL_DAYS,
+    expiresInDays: PROGRAMMATIC_REFRESH_TOKEN_TTL_DAYS,
   });
 
   return {
     access_token: accessToken,
     refresh_token: refresh.token,
     token_type: "Bearer",
-    expires_in: ACCESS_TOKEN_TTL_SECONDS,
+    expires_in: PROGRAMMATIC_ACCESS_TOKEN_TTL_SECONDS,
     scope,
     subject_type: "app_user",
   };

@@ -16,6 +16,8 @@ User-scoped MCP on PymtHouse (`GET/POST /api/v1/mcp`). Auth with the caller’s 
 
 `create_signer_session` with M2M Basic requires `sign:job` on both the M2M client and the public app client (same gates as OIDC `client_credentials` owner `sign:job`).
 
+OIDC user JWTs from DCR / device login expire in **1 hour** by default (`OIDC_ACCESS_TOKEN_TTL_SECONDS`). MCP clients should use the rotating **refresh token** (default **90 days**, `OIDC_REFRESH_TOKEN_TTL_SECONDS`; grant/session follow refresh). Do not mint day-long access tokens. Signer session JWTs from `create_signer_session` stay **5 minutes**.
+
 No platform-fixed M2M behind the MCP. Optional: `DISCOVERY_SERVICE_URL` for orchestrator query / freshness.
 
 ```bash
