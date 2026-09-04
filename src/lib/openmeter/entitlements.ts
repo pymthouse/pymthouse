@@ -247,7 +247,7 @@ export type SignedTicketOpenMeterEvent = {
   pipeline?: string;
   /** Signer model attribution (`data.app`). Preferred over `modelId`. */
   app?: string;
-  /** @deprecated Historical ingest field; mapped onto `app` when `app` is empty. */
+  /** Historical ingest field; mapped onto `app` when `app` is empty. */
   modelId?: string;
   manifestId?: string;
   billableSecs?: number;

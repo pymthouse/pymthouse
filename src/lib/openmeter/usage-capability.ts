@@ -8,11 +8,10 @@
 
 import {
   formatModelAttributionLabel,
-  isUnknownUsageCapability,
   resolveSignedTicketAppAttribution,
 } from "./signed-ticket-attribution";
 
-export { isUnknownUsageCapability };
+export { isUnknownUsageCapability } from "./signed-ticket-attribution";
 
 /** Prefer event `app` when `model_id` is missing or unknown. */
 export function capabilityFromUsageFields(input: {
