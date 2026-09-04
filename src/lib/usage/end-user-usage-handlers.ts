@@ -12,6 +12,7 @@ import {
   handleAppUsageBalanceGet,
   handleAppUsageGet,
 } from "@/lib/usage/app-usage-handlers";
+import { parseOptionalDateRange } from "@/lib/usage/parse-optional-date-range";
 
 /**
  * `publicClientId` is the app the credential must belong to. Omit it for the
@@ -96,6 +97,11 @@ export async function handleEndUserMeUsageRequestsGet(
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 
+  const dateRange = parseOptionalDateRange(params);
+  if ("error" in dateRange) {
+    return dateRange.error;
+  }
+
   if (groupBy !== "request" && groupBy !== "session") {
     return NextResponse.json(
       { error: "Invalid groupBy; use request or session" },
@@ -109,6 +115,8 @@ export async function handleEndUserMeUsageRequestsGet(
       clientId: auth.publicClientId,
       cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
+      from: dateRange.from,
+      to: dateRange.to,
     });
 
     return NextResponse.json({
@@ -127,6 +135,8 @@ export async function handleEndUserMeUsageRequestsGet(
     manifestId,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
+    from: dateRange.from,
+    to: dateRange.to,
   });
 
   return NextResponse.json({
