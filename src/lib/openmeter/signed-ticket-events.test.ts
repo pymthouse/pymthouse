@@ -922,3 +922,31 @@ test("enrichSessionRowWithEventStats overlays app when meter model_id is unknown
   const enriched = enrichSessionRowWithEventStats(base, stats);
   assert.equal(enriched.modelId, "live-video-to-video/scope");
 });
+
+test("enrichSessionRowWithEventStats uses live-video-to-video pipeline when app is empty", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video");
+});

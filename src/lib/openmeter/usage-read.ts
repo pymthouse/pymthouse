@@ -182,7 +182,7 @@ type MeterWindowSize = "DAY" | "MONTH";
 
 /** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
 const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
-/** `model_id` is filled from event `app` at ingest when model_id is absent. */
+/** Signer `app` is the model attribution; historical rows may still have `model_id`. */
 const METER_GROUP_BY_DETAIL = [
   "client_id",
   "external_user_id",
@@ -1202,8 +1202,9 @@ export function __testAccumulateOpenMeterUsage(input: {
   }
 
   const pipeline = input.pipeline?.trim() || "unknown";
-  const modelId = capabilityFromUsageFields({
+  const modelId = resolveSignedTicketAppAttribution({
     app: input.app,
+    pipeline,
     modelId: input.modelId,
   });
   const rows = testUsageRowsByClient.get(input.clientId) ?? [];

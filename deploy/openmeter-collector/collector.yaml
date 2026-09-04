@@ -239,12 +239,10 @@ pipeline:
         let pipeline_out = if $pipeline_raw == "" { "unknown" } else { $pipeline_raw }
 
         let app_raw = $data.app.or("").string().trim()
-        let app_out = if $app_raw != "" && $app_raw != "unknown" {
+        let app_out = if $app_raw != "" && $app_raw.lowercase() != "unknown" {
           $app_raw
         } else if $pipeline_out == "live-video-to-video" {
           $pipeline_out
-        } else if $app_raw != "" {
-          $app_raw
         } else {
           "unknown"
         }

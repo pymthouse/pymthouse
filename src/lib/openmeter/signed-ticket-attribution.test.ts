@@ -36,6 +36,16 @@ test("resolveSignedTicketAppAttribution uses live-video-to-video pipeline when a
   );
 });
 
+test("resolveSignedTicketAppAttribution treats Unknown as missing", () => {
+  assert.equal(
+    resolveSignedTicketAppAttribution({
+      app: "Unknown",
+      pipeline: LIVE_VIDEO_TO_VIDEO_PIPELINE,
+    }),
+    LIVE_VIDEO_TO_VIDEO_PIPELINE,
+  );
+});
+
 test("resolveSignedTicketAppAttribution does not substitute other pipelines for empty app", () => {
   assert.equal(
     resolveSignedTicketAppAttribution({

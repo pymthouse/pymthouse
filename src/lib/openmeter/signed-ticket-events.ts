@@ -1033,6 +1033,7 @@ export function enrichSessionRowWithEventStats(
   const modelId = capabilityFromUsageFields({
     app: stats?.app,
     modelId: row.modelId,
+    pipeline,
   });
   return {
     ...row,
@@ -1114,6 +1115,7 @@ export function aggregateManifestSessionEventStats(
       capabilityFromUsageFields({
         app: stringField(data, "app"),
         modelId: stringField(data, "model_id"),
+        pipeline: stringField(data, "pipeline"),
       }),
     );
   }

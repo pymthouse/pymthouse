@@ -14,9 +14,16 @@ export const LIVE_VIDEO_TO_VIDEO_PIPELINE = "live-video-to-video";
 
 const UNKNOWN_ATTRIBUTION = "unknown";
 
+export function isUnknownUsageCapability(
+  value: string | null | undefined,
+): boolean {
+  const trimmed = value?.trim() ?? "";
+  return !trimmed || trimmed.toLowerCase() === UNKNOWN_ATTRIBUTION;
+}
+
 function nonemptyAttribution(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
-  if (!trimmed || trimmed === UNKNOWN_ATTRIBUTION) {
+  if (isUnknownUsageCapability(trimmed)) {
     return null;
   }
   return trimmed;
@@ -49,7 +56,7 @@ export function formatModelAttributionLabel(
 ): string {
   const pipe = (pipeline || UNKNOWN_ATTRIBUTION).trim() || UNKNOWN_ATTRIBUTION;
   const model = (attribution || "").trim();
-  if (!model || model === UNKNOWN_ATTRIBUTION || model === pipe) {
+  if (isUnknownUsageCapability(model) || model === pipe) {
     return pipe;
   }
   const shortModel = model.length > 40 ? `${model.slice(0, 38)}…` : model;
