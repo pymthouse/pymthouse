@@ -257,9 +257,11 @@ async function loadActiveTargetPlan(input: {
   }
   if (plan.status !== "active") {
     throw new Error(
-      plan.status === "phase_out"
-        ? "Plan is being phased out and cannot accept new subscribers"
-        : "Plan is not active",
+      plan.isStarterDefault && plan.status === "draft"
+        ? "This free plan is disabled and cannot accept new subscribers"
+        : plan.status === "phase_out"
+          ? "Plan is being phased out and cannot accept new subscribers"
+          : "Plan is not active",
     );
   }
   if (!plan.openmeterPlanId) {
