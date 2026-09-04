@@ -61,6 +61,7 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       actorExternalUserId: "ext-9",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
     }),
     "eu_end-user-1",
   );
@@ -75,6 +76,7 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       actorExternalUserId: "ext-9",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
     }),
     "eu_end-user-1",
   );
@@ -89,6 +91,7 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       actorExternalUserId: "ext-9",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
     }),
     "sbx_eu_end-user-1",
   );
@@ -103,6 +106,7 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       actorExternalUserId: "owner-uuid",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
     }),
     "owner-uuid",
   );
@@ -120,6 +124,7 @@ nodeTest("appUserOpenMeterLookupKeys prefers sandbox payer over live actor and o
       actorExternalUserId: "ext-9",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
       legacyCompoundCustomerKey: "app_demo:ext-9",
     }),
     ["sbx_eu_end-user-1", "app_demo:ext-9"],
@@ -136,6 +141,7 @@ nodeTest("appUserOpenMeterLookupKeys prefers sandbox payer over live actor and o
       actorExternalUserId: "ext-9",
       publicClientId: "app_demo",
       developerAppId: "app_demo",
+      billingMode: "owner_rollup",
       legacyCompoundCustomerKey: "app_demo:ext-9",
     }),
     ["eu_end-user-1", "app_demo:ext-9"],
@@ -283,7 +289,9 @@ test("owner_rollup end-user shares the owner wallet with eu_ actor", async (t) =
   assert.deepEqual(costOwnerUserIdClaim(identity), {
     cost_owner_user_id: seeded.userId,
   });
+  assert.equal(identity.billingMode, "owner_rollup");
   assert.deepEqual(billingSubjectClaim(identity), {
+    billing_mode: "owner_rollup",
     billing_subject_key: buildOwnerCustomerKey(seeded.userId),
     cost_owner_user_id: seeded.userId,
   });
@@ -320,8 +328,10 @@ test("live merchant end-user bills stable eu_ customer", async (t) => {
     identity.legacyCompoundCustomerKey,
     buildOpenMeterCustomerKey(seeded.clientId, endUserId),
   );
+  assert.equal(identity.billingMode, "merchant");
   assert.deepEqual(costOwnerUserIdClaim(identity), {});
   assert.deepEqual(billingSubjectClaim(identity), {
+    billing_mode: "merchant",
     billing_subject_key: identity.payerCustomerKey,
   });
   assert.equal(
@@ -404,6 +414,7 @@ test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
     buildSandboxEndUserCustomerKey(identity.actorEndUserId),
   );
   assert.deepEqual(billingSubjectClaim(identity), {
+    billing_mode: "merchant",
     billing_subject_key: identity.payerCustomerKey,
   });
 });
@@ -424,7 +435,9 @@ test("normal app owner bills shared owner wallet", async (t) => {
   assert.equal(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
   assert.equal(appUserRetailCustomerKey(identity), identity.customerKey);
   assert.deepEqual(costOwnerUserIdClaim(identity), {});
-  assert.deepEqual(billingSubjectClaim(identity), {});
+  assert.deepEqual(billingSubjectClaim(identity), {
+    billing_mode: "owner_rollup",
+  });
 });
 
 test("assertAppUserRetailBillingSubject rejects owner wallet targets", async (t) => {

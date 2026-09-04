@@ -7,6 +7,7 @@ export const OPENAPI_TAGS = {
   billing: "Billing",
   discovery: "Discovery",
   endUserUsage: "End-user Usage",
+  endUserBilling: "End-user Billing",
   marketplace: "Marketplace",
   platform: "Platform",
   oidc: "OIDC",
@@ -88,6 +89,12 @@ const END_USER_OPERATION_KEYS = new Set([
   "GET /api/v1/apps/{clientId}/me/usage",
   "GET /api/v1/apps/{clientId}/me/usage/balance",
   "GET /api/v1/apps/{clientId}/me/usage/requests",
+  "GET /api/v1/apps/{clientId}/me/billing/allowances",
+  "GET /api/v1/apps/{clientId}/me/billing/wallet",
+  "GET /api/v1/apps/{clientId}/me/billing/state",
+  "GET /api/v1/apps/{clientId}/me/billing/invoices",
+  "GET /api/v1/apps/{clientId}/me/billing/payment-methods",
+  "GET /api/v1/apps/{clientId}/me/billing/subscription",
   // Pathless: app resolved from Bearer credential.
   "GET /api/v1/user/usage",
   "GET /api/v1/user/usage/balance",
@@ -209,6 +216,12 @@ export const BUILDER_TAG_DEFINITIONS: Array<{
       "`GET /api/v1/apps/{clientId}/me/usage*` requires path `{clientId}` to match.",
   },
   {
+    name: OPENAPI_TAGS.endUserBilling,
+    description:
+      "Self-serve billing for the authenticated end user on `/apps/{clientId}/me/billing/*`. " +
+      "Subject is the Bearer credential only — do not pass `externalUserId`.",
+  },
+  {
     name: OPENAPI_TAGS.billing,
     description: "Billing profile, plan list, and checkout for integrator backends.",
   },
@@ -249,7 +262,7 @@ export const BUILDER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }>
   },
   {
     name: "End-user",
-    tags: [OPENAPI_TAGS.endUserUsage],
+    tags: [OPENAPI_TAGS.endUserUsage, OPENAPI_TAGS.endUserBilling],
   },
   {
     name: "Catalog",
@@ -335,6 +348,7 @@ OIDC discovery: \`{issuer}/.well-known/openid-configuration\`.
 
 Canonical Builder usage: \`GET /api/v1/builder/apps/{clientId}/usage*\`.
 End-user usage: \`GET /api/v1/user/usage*\` (app from credential) or \`GET /api/v1/apps/{clientId}/me/usage*\` (path must match).
+End-user billing reads: \`GET /api/v1/apps/{clientId}/me/billing/{allowances,wallet,state,invoices,payment-methods,subscription}\`.
 `;
 
 export const INTERNAL_INFO_DESCRIPTION = `PymtHouse **Internal API** — dashboard, admin, and platform ops for the PymtHouse application (not linked from public docs).

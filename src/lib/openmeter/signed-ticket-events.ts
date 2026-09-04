@@ -656,6 +656,7 @@ export async function listEndUserSignedTicketRequests(
   // Query CE subjects by payer (owner / eu_… / legacy compound) but filter
   // matches on the actor external_user_id so rollup users only see their rows.
   const subjects = new Set<string>([externalUserId]);
+  const actorExternalUserIds = new Set<string>([externalUserId]);
   try {
     const { resolveOpenMeterBillingIdentity } = await import(
       "@/lib/openmeter/billing-identity"
@@ -671,6 +672,10 @@ export async function listEndUserSignedTicketRequests(
     if (identity.legacyCompoundCustomerKey) {
       subjects.add(identity.legacyCompoundCustomerKey);
     }
+    subjects.add(identity.actorExternalUserId);
+    subjects.add(identity.actorEndUserId);
+    actorExternalUserIds.add(identity.actorExternalUserId);
+    actorExternalUserIds.add(identity.actorEndUserId);
     if (identity.payerPlatformUserId) {
       for (const key of buildOwnerMeterSubjects(identity.payerPlatformUserId, [
         identity.publicClientId,
@@ -684,8 +689,7 @@ export async function listEndUserSignedTicketRequests(
 
   return listSignedTicketRequestsForSubjects({
     subjects,
-    // Actor filter — eventMatchesViewerSubjects matches data.external_user_id.
-    actorExternalUserIds: new Set([externalUserId]),
+    actorExternalUserIds,
     clientId,
     manifestId: input.manifestId,
     cursor: input.cursor,
