@@ -171,7 +171,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
         groupBy: {
           client_id: "app_1",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
       {
@@ -180,7 +180,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
         groupBy: {
           client_id: "app_1",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
     ] as never,
@@ -191,7 +191,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
         groupBy: {
           client_id: "app_1",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
     ] as never,
@@ -202,6 +202,88 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregatePipelineModelRows prefers app and falls back to historical model_id", () => {
+  const fromApp = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: 10,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live",
+          app: "livepeer-example/hello-world",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 1,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live",
+          app: "livepeer-example/hello-world",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(fromApp[0]?.modelId, "livepeer-example/hello-world");
+
+  const fromLegacy = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: 10,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 1,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(fromLegacy[0]?.modelId, "sdxl");
+
+  const lv2v = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: 10,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live-video-to-video",
+          app: "",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 1,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "live-video-to-video",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(lv2v[0]?.modelId, "live-video-to-video");
 });
 
 test("aggregatePipelineModelRows prefers app over unknown model_id", () => {
@@ -247,7 +329,7 @@ test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-a",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
     {
@@ -257,7 +339,7 @@ test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-b",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
   ] as never;
@@ -269,7 +351,7 @@ test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-a",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
     {
@@ -279,7 +361,7 @@ test("owner_rollup actors cannot see each other's pipeline_model rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-b",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
   ] as never;
@@ -323,7 +405,7 @@ test("owner_rollup actors cannot see each other's daily_pipeline rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-a",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
     {
@@ -333,7 +415,7 @@ test("owner_rollup actors cannot see each other's daily_pipeline rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-b",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
   ] as never;
@@ -345,7 +427,7 @@ test("owner_rollup actors cannot see each other's daily_pipeline rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-a",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
     {
@@ -355,7 +437,7 @@ test("owner_rollup actors cannot see each other's daily_pipeline rows", () => {
         client_id: "app_1",
         external_user_id: "viewer-b",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
       },
     },
   ] as never;
@@ -390,7 +472,7 @@ test("aggregateManifestRows isolates rollup actors by external_user_id", () => {
         client_id: "app_1",
         external_user_id: "viewer-a",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
         manifest_id: "mid-a",
       },
     },
@@ -401,7 +483,7 @@ test("aggregateManifestRows isolates rollup actors by external_user_id", () => {
         client_id: "app_1",
         external_user_id: "viewer-b",
         pipeline: "byoc",
-        model_id: "ffmpeg",
+        app: "ffmpeg",
         manifest_id: "mid-b",
       },
     },
@@ -440,7 +522,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "live-video-to-video",
-          model_id: "comfyui",
+          app: "comfyui",
           manifest_id: "mid-1",
         },
       },
@@ -451,7 +533,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "nano-banana",
+          app: "nano-banana",
           manifest_id: "mid-1",
         },
       },
@@ -462,7 +544,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "nano-banana",
+          app: "nano-banana",
           manifest_id: "mid-2",
         },
       },
@@ -475,7 +557,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "live-video-to-video",
-          model_id: "comfyui",
+          app: "comfyui",
           manifest_id: "mid-1",
         },
       },
@@ -486,7 +568,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "nano-banana",
+          app: "nano-banana",
           manifest_id: "mid-1",
         },
       },
@@ -499,7 +581,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "live-video-to-video",
-          model_id: "comfyui",
+          app: "comfyui",
           manifest_id: "mid-1",
         },
       },
@@ -510,7 +592,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "nano-banana",
+          app: "nano-banana",
           manifest_id: "mid-1",
         },
       },
@@ -543,7 +625,7 @@ test("aggregateManifestRows ceils fractional micros once per session", () => {
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
           manifest_id: "mid-dust",
         },
       },
@@ -554,7 +636,7 @@ test("aggregateManifestRows ceils fractional micros once per session", () => {
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
           manifest_id: "mid-dust",
         },
       },
@@ -565,7 +647,7 @@ test("aggregateManifestRows ceils fractional micros once per session", () => {
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
           manifest_id: "mid-dust",
         },
       },
@@ -591,7 +673,7 @@ test("aggregateManifestRows filters to multi-subject allow-list", () => {
           client_id: "app_1",
           external_user_id: "viewer-a",
           pipeline: "byoc",
-          model_id: "m1",
+          app: "m1",
           manifest_id: "mid-a",
         },
       },
@@ -602,7 +684,7 @@ test("aggregateManifestRows filters to multi-subject allow-list", () => {
           client_id: "app_1",
           external_user_id: "other-user",
           pipeline: "byoc",
-          model_id: "m1",
+          app: "m1",
           manifest_id: "mid-leak",
         },
       },
@@ -613,7 +695,7 @@ test("aggregateManifestRows filters to multi-subject allow-list", () => {
           client_id: "app_1",
           external_user_id: "viewer-b",
           pipeline: "byoc",
-          model_id: "m2",
+          app: "m2",
           manifest_id: "mid-b",
         },
       },
@@ -626,7 +708,7 @@ test("aggregateManifestRows filters to multi-subject allow-list", () => {
           client_id: "app_1",
           external_user_id: "viewer-a",
           pipeline: "byoc",
-          model_id: "m1",
+          app: "m1",
           manifest_id: "mid-a",
         },
       },
@@ -637,7 +719,7 @@ test("aggregateManifestRows filters to multi-subject allow-list", () => {
           client_id: "app_1",
           external_user_id: "other-user",
           pipeline: "byoc",
-          model_id: "m1",
+          app: "m1",
           manifest_id: "mid-leak",
         },
       },
@@ -664,7 +746,7 @@ test("aggregateManifestRows empty subject set matches nothing", () => {
           client_id: "app_1",
           external_user_id: "u1",
           pipeline: "byoc",
-          model_id: "m1",
+          app: "m1",
           manifest_id: "mid-1",
         },
       },
@@ -746,6 +828,17 @@ test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", (
   const billingGroupBy = bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy;
   assert.ok(billingGroupBy);
   assert.equal("manifest_id" in billingGroupBy, false);
+  assert.equal(billingGroupBy.app, "$.app");
+  assert.equal("model_id" in billingGroupBy, false);
+  for (const slug of [
+    FEE_WEI_METER,
+    NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    BILLABLE_SECS_METER,
+  ]) {
+    const meter = bySlug.get(slug);
+    assert.equal(meter?.groupBy?.app, "$.app");
+    assert.equal(meter?.groupBy && "model_id" in meter.groupBy, false);
+  }
 });
 
 test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
@@ -796,7 +889,7 @@ test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter 
         groupBy: {
           client_id: "app_1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
         },
       },
       {
@@ -805,7 +898,7 @@ test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter 
         groupBy: {
           client_id: "app_1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
         },
       },
     ] as never,
@@ -816,7 +909,7 @@ test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter 
         groupBy: {
           client_id: "app_1",
           pipeline: "byoc",
-          model_id: "transcode/ffmpeg",
+          app: "transcode/ffmpeg",
         },
       },
     ] as never,
@@ -839,7 +932,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
           client_id: "app_1",
           external_user_id: "user-a",
           pipeline: "live-video-to-video",
-          model_id: "streamdiffusion-sdxl",
+          app: "streamdiffusion-sdxl",
         },
       },
       {
@@ -849,7 +942,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
           client_id: "app_1",
           external_user_id: "user-a",
           pipeline: "live-video-to-video",
-          model_id: "unknown",
+          app: "unknown",
         },
       },
     ] as never,
@@ -861,7 +954,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
           client_id: "app_1",
           external_user_id: "user-a",
           pipeline: "live-video-to-video",
-          model_id: "streamdiffusion-sdxl",
+          app: "streamdiffusion-sdxl",
         },
       },
       {
@@ -871,21 +964,21 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
           client_id: "app_1",
           external_user_id: "user-a",
           pipeline: "live-video-to-video",
-          model_id: "unknown",
+          app: "unknown",
         },
       },
     ] as never,
   });
   assert.equal(rows.length, 2);
   const sdxl = rows.find((row) => row.modelId === "streamdiffusion-sdxl");
-  const unknown = rows.find((row) => row.modelId === "unknown");
+  const lv2v = rows.find((row) => row.modelId === "live-video-to-video");
   assert.ok(sdxl);
-  assert.ok(unknown);
+  assert.ok(lv2v);
   assert.equal(sdxl.externalUserId, "user-a");
   assert.equal(sdxl.requestCount, 300);
   assert.equal(sdxl.networkFeeUsdMicros, "1000");
-  assert.equal(unknown.requestCount, 33);
-  assert.equal(unknown.networkFeeUsdMicros, "500");
+  assert.equal(lv2v.requestCount, 33);
+  assert.equal(lv2v.networkFeeUsdMicros, "500");
 });
 
 test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day", () => {
@@ -898,7 +991,7 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
         groupBy: {
           client_id: "app_1",
           pipeline: "live-video-to-video",
-          model_id: "streamdiffusion",
+          app: "streamdiffusion",
         },
       },
     ] as never,
@@ -909,7 +1002,7 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
         groupBy: {
           client_id: "app_1",
           pipeline: "live-video-to-video",
-          model_id: "streamdiffusion",
+          app: "streamdiffusion",
         },
       },
       {
@@ -918,7 +1011,7 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
         groupBy: {
           client_id: "app_1",
           pipeline: "live-video-to-video",
-          model_id: "streamdiffusion",
+          app: "streamdiffusion",
         },
       },
     ] as never,
@@ -1323,7 +1416,7 @@ test("aggregateUserRows merges transitional owner groupBy external_user_id value
           client_id: "app_1",
           external_user_id: "uuid-owner",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
       {
@@ -1332,7 +1425,7 @@ test("aggregateUserRows merges transitional owner groupBy external_user_id value
           client_id: "app_1",
           external_user_id: "owner:uuid-owner",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
     ] as never,
@@ -1343,7 +1436,7 @@ test("aggregateUserRows merges transitional owner groupBy external_user_id value
           client_id: "app_1",
           external_user_id: "uuid-owner",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
       {
@@ -1352,7 +1445,7 @@ test("aggregateUserRows merges transitional owner groupBy external_user_id value
           client_id: "app_1",
           external_user_id: "owner:uuid-owner",
           pipeline: "text-to-image",
-          model_id: "sdxl",
+          app: "sdxl",
         },
       },
     ] as never,

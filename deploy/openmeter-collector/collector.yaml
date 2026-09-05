@@ -27,22 +27,25 @@
 # - data.external_user_id = actor (integrator external id) for meter groupBy.
 # - data.billing_subject_key / billing_subject_kind / actor_end_user_id added in schema v2.
 # - data.client_id retains the app id for tenant attribution.
-#
-# Kong / OpenMeter meter backward compatibility:
-# - Existing meters (network_fee_usd_micros, signed_ticket_count, analytics) still
-#   groupBy only $.client_id + $.external_user_id. No meter slug or groupBy changes.
 # - No "#" in the wire → same CE subject / external_user_id mapping as pre-v2
 #   (owner: strip; end-user compound auth_id subject). Safe to deploy before JWT
 #   producers start emitting payer#actor.
-# - Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
 #
-# Pipeline / capability (wire -> CloudEvent dims):
-# - Preferred: Kafka `app` (Live Runner app, e.g. live-video-to-video/scope). Copied into
-#   data.model_id when model_id is absent so existing meters still group by capability.
-# - Legacy: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
-#   the first ':' into data.pipeline + data.model_id.
-# - Legacy: separate Kafka model_id (pre-encode images) is still accepted when present.
-# - data.app is always passthrough when present (session_status, orch_address, num_tickets too).
+# Kong / OpenMeter meter dimensions:
+# - Billing + analytics meters groupBy client_id, external_user_id, pipeline, and app
+#   (model attribution). Extra data.* fields are CloudEvent-only; Konnect meters ignore
+#   unknown paths.
+# - Dual-write: data.model_id copies data.app so tenants whose meters still groupBy
+#   model_id keep attributing without a meter recreate.
+#
+# Pipeline / app (wire -> CloudEvent dims):
+# - Remote signer sends model attribution on Kafka `app` (e.g. livepeer-example/hello-world).
+# - live-video-to-video still writes a pipeline but an empty app — use the pipeline
+#   name as data.app (and data.model_id) in that case only.
+# - Legacy: Kafka pipeline "base:model" (e.g. live-video-to-video:comfyui) is still
+#   accepted on read paths via historical model_id grouping.
+# - Also passthrough (CloudEvent data only, not meter dimensions): session_status,
+#   orch_address, num_tickets.
 
 
 cache_resources:
@@ -227,38 +230,25 @@ pipeline:
         }
         let manifest_id_out = if $manifest_id != "" { $manifest_id } else { "unknown" }
 
-        # Pipeline / capability: prefer Kafka app when model_id is absent.
+        # Pipeline / app: signer model attribution is `app`. Do not split pipeline
+        # on ':'. Dual-write the same value onto model_id for legacy meters.
+        # live-video-to-video uses pipeline as app when Kafka app is empty.
         let pipeline_raw = if $data.pipeline != "" && $data.pipeline != null {
           $data.pipeline.string().trim()
         } else {
           ""
         }
-        let legacy_model_id = if $data.model_id != "" && $data.model_id != null {
-          $data.model_id.string().trim()
-        } else {
-          ""
-        }
-        let app_out = $data.app.or("").string().trim()
-        let pipeline_colon = $pipeline_raw.index_of(":")
-        let pipeline_has_model = $pipeline_colon > 0 && $pipeline_colon < $pipeline_raw.length() - 1
-        let pipeline_out = if $pipeline_raw == "" {
-          "unknown"
-        } else if $legacy_model_id != "" {
-          $pipeline_raw
-        } else if $pipeline_has_model {
-          $pipeline_raw.slice(0, $pipeline_colon)
-        } else {
-          $pipeline_raw
-        }
-        let model_id_out = if $legacy_model_id != "" {
-          $legacy_model_id
-        } else if $pipeline_has_model {
-          $pipeline_raw.slice($pipeline_colon + 1)
-        } else if $app_out != "" {
-          $app_out
+        let pipeline_out = if $pipeline_raw == "" { "unknown" } else { $pipeline_raw }
+
+        let app_raw = $data.app.or("").string().trim()
+        let app_out = if $app_raw != "" && $app_raw.lowercase() != "unknown" {
+          $app_raw
+        } else if $pipeline_out == "live-video-to-video" {
+          $pipeline_out
         } else {
           "unknown"
         }
+
         let session_status_out = $data.session_status.or("").string()
         let orch_address_out = $data.orch_address.or("").string()
         let num_tickets_out = $data.num_tickets.number().or(0)
@@ -284,9 +274,9 @@ pipeline:
               "actor_end_user_id": $actor_end_user_id_out,
               "network_fee_usd_micros": $fee_usd_micros,
               "pipeline": $pipeline_out,
-              "model_id": $model_id_out,
-              "manifest_id": $manifest_id_out,
               "app": $app_out,
+              "model_id": $app_out,
+              "manifest_id": $manifest_id_out,
               "session_status": $session_status_out,
               "orch_address": $orch_address_out,
               "num_tickets": $num_tickets_out,

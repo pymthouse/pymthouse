@@ -17,7 +17,7 @@ import {
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
-import { capabilityFromUsageFields } from "@/lib/openmeter/usage-capability";
+import { resolveSignedTicketAppAttribution } from "@/lib/openmeter/signed-ticket-attribution";
 import type { MeterQueryRow } from "@openmeter/sdk";
 
 function avoidOpenMeterNetworkInTests(): boolean {
@@ -182,20 +182,63 @@ type MeterWindowSize = "DAY" | "MONTH";
 
 /** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
 const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
-/** `model_id` is filled from event `app` at ingest when model_id is absent. */
-const METER_GROUP_BY_DETAIL = [
+const METER_GROUP_BY_DETAIL_BASE = [
   "client_id",
   "external_user_id",
   "pipeline",
-  "model_id",
 ] as const;
-const METER_GROUP_BY_MANIFEST = [
-  "client_id",
-  "external_user_id",
-  "pipeline",
-  "model_id",
-  "manifest_id",
-] as const;
+type MeterModelDimension = "app" | "model_id";
+const meterModelDimensionBySlug = new Map<string, MeterModelDimension>();
+
+/**
+ * Some environments still expose `model_id` on usage meters while newer ones
+ * expose `app`. Detect once per meter slug so queries don't 400 on
+ * `invalid_group_by`. Failed lookups are not cached so a later successful
+ * `meters.get` can still pick up `app`.
+ */
+export async function resolveMeterModelDimension(input: {
+  client: {
+    meters: {
+      get: (
+        slug: string,
+      ) => Promise<{ groupBy?: Record<string, unknown> | null } | undefined>;
+    };
+  };
+  meterSlug: string;
+}): Promise<MeterModelDimension> {
+  const cached = meterModelDimensionBySlug.get(input.meterSlug);
+  if (cached) return cached;
+
+  try {
+    const meter = await input.client.meters.get(input.meterSlug);
+    const groupBy = meter?.groupBy;
+    const dimension: MeterModelDimension =
+      groupBy && typeof groupBy === "object" && "app" in groupBy
+        ? "app"
+        : "model_id";
+    meterModelDimensionBySlug.set(input.meterSlug, dimension);
+    return dimension;
+  } catch {
+    // Legacy meters group by model_id. Do not cache: this PR's meters use app.
+    return "model_id";
+  }
+}
+
+export function __testClearMeterModelDimensionCache(): void {
+  meterModelDimensionBySlug.clear();
+}
+
+function meterGroupByDetail(
+  modelDimension: MeterModelDimension,
+): readonly string[] {
+  return [...METER_GROUP_BY_DETAIL_BASE, modelDimension];
+}
+
+function meterGroupByManifest(
+  modelDimension: MeterModelDimension,
+): readonly string[] {
+  return ["client_id", "external_user_id", "pipeline", modelDimension, "manifest_id"];
+}
 
 /**
  * CloudEvent subjects to query for a filtered user. Owners dual-read bare /
@@ -448,11 +491,26 @@ function groupByString(
   return fallback;
 }
 
-/** Meter/event capability: Live Runner `app`, with optional `model_id` fallback. */
-function capabilityFromGroup(group: Record<string, unknown>): string {
-  return capabilityFromUsageFields({
-    app: groupByString(group, "app", ""),
-    modelId: groupByString(group, "model_id", ""),
+function optionalGroupString(
+  group: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = group[key];
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+}
+
+/** Signer `app`, else historical `model_id`, else live-video-to-video pipeline. */
+function attributionFromMeterGroup(group: Record<string, unknown>): string {
+  return resolveSignedTicketAppAttribution({
+    app: optionalGroupString(group, "app"),
+    pipeline: optionalGroupString(group, "pipeline"),
+    modelId: optionalGroupString(group, "model_id"),
   });
 }
 
@@ -574,7 +632,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = capabilityFromGroup(group);
+    const modelId = attributionFromMeterGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
@@ -597,7 +655,7 @@ export function aggregatePipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = capabilityFromGroup(group);
+    const modelId = attributionFromMeterGroup(group);
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
@@ -668,7 +726,7 @@ export function aggregateManifestRows(input: {
       if (!metaByManifest.has(manifestId)) {
         metaByManifest.set(manifestId, {
           pipeline: groupByString(group, "pipeline", "unknown"),
-          modelId: capabilityFromGroup(group),
+          modelId: attributionFromMeterGroup(group),
         });
       }
       target.set(
@@ -759,7 +817,7 @@ function resolveUserPipelineModelMeta(
     matchKeys,
   );
   const pipeline = groupByString(group, "pipeline", "unknown");
-  const modelId = capabilityFromGroup(group);
+  const modelId = attributionFromMeterGroup(group);
   return {
     externalUserId,
     pipeline,
@@ -1005,7 +1063,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = capabilityFromGroup(group);
+    const modelId = attributionFromMeterGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -1033,7 +1091,7 @@ export function aggregateDailyPipelineModelRows(input: {
       continue;
     }
     const pipeline = groupByString(group, "pipeline", "unknown");
-    const modelId = capabilityFromGroup(group);
+    const modelId = attributionFromMeterGroup(group);
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -1068,7 +1126,7 @@ export function aggregateDailyPipelineModelRows(input: {
 /**
  * Daily counts grouped by identity, for the app × identity chart dimension.
  * Reads the same DAY-window rows as {@link aggregateDailyPipelineModelRows} —
- * `METER_GROUP_BY_DETAIL` already carries `external_user_id`, so selecting the
+ * detail queries already carry `external_user_id`, so selecting the
  * identity dimension costs no additional meter query.
  */
 export function aggregateDailyUserRows(input: {
@@ -1187,8 +1245,9 @@ export function __testAccumulateOpenMeterUsage(input: {
   }
 
   const pipeline = input.pipeline?.trim() || "unknown";
-  const modelId = capabilityFromUsageFields({
+  const modelId = resolveSignedTicketAppAttribution({
     app: input.app,
+    pipeline,
     modelId: input.modelId,
   });
   const rows = testUsageRowsByClient.get(input.clientId) ?? [];
@@ -1348,6 +1407,7 @@ export function __testClearOpenMeterUsageStubs(): void {
   testIngestLogByClient.clear();
   testUsagePeriodByClient.clear();
   testManifestByClient.clear();
+  __testClearMeterModelDimensionCache();
 }
 
 function filterTestUsageRows(
@@ -1395,6 +1455,10 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = await resolveUsageMeterSubjects({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -1405,7 +1469,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult] = await Promise.all([
@@ -1450,6 +1514,10 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = await resolveUsageMeterSubjects({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -1460,7 +1528,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     endDate: input.endDate,
     windowSize: "DAY",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult] = await Promise.all([
@@ -1551,13 +1619,17 @@ export async function queryOpenMeterUsageByManifest(input: {
           externalUserIds: subjectFilter,
         })
       : undefined;
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug: NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+  });
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_MANIFEST,
+    groupBy: meterGroupByManifest(modelDimension),
   });
 
   const [feeMicrosResult, feeWeiResult, billableSecsResult] = await Promise.all([
@@ -1724,6 +1796,10 @@ export async function queryOpenMeterAppDashboardUsage(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = externalUserId
     ? await resolveUsageMeterSubjects({
         clientId: meterClientId,
@@ -1736,7 +1812,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
   const dayQuery = buildMeterQuery({
     clientId: meterClientId,
@@ -1744,7 +1820,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     endDate: input.endDate,
     windowSize: "DAY",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([

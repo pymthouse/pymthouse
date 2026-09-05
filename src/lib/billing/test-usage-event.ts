@@ -105,7 +105,7 @@ export async function ingestTestUsageEvent(input: {
       requestId,
       networkFeeUsdMicros: amountUsdMicros,
       pipeline: "live-video-to-video",
-      app: "noop",
+      app: "",
       manifestId: `test-usage-${requestId.slice(0, 18)}`,
       billableSecs: 1,
       pixels: "0",

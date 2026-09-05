@@ -93,7 +93,7 @@ export function buildCapabilityMeterGroupByFilters(input: {
     pipeline: { $eq: input.pipeline },
   };
   if (input.modelId !== "*") {
-    filters.model_id = { $eq: input.modelId };
+    filters.app = { $eq: input.modelId };
   }
   return filters;
 }

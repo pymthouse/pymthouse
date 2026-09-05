@@ -71,7 +71,7 @@ test("buildCapabilityMeterGroupByFilters omits model for wildcard", () => {
     }),
     {
       pipeline: { $eq: "text-to-image" },
-      model_id: { $eq: "stabilityai/sdxl" },
+      app: { $eq: "stabilityai/sdxl" },
     },
   );
 });

@@ -10,7 +10,6 @@ import {
   listOwnerPaymentMethods,
   type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
-import { formatUsageCapabilityLabel } from "@/lib/openmeter/usage-capability";
 import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
@@ -28,6 +27,7 @@ import {
   viewerHasAppUserMembership,
 } from "@/lib/viewer-usage-clients";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
 
 export type BillingUsageKind = "tenant" | "personal";
 
@@ -138,9 +138,9 @@ export type BillingChartSeries = {
   points: { date: string; value: number; feeUsdMicros?: string }[];
 };
 
-/** Chart legend label from pipeline + Live Runner app (optional model_id fallback). */
+/** Chart legend label from OpenMeter pipeline + signer app attribution. */
 export function formatUsageJobTypeLabel(pipeline: string, modelId: string): string {
-  return formatUsageCapabilityLabel(pipeline, modelId);
+  return formatModelAttributionLabel(pipeline, modelId);
 }
 
 export type BillingUsageDashboardPayload = {
