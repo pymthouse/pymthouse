@@ -182,20 +182,58 @@ type MeterWindowSize = "DAY" | "MONTH";
 
 /** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
 const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
-/** Signer `app` is the model attribution; historical rows may still have `model_id`. */
-const METER_GROUP_BY_DETAIL = [
+const METER_GROUP_BY_DETAIL_BASE = [
   "client_id",
   "external_user_id",
   "pipeline",
-  "app",
 ] as const;
-const METER_GROUP_BY_MANIFEST = [
-  "client_id",
-  "external_user_id",
-  "pipeline",
-  "app",
-  "manifest_id",
-] as const;
+type MeterModelDimension = "app" | "model_id";
+const meterModelDimensionBySlug = new Map<string, MeterModelDimension>();
+
+/**
+ * Some environments still expose `model_id` on usage meters while newer ones
+ * expose `app`. Detect once per meter slug so queries don't 400 on
+ * `invalid_group_by`.
+ */
+async function resolveMeterModelDimension(input: {
+  client: {
+    meters: {
+      get: (
+        slug: string,
+      ) => Promise<{ groupBy?: Record<string, unknown> | null } | undefined>;
+    };
+  };
+  meterSlug: string;
+}): Promise<MeterModelDimension> {
+  const cached = meterModelDimensionBySlug.get(input.meterSlug);
+  if (cached) return cached;
+
+  let dimension: MeterModelDimension = "model_id";
+  try {
+    const meter = await input.client.meters.get(input.meterSlug);
+    const groupBy = meter?.groupBy;
+    if (groupBy && typeof groupBy === "object" && "app" in groupBy) {
+      dimension = "app";
+    }
+  } catch {
+    // Keep the safe default; queries still run against legacy meters.
+  }
+
+  meterModelDimensionBySlug.set(input.meterSlug, dimension);
+  return dimension;
+}
+
+function meterGroupByDetail(
+  modelDimension: MeterModelDimension,
+): readonly string[] {
+  return [...METER_GROUP_BY_DETAIL_BASE, modelDimension];
+}
+
+function meterGroupByManifest(
+  modelDimension: MeterModelDimension,
+): readonly string[] {
+  return ["client_id", "external_user_id", "pipeline", modelDimension, "manifest_id"];
+}
 
 /**
  * CloudEvent subjects to query for a filtered user. Owners dual-read bare /
@@ -1411,6 +1449,10 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = await resolveUsageMeterSubjects({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -1421,7 +1463,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult] = await Promise.all([
@@ -1466,6 +1508,10 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = await resolveUsageMeterSubjects({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -1476,7 +1522,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     endDate: input.endDate,
     windowSize: "DAY",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult] = await Promise.all([
@@ -1567,13 +1613,17 @@ export async function queryOpenMeterUsageByManifest(input: {
           externalUserIds: subjectFilter,
         })
       : undefined;
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug: NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+  });
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_MANIFEST,
+    groupBy: meterGroupByManifest(modelDimension),
   });
 
   const [feeMicrosResult, feeWeiResult, billableSecsResult] = await Promise.all([
@@ -1740,6 +1790,10 @@ export async function queryOpenMeterAppDashboardUsage(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const modelDimension = await resolveMeterModelDimension({
+    client,
+    meterSlug,
+  });
   const subjects = externalUserId
     ? await resolveUsageMeterSubjects({
         clientId: meterClientId,
@@ -1752,7 +1806,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     endDate: input.endDate,
     windowSize: "MONTH",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
   const dayQuery = buildMeterQuery({
     clientId: meterClientId,
@@ -1760,7 +1814,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     endDate: input.endDate,
     windowSize: "DAY",
     subjects,
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: meterGroupByDetail(modelDimension),
   });
 
   const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([
