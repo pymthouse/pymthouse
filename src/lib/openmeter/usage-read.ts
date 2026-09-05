@@ -193,9 +193,10 @@ const meterModelDimensionBySlug = new Map<string, MeterModelDimension>();
 /**
  * Some environments still expose `model_id` on usage meters while newer ones
  * expose `app`. Detect once per meter slug so queries don't 400 on
- * `invalid_group_by`.
+ * `invalid_group_by`. Failed lookups are not cached so a later successful
+ * `meters.get` can still pick up `app`.
  */
-async function resolveMeterModelDimension(input: {
+export async function resolveMeterModelDimension(input: {
   client: {
     meters: {
       get: (
@@ -208,19 +209,23 @@ async function resolveMeterModelDimension(input: {
   const cached = meterModelDimensionBySlug.get(input.meterSlug);
   if (cached) return cached;
 
-  let dimension: MeterModelDimension = "model_id";
   try {
     const meter = await input.client.meters.get(input.meterSlug);
     const groupBy = meter?.groupBy;
-    if (groupBy && typeof groupBy === "object" && "app" in groupBy) {
-      dimension = "app";
-    }
+    const dimension: MeterModelDimension =
+      groupBy && typeof groupBy === "object" && "app" in groupBy
+        ? "app"
+        : "model_id";
+    meterModelDimensionBySlug.set(input.meterSlug, dimension);
+    return dimension;
   } catch {
-    // Keep the safe default; queries still run against legacy meters.
+    // Legacy meters group by model_id. Do not cache: this PR's meters use app.
+    return "model_id";
   }
+}
 
-  meterModelDimensionBySlug.set(input.meterSlug, dimension);
-  return dimension;
+export function __testClearMeterModelDimensionCache(): void {
+  meterModelDimensionBySlug.clear();
 }
 
 function meterGroupByDetail(
@@ -1121,7 +1126,7 @@ export function aggregateDailyPipelineModelRows(input: {
 /**
  * Daily counts grouped by identity, for the app × identity chart dimension.
  * Reads the same DAY-window rows as {@link aggregateDailyPipelineModelRows} —
- * `METER_GROUP_BY_DETAIL` already carries `external_user_id`, so selecting the
+ * detail queries already carry `external_user_id`, so selecting the
  * identity dimension costs no additional meter query.
  */
 export function aggregateDailyUserRows(input: {
@@ -1402,6 +1407,7 @@ export function __testClearOpenMeterUsageStubs(): void {
   testIngestLogByClient.clear();
   testUsagePeriodByClient.clear();
   testManifestByClient.clear();
+  __testClearMeterModelDimensionCache();
 }
 
 function filterTestUsageRows(
