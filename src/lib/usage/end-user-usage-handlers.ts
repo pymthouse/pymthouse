@@ -12,6 +12,7 @@ import {
   handleAppUsageBalanceGet,
   handleAppUsageGet,
 } from "@/lib/usage/app-usage-handlers";
+import { parseOptionalDateRange } from "@/lib/usage/optional-date-range";
 
 /**
  * `publicClientId` is the app the credential must belong to. Omit it for the
@@ -103,12 +104,19 @@ export async function handleEndUserMeUsageRequestsGet(
     );
   }
 
+  const dateRange = parseOptionalDateRange(params);
+  if ("error" in dateRange) {
+    return NextResponse.json({ error: dateRange.error }, { status: 400 });
+  }
+
   if (groupBy === "session") {
     const result = await listEndUserSignedTicketSessions({
       externalUserId: auth.externalUserId,
       clientId: auth.publicClientId,
       cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
+      from: dateRange.from,
+      to: dateRange.to,
     });
 
     return NextResponse.json({
@@ -127,6 +135,8 @@ export async function handleEndUserMeUsageRequestsGet(
     manifestId,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
+    from: dateRange.from,
+    to: dateRange.to,
   });
 
   return NextResponse.json({
