@@ -33,14 +33,15 @@
 #
 # Kong / OpenMeter meter dimensions:
 # - Billing + analytics meters groupBy client_id, external_user_id, pipeline, and app
-#   (model attribution). Recreate meters if an existing tenant still has model_id instead
-#   of app. Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
+#   (model attribution). Extra data.* fields are CloudEvent-only; Konnect meters ignore
+#   unknown paths.
+# - Dual-write: data.model_id copies data.app so tenants whose meters still groupBy
+#   model_id keep attributing without a meter recreate.
 #
 # Pipeline / app (wire -> CloudEvent dims):
 # - Remote signer sends model attribution on Kafka `app` (e.g. livepeer-example/hello-world).
-# - `model_id` is no longer populated and is not emitted on the CloudEvent.
 # - live-video-to-video still writes a pipeline but an empty app — use the pipeline
-#   name as data.app in that case only.
+#   name as data.app (and data.model_id) in that case only.
 # - Legacy: Kafka pipeline "base:model" (e.g. live-video-to-video:comfyui) is still
 #   accepted on read paths via historical model_id grouping.
 # - Also passthrough (CloudEvent data only, not meter dimensions): session_status,
@@ -230,7 +231,8 @@ pipeline:
         let manifest_id_out = if $manifest_id != "" { $manifest_id } else { "unknown" }
 
         # Pipeline / app: signer model attribution is `app`. Do not split pipeline
-        # on ':' and do not emit model_id. live-video-to-video uses pipeline as app.
+        # on ':'. Dual-write the same value onto model_id for legacy meters.
+        # live-video-to-video uses pipeline as app when Kafka app is empty.
         let pipeline_raw = if $data.pipeline != "" && $data.pipeline != null {
           $data.pipeline.string().trim()
         } else {
@@ -273,6 +275,7 @@ pipeline:
               "network_fee_usd_micros": $fee_usd_micros,
               "pipeline": $pipeline_out,
               "app": $app_out,
+              "model_id": $app_out,
               "manifest_id": $manifest_id_out,
               "session_status": $session_status_out,
               "orch_address": $orch_address_out,

@@ -429,7 +429,7 @@ JWTs carry `billing_subject_key` (payer) and keep `cost_owner_user_id` for owner
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
    - `data.manifest_id` = stream / remote-signer session mid; falls back to Kafka `session_id` (payment StateID) then `request_id` when missing (`"unknown"` only as last resort)
    - `data.billable_secs` = billable duration from the signer as a **number** (required for OpenMeter SUM; prefer this over `pixels` for time analytics across LV2V and BYOC signers)
-   - `data.app` = signer **model attribution** (for example `livepeer-example/hello-world`). `model_id` is no longer populated. For `pipeline=live-video-to-video` with an empty app, the collector sets `data.app` to `live-video-to-video`.
+   - `data.app` = signer **model attribution** (for example `livepeer-example/hello-world`). Collector and HTTP ingest dual-write the same resolved value onto `data.model_id` so legacy meters that still `groupBy` `model_id` keep attributing. For `pipeline=live-video-to-video` with an empty app, the collector sets `data.app` (and `data.model_id`) to `live-video-to-video`.
    - `data.pipeline` is passed through as-is (not split on `:`)
 
 **Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.

@@ -2,7 +2,8 @@
  * Signed-ticket model attribution from the remote signer CloudEvent.
  *
  * The signer now sends the model name on `data.app` (for example
- * `livepeer-example/hello-world`). `model_id` is no longer populated.
+ * `livepeer-example/hello-world`). Collector and HTTP ingest dual-write that
+ * resolved value onto `data.model_id` so legacy meters still group.
  * `live-video-to-video` still writes a pipeline but no app — use the
  * pipeline name as the app attribution in that case only.
  *

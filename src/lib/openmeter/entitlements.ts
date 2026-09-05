@@ -324,6 +324,8 @@ export async function ingestSignedTicketEvent(input: {
       pixels: input.event.pixels,
       pipeline,
       app,
+      // Dual-write for tenants whose meters still groupBy model_id (#501).
+      model_id: app,
       manifest_id: input.event.manifestId?.trim() || "unknown",
       billable_secs: billableSecs,
       gateway_request_id: input.event.gatewayRequestId,

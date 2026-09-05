@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   formatModelAttributionLabel,
   LIVE_VIDEO_TO_VIDEO_PIPELINE,
   resolveSignedTicketAppAttribution,
 } from "./signed-ticket-attribution";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 test("resolveSignedTicketAppAttribution prefers signer app over pipeline and model_id", () => {
   assert.equal(
@@ -86,4 +91,21 @@ test("formatModelAttributionLabel omits redundant live-video-to-video duplicatio
     "live / livepeer-example/hello-world",
   );
   assert.equal(formatModelAttributionLabel("live", "unknown"), "live");
+});
+
+test("collector CloudEvent dual-writes resolved app onto data.model_id", () => {
+  const yaml = readFileSync(
+    join(repoRoot, "deploy/openmeter-collector/collector.yaml"),
+    "utf8",
+  );
+  assert.match(yaml, /"app": \$app_out/);
+  assert.match(yaml, /"model_id": \$app_out/);
+});
+
+test("HTTP signed-ticket ingest dual-writes resolved app onto data.model_id", () => {
+  const source = readFileSync(
+    join(repoRoot, "src/lib/openmeter/entitlements.ts"),
+    "utf8",
+  );
+  assert.match(source, /model_id:\s*app/);
 });

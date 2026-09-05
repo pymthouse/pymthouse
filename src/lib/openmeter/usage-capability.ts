@@ -3,7 +3,8 @@
  * (e.g. `live-video-to-video/scope`). `model_id` is optional and often empty.
  *
  * Resolution order matches signed-ticket ingest: `app`, historical `model_id`,
- * then `live-video-to-video` pipeline when both are missing.
+ * then `live-video-to-video` pipeline when both are missing. Ingest dual-writes
+ * the resolved value onto both `data.app` and `data.model_id`.
  */
 
 import {
