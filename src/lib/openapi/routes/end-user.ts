@@ -65,6 +65,21 @@ const endUserRequestsQueryParams = z.object({
       param: { name: "limit", in: "query" },
       description: "Page size (default 25, max 50).",
     }),
+  from: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "from", in: "query" },
+      description:
+        "Inclusive lower bound (ISO 8601). Must be paired with `to`. Console uses the last 7 days.",
+    }),
+  to: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "to", in: "query" },
+      description: "Inclusive upper bound (ISO 8601). Must be paired with `from`.",
+    }),
 });
 
 const meUsagePath = (suffix: string) =>
@@ -122,6 +137,7 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
     "Chronological signed-ticket history for the authenticated subject. " +
     "`groupBy=session` lists per-manifest sessions; `groupBy=request` (default) " +
     "lists CloudEvents (optionally filtered by `manifestId`). " +
+    "Optional `from`/`to` (ISO 8601, together) override the default calendar-month window. " +
     "Do not pass `userId` / `externalUserId`.",
   security: endUserSecurity,
   request: {

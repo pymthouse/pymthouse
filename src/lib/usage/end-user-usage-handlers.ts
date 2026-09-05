@@ -4,6 +4,7 @@ import {
   authenticateEndUser,
   endUserSubjectOverrideError,
 } from "@/lib/auth/end-user";
+import { isValidBoundedDateRange, MAX_DATE_RANGE_DAYS } from "@/lib/billing-utils";
 import {
   listEndUserSignedTicketRequests,
   listEndUserSignedTicketSessions,
@@ -95,10 +96,27 @@ export async function handleEndUserMeUsageRequestsGet(
   const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+  const from = params.get("from")?.trim() || undefined;
+  const to = params.get("to")?.trim() || undefined;
 
   if (groupBy !== "request" && groupBy !== "session") {
     return NextResponse.json(
       { error: "Invalid groupBy; use request or session" },
+      { status: 400 },
+    );
+  }
+
+  if ((from && !to) || (to && !from)) {
+    return NextResponse.json(
+      { error: "from and to must be supplied together" },
+      { status: 400 },
+    );
+  }
+  if (from && to && !isValidBoundedDateRange(from, to)) {
+    return NextResponse.json(
+      {
+        error: `Invalid range; supply from <= to within ${MAX_DATE_RANGE_DAYS} days`,
+      },
       { status: 400 },
     );
   }
@@ -109,6 +127,8 @@ export async function handleEndUserMeUsageRequestsGet(
       clientId: auth.publicClientId,
       cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
+      from,
+      to,
     });
 
     return NextResponse.json({
@@ -127,6 +147,8 @@ export async function handleEndUserMeUsageRequestsGet(
     manifestId,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
+    from,
+    to,
   });
 
   return NextResponse.json({
