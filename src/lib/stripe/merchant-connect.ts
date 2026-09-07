@@ -201,8 +201,14 @@ export function __setResolveAppLivemodeForWebhookForTests(
 }
 
 /**
- * True when the app's stored stripeLivemode matches the webhook ingress plane.
- * Sandbox deliveries must not mutate live apps (and vice versa).
+ * True when the webhook ingress plane is one this app owns — the *active*
+ * stripeLivemode, or a *parked* plane in `app_stripe_connect_accounts`.
+ *
+ * After a Live↔Sandbox switch (#480), in-flight Connect Checkout / auto-topup
+ * / PM-restore webhooks still arrive on the plane that collected the payment.
+ * Rejecting them with HTTP 200 `livemode_mismatch` prevents Stripe retries and
+ * silently drops prepaid credits. Accepting a parked plane is safe: Connect
+ * account matching still binds the event to this app's acct_.
  */
 export async function appLivemodeMatchesWebhookPlane(
   clientId: string,
@@ -213,7 +219,52 @@ export async function appLivemodeMatchesWebhookPlane(
     return appLivemode === expectedLivemode;
   }
   const config = await getAppBillingConfig(clientId);
-  return appStripeLivemode(config) === expectedLivemode;
+  if (appStripeLivemode(config) === expectedLivemode) {
+    return true;
+  }
+  const parked = await getMerchantConnectPlane(clientId, expectedLivemode);
+  return parked != null;
+}
+
+/**
+ * Which Stripe plane (active or parked) owns this Connected Account for the
+ * app, if any. Used so plane-switch does not drop in-flight Connect settlements.
+ */
+export async function resolveMerchantConnectAccountPlane(
+  clientId: string,
+  connectedAccountId: string,
+): Promise<{ livemode: boolean } | null> {
+  const accountId = connectedAccountId.trim();
+  if (!accountId) {
+    return null;
+  }
+  const appId = clientId.trim();
+  if (!appId) {
+    return null;
+  }
+
+  const config = await getAppBillingConfig(appId);
+  if (config?.stripeConnectedAccountId?.trim() === accountId) {
+    return { livemode: appStripeLivemode(config) };
+  }
+
+  const parkedRows = await db
+    .select({
+      livemode: appStripeConnectAccounts.livemode,
+    })
+    .from(appStripeConnectAccounts)
+    .where(
+      and(
+        eq(appStripeConnectAccounts.clientId, appId),
+        eq(appStripeConnectAccounts.stripeConnectedAccountId, accountId),
+      ),
+    )
+    .limit(1);
+  const parked = parkedRows[0];
+  if (!parked) {
+    return null;
+  }
+  return { livemode: parked.livemode };
 }
 
 /**

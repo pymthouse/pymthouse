@@ -449,6 +449,9 @@ async function settleMerchantTopUp(input: {
       amountUsdMicros: input.amountUsdMicros,
       source: "topup",
       idempotencyKey: topUpGrantIdempotencyKey(input.sessionId),
+      // Credit the payment plane's wallet (eu_ / sbx_eu_), not the active plane
+      // after a Live↔Sandbox switch.
+      stripeLivemode: input.livemode,
     });
     return NextResponse.json({
       received: true,
@@ -645,6 +648,8 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
       amountUsdMicros,
       source: "topup",
       idempotencyKey: legacyAutoTopUpGrantIdempotencyKey(paymentIntentId),
+      // Credit the payment plane's wallet after a Live↔Sandbox switch.
+      stripeLivemode: livemode,
     });
     return NextResponse.json({
       received: true,
