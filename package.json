@@ -95,18 +95,18 @@
     "fast-uri": "3.1.7"
   },
   "devDependencies": {
-    "@redocly/cli": "^2.49.0",
+    "@redocly/cli": "^2.51.1",
     "@turnkey/sdk-server": "^8.3.0",
-    "@types/node": "^26.4.0",
-    "@types/oidc-provider": "^9.11.1",
+    "@types/node": "^26.4.1",
+    "@types/oidc-provider": "^9.12.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
+    "@types/react-dom": "^19.2.7",
     "@types/uuid": "^11.0.0",
     "c8": "^12.0.0",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.3.4",
-    "postcss": "^8.5.26",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3"
