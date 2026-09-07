@@ -66,7 +66,7 @@
     "@turnkey/react-wallet-kit": "^2.4.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "jose": "^6.2.10",
+    "jose": "^6.2.11",
     "next": "16.3.4",
     "next-auth": "^4.24.15",
     "oidc-provider": "^9.12.0",
