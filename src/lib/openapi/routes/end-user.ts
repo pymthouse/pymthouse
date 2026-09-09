@@ -65,6 +65,24 @@ const endUserRequestsQueryParams = z.object({
       param: { name: "limit", in: "query" },
       description: "Page size (default 25, max 50).",
     }),
+  from: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "from", in: "query" },
+      description:
+        "Inclusive lower bound (ISO 8601). Required with `to`. Spans longer than 365 days are clamped.",
+    }),
+  to: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "to", in: "query" },
+      description:
+        "Inclusive upper bound (ISO 8601). Required with `from`.",
+    }),
 });
 
 const meUsagePath = (suffix: string) =>
