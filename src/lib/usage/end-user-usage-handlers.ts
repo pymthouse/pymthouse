@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  authenticateEndUser,
-  endUserSubjectOverrideError,
-} from "@/lib/auth/end-user";
-import {
-  listEndUserSignedTicketRequests,
-  listEndUserSignedTicketSessions,
-} from "@/lib/openmeter/signed-ticket-events";
+import * as endUserAuth from "@/lib/auth/end-user";
+import * as signedTicketEvents from "@/lib/openmeter/signed-ticket-events";
 import {
   handleAppUsageBalanceGet,
   handleAppUsageGet,
@@ -24,10 +18,14 @@ async function requireEndUserAuth(
   publicClientId: string | undefined,
   resourceLabel: string,
 ): Promise<
-  | { auth: NonNullable<Awaited<ReturnType<typeof authenticateEndUser>>> }
+  | {
+      auth: NonNullable<
+        Awaited<ReturnType<typeof endUserAuth.authenticateEndUser>>
+      >;
+    }
   | { response: Response }
 > {
-  const override = endUserSubjectOverrideError(
+  const override = endUserAuth.endUserSubjectOverrideError(
     request.nextUrl.searchParams,
     resourceLabel,
   );
@@ -35,7 +33,7 @@ async function requireEndUserAuth(
     return { response: override };
   }
 
-  const auth = await authenticateEndUser(request, {
+  const auth = await endUserAuth.authenticateEndUser(request, {
     expectedPublicClientId: publicClientId,
   });
   if (!auth) {
@@ -110,7 +108,7 @@ export async function handleEndUserMeUsageRequestsGet(
   }
 
   if (groupBy === "session") {
-    const result = await listEndUserSignedTicketSessions({
+    const result = await signedTicketEvents.listEndUserSignedTicketSessions({
       externalUserId: auth.externalUserId,
       clientId: auth.publicClientId,
       cursor,
@@ -129,7 +127,7 @@ export async function handleEndUserMeUsageRequestsGet(
     });
   }
 
-  const result = await listEndUserSignedTicketRequests({
+  const result = await signedTicketEvents.listEndUserSignedTicketRequests({
     externalUserId: auth.externalUserId,
     clientId: auth.publicClientId,
     manifestId,
