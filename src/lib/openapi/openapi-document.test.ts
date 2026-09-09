@@ -44,6 +44,13 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
     doc.paths["/api/v1/user/usage/requests"]?.get?.description ?? "",
     /from.*to/i,
   );
+  const fromParam = doc.paths["/api/v1/user/usage/requests"]?.get?.parameters?.find(
+    (param) => "name" in param && param.name === "from",
+  );
+  assert.match(
+    fromParam && "description" in fromParam ? fromParam.description ?? "" : "",
+    /365 days/,
+  );
   assert.equal(doc.paths["/api/v1/user/usage"]?.get?.deprecated, undefined);
   assert.equal(doc.paths["/api/v1/signer"], undefined);
 

@@ -1,12 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import * as endUserAuth from "@/lib/auth/end-user";
-import * as signedTicketEvents from "@/lib/openmeter/signed-ticket-events";
+import {
+  authenticateEndUser,
+  endUserSubjectOverrideError,
+  type EndUserAuth,
+} from "@/lib/auth/end-user";
+import {
+  listEndUserSignedTicketRequests,
+  listEndUserSignedTicketSessions,
+} from "@/lib/openmeter/signed-ticket-events";
 import {
   handleAppUsageBalanceGet,
   handleAppUsageGet,
 } from "@/lib/usage/app-usage-handlers";
 import { parseOptionalDateRange } from "@/lib/usage/optional-date-range";
+
+type AuthenticateEndUser = typeof authenticateEndUser;
+type ListRequests = typeof listEndUserSignedTicketRequests;
+type ListSessions = typeof listEndUserSignedTicketSessions;
+
+const requestsDeps = {
+  authenticateEndUser,
+  listEndUserSignedTicketRequests,
+  listEndUserSignedTicketSessions,
+};
+
+/** Swap auth + OpenMeter list helpers in NODE_ENV=test only. */
+export function __testSetEndUserUsageRequestsDeps(deps: {
+  authenticateEndUser?: AuthenticateEndUser;
+  listEndUserSignedTicketRequests?: ListRequests;
+  listEndUserSignedTicketSessions?: ListSessions;
+} | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__testSetEndUserUsageRequestsDeps is only available in test",
+    );
+  }
+  requestsDeps.authenticateEndUser =
+    deps?.authenticateEndUser ?? authenticateEndUser;
+  requestsDeps.listEndUserSignedTicketRequests =
+    deps?.listEndUserSignedTicketRequests ?? listEndUserSignedTicketRequests;
+  requestsDeps.listEndUserSignedTicketSessions =
+    deps?.listEndUserSignedTicketSessions ?? listEndUserSignedTicketSessions;
+}
 
 /**
  * `publicClientId` is the app the credential must belong to. Omit it for the
@@ -17,15 +53,8 @@ async function requireEndUserAuth(
   request: NextRequest,
   publicClientId: string | undefined,
   resourceLabel: string,
-): Promise<
-  | {
-      auth: NonNullable<
-        Awaited<ReturnType<typeof endUserAuth.authenticateEndUser>>
-      >;
-    }
-  | { response: Response }
-> {
-  const override = endUserAuth.endUserSubjectOverrideError(
+): Promise<{ auth: EndUserAuth } | { response: Response }> {
+  const override = endUserSubjectOverrideError(
     request.nextUrl.searchParams,
     resourceLabel,
   );
@@ -33,7 +62,7 @@ async function requireEndUserAuth(
     return { response: override };
   }
 
-  const auth = await endUserAuth.authenticateEndUser(request, {
+  const auth = await requestsDeps.authenticateEndUser(request, {
     expectedPublicClientId: publicClientId,
   });
   if (!auth) {
@@ -108,7 +137,7 @@ export async function handleEndUserMeUsageRequestsGet(
   }
 
   if (groupBy === "session") {
-    const result = await signedTicketEvents.listEndUserSignedTicketSessions({
+    const result = await requestsDeps.listEndUserSignedTicketSessions({
       externalUserId: auth.externalUserId,
       clientId: auth.publicClientId,
       cursor,
@@ -127,7 +156,7 @@ export async function handleEndUserMeUsageRequestsGet(
     });
   }
 
-  const result = await signedTicketEvents.listEndUserSignedTicketRequests({
+  const result = await requestsDeps.listEndUserSignedTicketRequests({
     externalUserId: auth.externalUserId,
     clientId: auth.publicClientId,
     manifestId,

@@ -1,23 +1,18 @@
 import assert from "node:assert/strict";
-import test, { type TestContext } from "node:test";
+import test from "node:test";
 
 import { NextRequest } from "next/server";
 
-import * as endUserAuth from "@/lib/auth/end-user";
 import { MAX_DATE_RANGE_DAYS } from "@/lib/billing-utils";
-import * as signedTicketEvents from "@/lib/openmeter/signed-ticket-events";
-import { handleEndUserMeUsageRequestsGet } from "@/lib/usage/end-user-usage-handlers";
+import {
+  __testSetEndUserUsageRequestsDeps,
+  handleEndUserMeUsageRequestsGet,
+} from "@/lib/usage/end-user-usage-handlers";
 
 const AUTH = {
   publicClientId: "app_testclientid000000000001",
   developerAppId: "dev-app-1",
   externalUserId: "eu_subject",
-};
-
-type ListResult = {
-  items: unknown[];
-  nextCursor: string | null;
-  openMeterConfigured: boolean;
 };
 
 function requestsUrl(query = ""): NextRequest {
@@ -27,7 +22,7 @@ function requestsUrl(query = ""): NextRequest {
   );
 }
 
-function stubEmptyList(): Promise<ListResult> {
+function stubEmptyList() {
   return Promise.resolve({
     items: [],
     nextCursor: null,
@@ -35,28 +30,19 @@ function stubEmptyList(): Promise<ListResult> {
   });
 }
 
-function mockAuthedLists(
-  t: TestContext,
-  list: {
-    requests?: (input: unknown) => Promise<ListResult>;
-    sessions?: (input: unknown) => Promise<ListResult>;
-  } = {},
-): void {
-  t.mock.method(endUserAuth, "authenticateEndUser", async () => AUTH);
-  t.mock.method(
-    signedTicketEvents,
-    "listEndUserSignedTicketRequests",
-    list.requests ?? stubEmptyList,
-  );
-  t.mock.method(
-    signedTicketEvents,
-    "listEndUserSignedTicketSessions",
-    list.sessions ?? stubEmptyList,
-  );
-}
+test.afterEach(() => {
+  __testSetEndUserUsageRequestsDeps(null);
+});
 
-test("handleEndUserMeUsageRequestsGet returns 400 for a lone from or to", async (t) => {
-  mockAuthedLists(t);
+test("handleEndUserMeUsageRequestsGet returns 400 for a lone from or to", async () => {
+  let listCalls = 0;
+  __testSetEndUserUsageRequestsDeps({
+    authenticateEndUser: async () => AUTH,
+    listEndUserSignedTicketRequests: async () => {
+      listCalls += 1;
+      return stubEmptyList();
+    },
+  });
 
   const loneFrom = await handleEndUserMeUsageRequestsGet(
     requestsUrl("?from=2026-09-01T00:00:00.000Z"),
@@ -75,15 +61,13 @@ test("handleEndUserMeUsageRequestsGet returns 400 for a lone from or to", async 
   assert.deepEqual(await loneTo.json(), {
     error: "from and to must be supplied together",
   });
-
-  assert.equal(
-    signedTicketEvents.listEndUserSignedTicketRequests.mock.calls.length,
-    0,
-  );
+  assert.equal(listCalls, 0);
 });
 
-test("handleEndUserMeUsageRequestsGet returns 400 for an overlong range", async (t) => {
-  mockAuthedLists(t);
+test("handleEndUserMeUsageRequestsGet returns 400 for an overlong range", async () => {
+  __testSetEndUserUsageRequestsDeps({
+    authenticateEndUser: async () => AUTH,
+  });
 
   const res = await handleEndUserMeUsageRequestsGet(
     requestsUrl("?from=2025-01-01T00:00:00.000Z&to=2026-09-01T00:00:00.000Z"),
@@ -95,10 +79,11 @@ test("handleEndUserMeUsageRequestsGet returns 400 for an overlong range", async 
   });
 });
 
-test("handleEndUserMeUsageRequestsGet forwards the parsed window to OpenMeter", async (t) => {
+test("handleEndUserMeUsageRequestsGet forwards the parsed window to OpenMeter", async () => {
   const seen: unknown[] = [];
-  mockAuthedLists(t, {
-    requests: async (input) => {
+  __testSetEndUserUsageRequestsDeps({
+    authenticateEndUser: async () => AUTH,
+    listEndUserSignedTicketRequests: async (input) => {
       seen.push(input);
       return stubEmptyList();
     },
@@ -126,10 +111,11 @@ test("handleEndUserMeUsageRequestsGet forwards the parsed window to OpenMeter", 
   });
 });
 
-test("handleEndUserMeUsageRequestsGet forwards from/to for groupBy=session", async (t) => {
+test("handleEndUserMeUsageRequestsGet forwards from/to for groupBy=session", async () => {
   const seen: unknown[] = [];
-  mockAuthedLists(t, {
-    sessions: async (input) => {
+  __testSetEndUserUsageRequestsDeps({
+    authenticateEndUser: async () => AUTH,
+    listEndUserSignedTicketSessions: async (input) => {
       seen.push(input);
       return stubEmptyList();
     },
@@ -155,10 +141,11 @@ test("handleEndUserMeUsageRequestsGet forwards from/to for groupBy=session", asy
   });
 });
 
-test("handleEndUserMeUsageRequestsGet omits from/to when the pair is absent", async (t) => {
+test("handleEndUserMeUsageRequestsGet omits from/to when the pair is absent", async () => {
   const seen: unknown[] = [];
-  mockAuthedLists(t, {
-    requests: async (input) => {
+  __testSetEndUserUsageRequestsDeps({
+    authenticateEndUser: async () => AUTH,
+    listEndUserSignedTicketRequests: async (input) => {
       seen.push(input);
       return stubEmptyList();
     },
