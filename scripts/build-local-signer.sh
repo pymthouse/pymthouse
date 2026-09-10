@@ -3,7 +3,7 @@
 #
 # Default (fast): pull a published go-livepeer image and copy livepeer into the DMZ.
 #   ./scripts/build-local-signer.sh
-#   LIVEPEER_IMAGE=livepeer/go-livepeer:sha-38eb47d12ab1d2d874fc4c7c061aa1900b7c0bad ./scripts/build-local-signer.sh
+#   LIVEPEER_IMAGE=livepeer/go-livepeer:sha-e60d2bcaea498b73b1f203ef2fa34ba71daf9d23 ./scripts/build-local-signer.sh
 #
 # From local checkout (slow — full CGO/FFmpeg build via lpclearinghouse):
 #   LIVEPEER_IMAGE= ./scripts/build-local-signer.sh
@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GO_LIVEPEER_DIR="${GO_LIVEPEER_DIR:-${ROOT}/../go-livepeer}"
 LPCLEARINGHOUSE_DIR="${LPCLEARINGHOUSE_DIR:-${ROOT}/../lpclearinghouse}"
-LIVEPEER_IMAGE="${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-38eb47d12ab1d2d874fc4c7c061aa1900b7c0bad}"
+LIVEPEER_IMAGE="${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-e60d2bcaea498b73b1f203ef2fa34ba71daf9d23}"
 SIGNER_DMZ_IMAGE="${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:local}"
 
 if [[ -n "${LIVEPEER_IMAGE}" ]]; then
