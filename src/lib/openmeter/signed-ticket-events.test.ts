@@ -1184,4 +1184,25 @@ dbTest("listEndUserSignedTicketRequests keeps the actor on owner-rollup tickets"
     ["req-keep"],
   );
   assert.equal(result.items[0]?.pipeline, "fixed");
+
+  const byId = await listEndUserSignedTicketRequests({
+    externalUserId: "eu_keep",
+    clientId: app.clientId,
+    gatewayRequestIds: ["req-keep"],
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.deepEqual(
+    byId.items.map((row) => row.gatewayRequestId),
+    ["req-keep"],
+  );
+
+  const miss = await listEndUserSignedTicketRequests({
+    externalUserId: "eu_keep",
+    clientId: app.clientId,
+    gatewayRequestIds: ["req-other"],
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.deepEqual(miss.items, []);
 });

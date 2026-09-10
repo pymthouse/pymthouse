@@ -93,6 +93,26 @@ export async function handleEndUserMeUsageRequestsGet(
   const params = request.nextUrl.searchParams;
   const cursor = params.get("cursor")?.trim() || undefined;
   const manifestId = params.get("manifestId")?.trim() || undefined;
+  const gatewayRequestIds = [
+    ...new Set(
+      params
+        .getAll("gatewayRequestId")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (gatewayRequestIds.length > 50) {
+    return NextResponse.json(
+      { error: "at most 50 gatewayRequestId values" },
+      { status: 400 },
+    );
+  }
+  if (gatewayRequestIds.some((id) => id.length > 512)) {
+    return NextResponse.json(
+      { error: "gatewayRequestId too long" },
+      { status: 400 },
+    );
+  }
   const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
@@ -137,6 +157,8 @@ export async function handleEndUserMeUsageRequestsGet(
       externalUserId: auth.externalUserId,
       clientId: auth.publicClientId,
       manifestId,
+      gatewayRequestIds:
+        gatewayRequestIds.length > 0 ? gatewayRequestIds : undefined,
       cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
       from: dateRange.from,

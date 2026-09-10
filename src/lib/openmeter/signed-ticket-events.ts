@@ -432,6 +432,7 @@ async function listSignedTicketRequestsForSubjects(input: {
   clientId?: string | null;
   clientIds?: string[] | null;
   manifestId?: string | null;
+  gatewayRequestIds?: ReadonlySet<string> | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -454,7 +455,8 @@ async function listSignedTicketRequestsForSubjects(input: {
   const from = input.from?.trim() || cycle.start;
   const to = input.to?.trim() || cycle.end;
   const limit = clampLimit(input.limit);
-  const offset = decodeOffsetCursor(input.cursor);
+  const idFilter = normalizeGatewayRequestIdFilter(input.gatewayRequestIds);
+  const offset = idFilter ? 0 : decodeOffsetCursor(input.cursor);
   const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
 
   const rawEvents = await fetchSignedTicketEvents({
@@ -472,7 +474,13 @@ async function listSignedTicketRequestsForSubjects(input: {
       eventMatchesUsageSubjectKeys(ev, actorKeys),
   );
 
-  return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
+  return pageSignedTicketEvents(
+    matching,
+    limit,
+    offset,
+    input.manifestId,
+    idFilter,
+  );
 }
 
 /**
@@ -589,11 +597,24 @@ export async function listDeveloperSignedTicketRequests(
   return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
 
+function normalizeGatewayRequestIdFilter(
+  ids?: ReadonlySet<string> | readonly string[] | null,
+): Set<string> | null {
+  if (!ids) return null;
+  const out = new Set<string>();
+  for (const id of ids) {
+    const trimmed = id.trim();
+    if (trimmed) out.add(trimmed);
+  }
+  return out.size > 0 ? out : null;
+}
+
 async function pageSignedTicketEvents(
   matching: IngestedEventLike[],
   limit: number,
   offset: number,
   manifestId?: string | null,
+  gatewayRequestIds?: ReadonlySet<string> | null,
 ): Promise<ListViewerSignedTicketRequestsResult> {
   const appNames = await loadAppNames(
     matching.map((ev) => eventClientId(ev)).filter((id): id is string => Boolean(id)),
@@ -605,6 +626,13 @@ async function pageSignedTicketEvents(
     .map((ev) => normalizeSignedTicketEvent(ev, appNames))
     .filter((row): row is SignedTicketRequestRow => row != null)
     .filter((row) => {
+      if (
+        gatewayRequestIds &&
+        gatewayRequestIds.size > 0 &&
+        !gatewayRequestIds.has(row.gatewayRequestId)
+      ) {
+        return false;
+      }
       if (!manifestFilter) return true;
       const mid = row.manifestId?.trim() || "unknown";
       return mid === manifestFilter;
@@ -643,6 +671,7 @@ export type ListEndUserSignedTicketRequestsInput = {
   /** Public OIDC client_id (app_…), not developer_apps.id. */
   clientId: string;
   manifestId?: string | null;
+  gatewayRequestIds?: readonly string[] | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -698,6 +727,7 @@ export async function listEndUserSignedTicketRequests(
     actorExternalUserIds: new Set([externalUserId]),
     clientId,
     manifestId: input.manifestId,
+    gatewayRequestIds: normalizeGatewayRequestIdFilter(input.gatewayRequestIds),
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,

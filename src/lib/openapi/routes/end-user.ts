@@ -46,6 +46,15 @@ const endUserRequestsQueryParams = z.object({
       description:
         "When groupBy=request, restrict to one session manifest ID.",
     }),
+  gatewayRequestId: z
+    .union([z.string().min(1).max(512), z.array(z.string().min(1).max(512))])
+    .optional()
+    .openapi({
+      param: { name: "gatewayRequestId", in: "query" },
+      description:
+        "Repeatable. When `groupBy=request`, return only signed-ticket rows " +
+        "whose `gateway_request_id` matches (max 50).",
+    }),
   cursor: z
     .string()
     .min(1)
@@ -139,7 +148,7 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
   description:
     "Chronological signed-ticket history for the authenticated subject. " +
     "`groupBy=session` lists per-manifest sessions; `groupBy=request` (default) " +
-    "lists CloudEvents (optionally filtered by `manifestId`). " +
+    "lists CloudEvents (optionally filtered by `manifestId` or `gatewayRequestId`). " +
     "Do not pass `userId` / `externalUserId`.",
   security: endUserSecurity,
   request: {
