@@ -38,6 +38,45 @@ import {
 } from "@/test-utils/fixtures";
 import { withTemporaryPlatformDefault } from "@/test-utils/platform-default-lock";
 
+nodeTest("signerBalanceGateSubject merchant payer key differs from integrator id", () => {
+  // Mint soft-neg historically passed this gateSubject into debt / invoice / PM
+  // lookups, which treat the argument as app_users.external_user_id and would
+  // create a shadow eu_ / sbx_eu_ wallet. Debt lookups must use the integrator id.
+  const liveMerchantIdentity = {
+    customerKey: "eu_row-abc",
+    payerCustomerKey: "eu_row-abc",
+    payerKind: "end_user" as const,
+    isOwner: false,
+    sharesOwnerCostRail: false,
+    actorEndUserId: "eu_row-abc",
+    actorExternalUserId: "integrator-user-1",
+    publicClientId: "app_test",
+    developerAppId: "dev_test",
+  };
+  assert.equal(
+    signerBalanceGateSubject(liveMerchantIdentity, "integrator-user-1"),
+    "eu_row-abc",
+  );
+  assert.notEqual(
+    signerBalanceGateSubject(liveMerchantIdentity, "integrator-user-1"),
+    "integrator-user-1",
+  );
+
+  const sandboxMerchantIdentity = {
+    ...liveMerchantIdentity,
+    customerKey: "sbx_eu_row-abc",
+    payerCustomerKey: "sbx_eu_row-abc",
+  };
+  assert.equal(
+    signerBalanceGateSubject(sandboxMerchantIdentity, "integrator-user-1"),
+    "sbx_eu_row-abc",
+  );
+  assert.notEqual(
+    signerBalanceGateSubject(sandboxMerchantIdentity, "integrator-user-1"),
+    "integrator-user-1",
+  );
+});
+
 nodeTest("rejectOwnerWireRetailSubject rejects owner: subjects only", () => {
   assert.throws(
     () => rejectOwnerWireRetailSubject("owner:user-1"),
@@ -406,6 +445,88 @@ test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
   assert.deepEqual(billingSubjectClaim(identity), {
     billing_subject_key: identity.payerCustomerKey,
   });
+});
+
+test("canonical eu_ customer key remaps to the integrator external id", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const byExternal = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  resetBillingIdentityCache();
+  const byCustomerKey = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: byExternal.payerCustomerKey,
+  });
+
+  assert.equal(isSandboxEndUserCustomerKey(byExternal.payerCustomerKey), false);
+  assert.equal(byCustomerKey.payerCustomerKey, byExternal.payerCustomerKey);
+  assert.equal(byCustomerKey.actorExternalUserId, endUserId);
+  assert.equal(byCustomerKey.actorEndUserId, byExternal.actorEndUserId);
+  assert.equal(byCustomerKey.developerAppId, byExternal.developerAppId);
+});
+
+test("canonical sbx_eu_ customer key remaps to the integrator external id", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: false,
+  });
+  resetBillingIdentityCache();
+  const byExternal = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.ok(isSandboxEndUserCustomerKey(byExternal.payerCustomerKey));
+  resetBillingIdentityCache();
+  const byCustomerKey = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: byExternal.payerCustomerKey,
+  });
+
+  assert.equal(byCustomerKey.payerCustomerKey, byExternal.payerCustomerKey);
+  assert.equal(byCustomerKey.actorExternalUserId, endUserId);
+  assert.equal(byCustomerKey.actorEndUserId, byExternal.actorEndUserId);
+  assert.equal(byCustomerKey.developerAppId, byExternal.developerAppId);
+});
+
+test("unknown eu_ / sbx_eu_ customer key does not create a shadow end-user", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const unknownId = randomUUID();
+  await assert.rejects(
+    () =>
+      resolveOpenMeterBillingIdentity({
+        clientId: seeded.clientId,
+        externalUserId: `eu_${unknownId}`,
+      }),
+    /Unknown end-user customer key/,
+  );
+  await assert.rejects(
+    () =>
+      resolveOpenMeterBillingIdentity({
+        clientId: seeded.clientId,
+        externalUserId: `sbx_eu_${unknownId}`,
+      }),
+    /Unknown end-user customer key/,
+  );
 });
 
 test("normal app owner bills shared owner wallet", async (t) => {
