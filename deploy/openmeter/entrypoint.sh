@@ -5,8 +5,15 @@ set -eu
 CONFIG_OUT="/tmp/openmeter.config.yaml"
 PASS="${OPENMETER_POSTGRES_PASSWORD:-postgres}"
 REDIS_ADDR="${OPENMETER_REDIS_ADDRESS:-openmeter-redis.railway.internal:6379}"
+APPS_BASE_URL="${OPENMETER_APPS_BASE_URL:-}"
+if [ -z "$APPS_BASE_URL" ]; then
+  echo "entrypoint: OPENMETER_APPS_BASE_URL is required (public OpenMeter URL, no trailing slash)" >&2
+  exit 1
+fi
+APPS_BASE_URL="${APPS_BASE_URL%/}"
 sed -e "s|\${OPENMETER_POSTGRES_PASSWORD}|${PASS}|g" \
   -e "s|\${OPENMETER_REDIS_ADDRESS}|${REDIS_ADDR}|g" \
+  -e "s|\${OPENMETER_APPS_BASE_URL}|${APPS_BASE_URL}|g" \
   /etc/openmeter/config.railway.yaml >"${CONFIG_OUT}"
 
 CMD="${1:-openmeter}"
