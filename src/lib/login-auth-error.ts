@@ -4,17 +4,18 @@ import {
   oauthAccountExistsMessage,
 } from "@/lib/turnkey-account-exists";
 
+function unknownErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "";
+}
+
 /**
  * Google/Discord Auth Proxy resolved a verified-email leftover that has no
  * OAuth public key. Email OTP still opens that same sub-org.
  */
 export function isUnreachableOauthSubOrgError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : String(error ?? "");
+  const message = unknownErrorText(error);
   return (
     /PUBLIC_KEY_NOT_FOUND/i.test(message) ||
     /no user found for attested identity/i.test(message)

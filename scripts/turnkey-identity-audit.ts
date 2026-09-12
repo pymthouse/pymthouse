@@ -58,7 +58,7 @@ async function listSubOrgIds(
     if (batch.length === 0) break;
     ids.push(...batch);
     if (batch.length < 100) break;
-    after = batch[batch.length - 1];
+    after = batch.at(-1);
   }
   return ids;
 }

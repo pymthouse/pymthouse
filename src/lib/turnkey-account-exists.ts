@@ -18,8 +18,9 @@ export function isTurnkeyAccountAlreadyExistsError(error: unknown): boolean {
   if (error == null || typeof error !== "object") {
     return typeof error === "string" && error.includes(ACCOUNT_EXISTS_MESSAGE);
   }
-  const code = "code" in error ? String(error.code ?? "") : "";
-  const message = "message" in error ? String(error.message ?? "") : "";
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message =
+    "message" in error && typeof error.message === "string" ? error.message : "";
   return (
     code === "ACCOUNT_ALREADY_EXISTS" || message.includes(ACCOUNT_EXISTS_MESSAGE)
   );

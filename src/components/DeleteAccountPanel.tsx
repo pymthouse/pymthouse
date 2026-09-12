@@ -12,6 +12,29 @@ type Eligibility = {
   creditText: string | null;
 };
 
+async function ignoreMissingSubOrg(
+  deleteSubOrganization: (input: { deleteWithoutExport: boolean }) => Promise<unknown>,
+): Promise<void> {
+  try {
+    await deleteSubOrganization({ deleteWithoutExport: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/not found|already|does not exist/i.test(message)) {
+      throw err;
+    }
+  }
+}
+
+function deletionConsequence(eligibility: Eligibility | null): string {
+  if (eligibility?.ownsApps) {
+    return "I understand this does not delete my apps. Support must finish app data erasure.";
+  }
+  if (eligibility?.hasCredits && eligibility.creditText) {
+    return `I understand ${eligibility.creditText} in prepaid credits on this login will be forfeited.`;
+  }
+  return "I understand any prepaid credits on this login are forfeited.";
+}
+
 function DeleteAccountPanelInner() {
   const { authState, clientState, deleteSubOrganization } = useTurnkey();
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
@@ -58,14 +81,7 @@ function DeleteAccountPanelInner() {
     setBusy(true);
     setError(null);
     try {
-      try {
-        await deleteSubOrganization({ deleteWithoutExport: true });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!/not found|already|does not exist/i.test(message)) {
-          throw err;
-        }
-      }
+      await ignoreMissingSubOrg(deleteSubOrganization);
 
       const res = await fetch("/api/v1/me/account", { method: "DELETE" });
       const data = (await res.json().catch(() => ({}))) as {
@@ -90,14 +106,7 @@ function DeleteAccountPanelInner() {
     }
   };
 
-  let consequence =
-    "I understand any prepaid credits on this login are forfeited.";
-  if (eligibility?.ownsApps) {
-    consequence =
-      "I understand this does not delete my apps. Support must finish app data erasure.";
-  } else if (eligibility?.hasCredits && eligibility.creditText) {
-    consequence = `I understand ${eligibility.creditText} in prepaid credits on this login will be forfeited.`;
-  }
+  const consequence = deletionConsequence(eligibility);
 
   return (
     <section className="rounded-md border border-red-500/20 bg-red-500/5">

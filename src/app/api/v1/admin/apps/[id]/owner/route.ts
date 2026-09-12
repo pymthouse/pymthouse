@@ -12,10 +12,11 @@ export const POST = withSessionAdminGuardParams<{ id: string }>(
     } catch {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
-    const newOwnerUserId =
+    const rawOwnerId =
       typeof body === "object" && body !== null
-        ? String((body as { newOwnerUserId?: unknown }).newOwnerUserId ?? "").trim()
-        : "";
+        ? (body as { newOwnerUserId?: unknown }).newOwnerUserId
+        : undefined;
+    const newOwnerUserId = typeof rawOwnerId === "string" ? rawOwnerId.trim() : "";
 
     const result = await reassignAppOwner({
       appId: id,

@@ -16,12 +16,71 @@ import {
 import {
   oauthProviderIdForMethod,
   type SignInMethodId,
+  type SignInMethodStatus,
   signInMethodStatuses,
 } from "@/lib/turnkey-sign-in-methods";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 const AUTH_BUTTON_CLASS =
   "inline-flex h-[30px] items-center justify-center rounded-lg border border-zinc-700 px-3 text-xs font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60";
+
+function oauthMethodDisplayName(id: SignInMethodId): string {
+  if (id === "github") return "GitHub";
+  if (id === "discord") return "Discord";
+  if (id === "google") return "Google";
+  return id;
+}
+
+function MethodRowAction({
+  method,
+  sessionReady,
+  busyMethod,
+  onRemove,
+  onAdd,
+}: {
+  method: SignInMethodStatus;
+  sessionReady: boolean;
+  busyMethod: SignInMethodId | null;
+  onRemove: (id: SignInMethodId) => void;
+  onAdd: (id: SignInMethodId) => void;
+}) {
+  if (method.linked && method.removable) {
+    return (
+      <button
+        type="button"
+        className={AUTH_BUTTON_CLASS}
+        disabled={!sessionReady || busyMethod !== null}
+        onClick={() => {
+          onRemove(method.id);
+        }}
+      >
+        {busyMethod === method.id ? "Removing…" : "Remove"}
+      </button>
+    );
+  }
+  if (method.linked) {
+    return (
+      <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+        Linked
+      </span>
+    );
+  }
+  if (method.canAdd) {
+    return (
+      <button
+        type="button"
+        className={AUTH_BUTTON_CLASS}
+        disabled={!sessionReady || busyMethod !== null}
+        onClick={() => {
+          onAdd(method.id);
+        }}
+      >
+        {busyMethod === method.id ? "Adding…" : "Add"}
+      </button>
+    );
+  }
+  return <span className="text-xs text-zinc-600">—</span>;
+}
 
 export function SignInMethodsPanel() {
   if (!isTurnkeyWalletConfigured()) {
@@ -204,7 +263,7 @@ function SignInMethodsPanelInner() {
         successPageDuration: 0,
       });
       await refreshUser();
-      setNotice(`${id === "github" ? "GitHub" : id === "discord" ? "Discord" : "Google"} is no longer a sign-in method on this account.`);
+      setNotice(`${oauthMethodDisplayName(id)} is no longer a sign-in method on this account.`);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not remove sign-in method",
@@ -240,35 +299,17 @@ function SignInMethodsPanelInner() {
                 {method.linked ? "Connected" : "Not connected"}
               </p>
             </div>
-            {method.linked && method.removable ? (
-              <button
-                type="button"
-                className={AUTH_BUTTON_CLASS}
-                disabled={!sessionReady || busyMethod !== null}
-                onClick={() => {
-                  void removeMethod(method.id);
-                }}
-              >
-                {busyMethod === method.id ? "Removing…" : "Remove"}
-              </button>
-            ) : method.linked ? (
-              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
-                Linked
-              </span>
-            ) : method.canAdd ? (
-              <button
-                type="button"
-                className={AUTH_BUTTON_CLASS}
-                disabled={!sessionReady || busyMethod !== null}
-                onClick={() => {
-                  void addMethod(method.id);
-                }}
-              >
-                {busyMethod === method.id ? "Adding…" : "Add"}
-              </button>
-            ) : (
-              <span className="text-xs text-zinc-600">—</span>
-            )}
+            <MethodRowAction
+              method={method}
+              sessionReady={sessionReady}
+              busyMethod={busyMethod}
+              onRemove={(id) => {
+                void removeMethod(id);
+              }}
+              onAdd={(id) => {
+                void addMethod(id);
+              }}
+            />
           </li>
         ))}
       </ul>

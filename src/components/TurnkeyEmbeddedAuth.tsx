@@ -254,13 +254,13 @@ function TurnkeyEmbeddedAuthInner({
     } catch (err) {
       clearTurnkeyOauthRedirect();
       const recovery = isUnreachableOauthSubOrgError(err);
-      setOauthError(
-        recovery
-          ? OAUTH_SUBORG_RECOVERY_MESSAGE
-          : err instanceof Error
-            ? err.message
-            : `${provider} sign-in failed`,
-      );
+      let nextError = `${provider} sign-in failed`;
+      if (recovery) {
+        nextError = OAUTH_SUBORG_RECOVERY_MESSAGE;
+      } else if (err instanceof Error) {
+        nextError = err.message;
+      }
+      setOauthError(nextError);
       setOauthBusy(null);
       if (recovery) {
         requestAnimationFrame(() => {

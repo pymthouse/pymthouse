@@ -21,6 +21,20 @@ import {
   OAUTH_SUBORG_RECOVERY_MESSAGE,
 } from "@/lib/login-auth-error";
 
+function oauthCallbackErrorCopy(
+  error: string | null,
+  providerError: string | null,
+): string {
+  if (error && isUnreachableOauthSubOrgError(error)) {
+    return OAUTH_SUBORG_RECOVERY_MESSAGE;
+  }
+  if (error) return error;
+  if (providerError === "access_denied") {
+    return "Sign-in was canceled. You can try again or use a different method.";
+  }
+  return "Sign-in failed. Please try again.";
+}
+
 /**
  * OAuth return surface for Turnkey Wallet Kit social logins.
  * Google/Discord use a same-tab redirect (not a popup) so Chrome cannot
@@ -136,12 +150,7 @@ export function OAuthCallbackClient() {
       {error || providerError ? (
         <div className="w-full max-w-sm space-y-3 text-center">
           <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-            {error && isUnreachableOauthSubOrgError(error)
-              ? OAUTH_SUBORG_RECOVERY_MESSAGE
-              : error ||
-                (providerError === "access_denied"
-                  ? "Sign-in was canceled. You can try again or use a different method."
-                  : "Sign-in failed. Please try again.")}
+            {oauthCallbackErrorCopy(error, providerError)}
           </p>
           <a
             href={
