@@ -138,6 +138,7 @@ test("loadAppUserBillingLedger queries the sandbox identity customer, not the co
       actorExternalUserId: "external_1",
       publicClientId: "pc_test",
       developerAppId: "app_1",
+      billingMode: "merchant",
       legacyCompoundCustomerKey: "pc_test:external_1",
     }),
     listAppUserCreditGrants: async (input) => {

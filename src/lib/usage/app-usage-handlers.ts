@@ -34,7 +34,9 @@ export async function handleAppUsageGet(input: {
   );
   const filterUserId =
     input.forcedExternalUserId?.trim() ||
-    url.searchParams.get("userId") ||
+    url.searchParams.get("userId")?.trim() ||
+    url.searchParams.get("externalUserId")?.trim() ||
+    url.searchParams.get("external_user_id")?.trim() ||
     null;
 
   if (groupBy === "daily_pipeline" && !filterUserId?.trim()) {

@@ -20,7 +20,7 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 - `client_id` is the canonical app identifier in Builder API URLs.
 - **API surfaces:**
   - **Builder (M2M):** canonical `/api/v1/builder/…` for usage; integrator `/api/v1/apps/{clientId}/…` for users, tokens, billing reads (legacy `/apps/…/usage*` aliases remain M2M-only)
-  - **End-user:** `/api/v1/user/usage*` (app from Bearer) or `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT
+  - **End-user:** `/api/v1/user/usage*` (app from Bearer) or `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT. Usage is at `/me/usage*`; self-serve billing reads are at `/me/billing/{allowances,wallet,state,invoices,payment-methods,subscription}`. Query/body `externalUserId` / `userId` on `/me/*` is rejected (400). Drop the user JWT into the app; do not proxy M2M with a caller-chosen user id.
   - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI)
 - OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
@@ -34,7 +34,7 @@ Machine-readable contract and interactive reference:
 | **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
 | **Internal (dashboard/session)** | `GET /api/v1/internal/openapi.json` | `GET /api/v1/internal/docs` |
 
-The public document includes M2M integrator routes and end-user `/api/v1/user/usage*` plus `/api/v1/apps/{clientId}/me/usage*`. Internal is available at the paths above but is not linked from `/api/v1/docs`.
+The public document includes M2M integrator routes and end-user `/api/v1/user/usage*` plus `/api/v1/apps/{clientId}/me/usage*` and `/me/billing*` reads. Internal is available at the paths above but is not linked from `/api/v1/docs`.
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
