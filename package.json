@@ -30,6 +30,7 @@
     "openmeter:migrate-end-user-customers": "npx tsx scripts/openmeter-migrate-end-user-customers.ts",
     "openmeter:dedupe-owner-subscriptions": "npx tsx scripts/openmeter-dedupe-owner-subscriptions.ts",
     "openmeter:release-legacy-subjects": "npx tsx scripts/openmeter-release-legacy-subjects.ts",
+    "openmeter:repair-owner-subject-keys": "npx tsx scripts/openmeter-repair-owner-subject-keys.ts",
     "openmeter:audit-billing": "npx tsx scripts/openmeter-audit-billing-consistency.ts",
     "openmeter:inspect-charges": "npx tsx scripts/openmeter-inspect-subscription-charges.ts",
     "openmeter:fix-owner-attribution": "npx tsx scripts/openmeter-fix-owner-attribution.ts",
