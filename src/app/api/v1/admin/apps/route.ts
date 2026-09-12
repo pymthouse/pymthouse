@@ -16,6 +16,7 @@ export const GET = withSessionAdminGuard(async () => {
         developerName: developerApps.developerName,
         createdAt: developerApps.createdAt,
         publishedAt: developerApps.publishedAt,
+        ownerId: users.id,
         ownerEmail: users.email,
         ownerName: users.name,
         clientId: oidcClients.clientId,
