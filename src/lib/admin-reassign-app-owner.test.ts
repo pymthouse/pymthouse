@@ -7,17 +7,19 @@ import { reassignAppOwner } from "@/lib/admin-reassign-app-owner";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
-  createTestUserWithCleanup,
+  createTestUser,
+  deleteTestUser,
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 
 test("reassignAppOwner moves owner_id when the current owner has no credits", async (t) => {
-  const nextOwner = await createTestUserWithCleanup(t);
+  const nextOwner = await createTestUser();
   const app = await seedDeveloperAppWithClient({
     name: `Reassign ${nextOwner.slice(0, 8)}`,
   });
   t.after(async () => {
     await cleanupTestApp(app);
+    await deleteTestUser(nextOwner);
   });
 
   const result = await reassignAppOwner({
