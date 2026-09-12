@@ -8,12 +8,195 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
-import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { invalidateStarterPlanSyncedCache } from "@/lib/openmeter/starter-subscription";
+import {
+  findConflictingPlanName,
+  getOrCreateStarterPlan,
+} from "@/lib/starter-default-plan";
+import {
+  STARTER_PLAN_DISABLED_STATUS,
+  STARTER_PLAN_ENABLED_STATUS,
+  planDisplayNameWithStarter,
+} from "@/lib/starter-default-plan-display";
 import { toPlanApiRow } from "@/lib/billing/product-dto";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
+import {
+  NETWORK_DEFAULT_PLAN_DISPLAY_NAME,
+  NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
+} from "@/lib/network-default-plan-display";
+import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
 
 function isNonNegativeIntegerString(s: string): boolean {
   return /^\d+$/.test(s);
+}
+
+function parseIncludedUsdMicrosField(
+  raw: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: false, error: "includedUsdMicros is required" };
+  }
+  let includedUsdMicros: string;
+  if (typeof raw === "string") {
+    includedUsdMicros = raw.trim();
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    includedUsdMicros = String(Math.trunc(raw));
+  } else {
+    return {
+      ok: false,
+      error: "includedUsdMicros must be a non-negative integer string",
+    };
+  }
+  if (!isNonNegativeIntegerString(includedUsdMicros)) {
+    return {
+      ok: false,
+      error: "includedUsdMicros must be a non-negative integer string",
+    };
+  }
+  return { ok: true, value: includedUsdMicros };
+}
+
+function parseStarterStatusField(
+  raw: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== "string") {
+    return {
+      ok: false,
+      error: `status must be "${STARTER_PLAN_ENABLED_STATUS}" or "${STARTER_PLAN_DISABLED_STATUS}"`,
+    };
+  }
+  const status = raw.trim();
+  if (
+    status !== STARTER_PLAN_ENABLED_STATUS &&
+    status !== STARTER_PLAN_DISABLED_STATUS
+  ) {
+    return {
+      ok: false,
+      error: `status must be "${STARTER_PLAN_ENABLED_STATUS}" or "${STARTER_PLAN_DISABLED_STATUS}"`,
+    };
+  }
+  return { ok: true, value: status };
+}
+
+function parseStarterPlanNameField(
+  raw: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== "string") {
+    return { ok: false, error: "name must be a string" };
+  }
+  const nameCheck = validateCustomPlanName(raw);
+  if (!nameCheck.ok) {
+    return { ok: false, error: nameCheck.error };
+  }
+  if (
+    nameCheck.value === NETWORK_DEFAULT_PLAN_INTERNAL_NAME ||
+    nameCheck.value === NETWORK_DEFAULT_PLAN_DISPLAY_NAME
+  ) {
+    return {
+      ok: false,
+      error: "This plan name is reserved for the Network Price default plan",
+    };
+  }
+  return { ok: true, value: nameCheck.value };
+}
+
+type StarterPlanPatch = {
+  includedUsdMicros?: string;
+  name?: string;
+  status?: string;
+  updatedAt: string;
+};
+
+function parseStarterPlanPatch(
+  body: Record<string, unknown>,
+): { ok: true; patch: StarterPlanPatch } | { ok: false; error: string } {
+  const patch: StarterPlanPatch = { updatedAt: new Date().toISOString() };
+
+  if (body.includedUsdMicros !== undefined) {
+    const parsed = parseIncludedUsdMicrosField(body.includedUsdMicros);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    patch.includedUsdMicros = parsed.value;
+  }
+
+  if (body.name !== undefined) {
+    const parsed = parseStarterPlanNameField(body.name);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    patch.name = parsed.value;
+  }
+
+  if (body.status !== undefined) {
+    const parsed = parseStarterStatusField(body.status);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    patch.status = parsed.value;
+  }
+
+  if (
+    patch.includedUsdMicros === undefined &&
+    patch.name === undefined &&
+    patch.status === undefined
+  ) {
+    return {
+      ok: false,
+      error: "name, status, or includedUsdMicros is required",
+    };
+  }
+
+  return { ok: true, patch };
+}
+
+function starterPlanPutResponse(input: {
+  starter: {
+    id: string;
+    status: string;
+    includedUsdMicros: string | null;
+  };
+  next:
+    | {
+        name: string;
+        status: string;
+        includedUsdMicros: string | null;
+        openmeterPlanId: string | null;
+      }
+    | undefined;
+  patch: StarterPlanPatch;
+  sync: { ok: boolean; openmeterPlanId?: string; error?: string };
+}) {
+  const displayName = input.next
+    ? planDisplayNameWithStarter({
+        name: input.next.name,
+        isStarterDefault: true,
+      })
+    : input.patch.name;
+  const payload = {
+    success: true as const,
+    id: input.starter.id,
+    name: displayName,
+    status: input.next?.status ?? input.patch.status ?? input.starter.status,
+    includedUsdMicros:
+      input.next?.includedUsdMicros ??
+      input.patch.includedUsdMicros ??
+      input.starter.includedUsdMicros,
+  };
+  if (!input.sync.ok) {
+    return NextResponse.json(
+      {
+        ...payload,
+        syncError: input.sync.error,
+      },
+      { status: 200 },
+    );
+  }
+  return NextResponse.json({
+    ...payload,
+    openmeterPlanId:
+      input.sync.openmeterPlanId ?? input.next?.openmeterPlanId ?? null,
+  });
 }
 
 export async function GET(
@@ -71,56 +254,37 @@ export async function PUT(
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  const raw = body.includedUsdMicros;
-  if (raw === undefined || raw === null) {
-    return NextResponse.json(
-      { error: "includedUsdMicros is required" },
-      { status: 400 },
-    );
+  const parsed = parseStarterPlanPatch(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
-  let includedUsdMicros: string;
-  if (typeof raw === "string") {
-    includedUsdMicros = raw.trim();
-  } else if (typeof raw === "number" && Number.isFinite(raw)) {
-    includedUsdMicros = String(Math.trunc(raw));
-  } else {
-    return NextResponse.json(
-      { error: "includedUsdMicros must be a non-negative integer string" },
-      { status: 400 },
-    );
-  }
-  if (!isNonNegativeIntegerString(includedUsdMicros)) {
-    return NextResponse.json(
-      { error: "includedUsdMicros must be a non-negative integer string" },
-      { status: 400 },
-    );
-  }
+  const { patch } = parsed;
 
   const starter = await getOrCreateStarterPlan(auth.app.id);
-  const now = new Date().toISOString();
-  await db
-    .update(plans)
-    .set({ includedUsdMicros, updatedAt: now })
-    .where(eq(plans.id, starter.id));
 
-  const sync = await syncPlanToOpenMeter(starter.id);
-  if (!sync.ok) {
-    return NextResponse.json(
-      {
-        success: true,
-        id: starter.id,
-        includedUsdMicros,
-        syncError: sync.error,
-      },
-      { status: 200 },
+  if (patch.name) {
+    const conflict = await findConflictingPlanName(
+      auth.app.id,
+      patch.name,
+      starter.id,
     );
+    if (conflict) {
+      return NextResponse.json(
+        { error: `A plan named "${patch.name}" already exists` },
+        { status: 400 },
+      );
+    }
   }
 
+  await db.update(plans).set(patch).where(eq(plans.id, starter.id));
+  invalidateStarterPlanSyncedCache(auth.app.id);
+
+  const sync = await syncPlanToOpenMeter(starter.id);
   const refreshed = await db.select().from(plans).where(eq(plans.id, starter.id)).limit(1);
-  return NextResponse.json({
-    success: true,
-    id: starter.id,
-    includedUsdMicros: refreshed[0]?.includedUsdMicros ?? includedUsdMicros,
-    openmeterPlanId: sync.openmeterPlanId ?? refreshed[0]?.openmeterPlanId ?? null,
+  return starterPlanPutResponse({
+    starter,
+    next: refreshed[0],
+    patch,
+    sync,
   });
 }

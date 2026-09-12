@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   defaultStarterIncludedUsdMicros,
+  isNameTakenByStarter,
+  isStarterPlanEnabled,
   parseIncludedUsdMicros,
   planDisplayNameWithStarter,
   STARTER_DEFAULT_PLAN_DISPLAY_NAME,
+  STARTER_DEFAULT_PLAN_INTERNAL_NAME,
 } from "./starter-default-plan-display";
 
 test("defaultStarterIncludedUsdMicros uses env or 0", () => {
@@ -44,4 +47,47 @@ test("planDisplayNameWithStarter maps internal starter name", () => {
     planDisplayNameWithStarter({ name: "Pro", isStarterDefault: false }),
     "Pro",
   );
+});
+
+test("planDisplayNameWithStarter honors a renamed starter", () => {
+  assert.equal(
+    planDisplayNameWithStarter({
+      name: "Free Trial",
+      isStarterDefault: true,
+    }),
+    "Free Trial",
+  );
+  assert.equal(
+    planDisplayNameWithStarter({
+      name: STARTER_DEFAULT_PLAN_DISPLAY_NAME,
+      isStarterDefault: true,
+    }),
+    STARTER_DEFAULT_PLAN_DISPLAY_NAME,
+  );
+});
+
+test("isStarterPlanEnabled is true only for active", () => {
+  assert.equal(isStarterPlanEnabled("active"), true);
+  assert.equal(isStarterPlanEnabled("draft"), false);
+  assert.equal(isStarterPlanEnabled("phase_out"), false);
+  assert.equal(isStarterPlanEnabled(null), false);
+});
+
+test("isNameTakenByStarter uses current display name after rename", () => {
+  assert.equal(
+    isNameTakenByStarter("Starter", { name: STARTER_DEFAULT_PLAN_INTERNAL_NAME }),
+    true,
+  );
+  assert.equal(
+    isNameTakenByStarter(STARTER_DEFAULT_PLAN_INTERNAL_NAME, {
+      name: "Free Trial",
+    }),
+    true,
+  );
+  assert.equal(
+    isNameTakenByStarter("Starter", { name: "Free Trial" }),
+    false,
+  );
+  assert.equal(isNameTakenByStarter("Free Trial", { name: "Free Trial" }), true);
+  assert.equal(isNameTakenByStarter("Starter", undefined), true);
 });
