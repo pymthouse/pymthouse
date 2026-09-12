@@ -454,7 +454,7 @@ End users can read **their own** usage with the credential they already hold (no
 | --- | --- |
 | `GET /api/v1/user/usage` | Aggregates for the authenticated subject; app resolved from the Bearer credential |
 | `GET /api/v1/user/usage/balance` | Plan included-usage allowance for that subject |
-| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
+| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `from`/`to`, `cursor`, `limit`) |
 | `GET /api/v1/apps/{clientId}/me/usage` | Same aggregates with path-scoped app (`{clientId}` must match the credential) |
 | `GET /api/v1/apps/{clientId}/me/usage/balance` | Same balance, path-scoped |
 | `GET /api/v1/apps/{clientId}/me/usage/requests` | Same request history, path-scoped |
@@ -524,14 +524,18 @@ Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `rema
 
 **Endpoint:** `GET /api/v1/user/usage/requests` (or `GET /api/v1/apps/{clientId}/me/usage/requests`)
 
-Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
+Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`). Optional `from`/`to` override the default window.
 
 | Query | Description |
 | --- | --- |
 | `groupBy` | `session` or `request` (default `request`) |
 | `manifestId` | When `groupBy=request`, filter to one session mid |
+| `from` | Inclusive lower bound (ISO 8601). Required together with `to`. |
+| `to` | Inclusive upper bound (ISO 8601). Required together with `from`. |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
+
+When `from`/`to` are omitted, the server uses the current UTC calendar month. The pair must satisfy `from <= to` within `MAX_DATE_RANGE_DAYS` (365). A lone `from` or `to` returns **400**.
 
 Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus `clientId` / `externalUserId` echoed from the credential.
 

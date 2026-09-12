@@ -1,3 +1,4 @@
+import { MAX_DATE_RANGE_DAYS } from "@/lib/billing-utils";
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
   builderErrorResponses,
@@ -6,6 +7,9 @@ import {
 } from "@/lib/openapi/routes/shared";
 import { OPENAPI_TAGS } from "@/lib/openapi/tags";
 import { z } from "@/lib/openapi/zod";
+
+const requestsDateRangeBadRequest =
+  "Disallowed cross-user filter, invalid groupBy, or invalid date range";
 
 const endUserSecurity: Array<Record<string, string[]>> = [{ endUserBearer: [] }];
 
@@ -65,6 +69,25 @@ const endUserRequestsQueryParams = z.object({
       param: { name: "limit", in: "query" },
       description: "Page size (default 25, max 50).",
     }),
+  from: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "from", in: "query" },
+      description:
+        `Inclusive lower bound (ISO 8601). Must be paired with \`to\`. ` +
+        `Maximum span is ${MAX_DATE_RANGE_DAYS} days. ` +
+        "Omitted pair defaults to the current UTC calendar month.",
+    }),
+  to: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "to", in: "query" },
+      description:
+        `Inclusive upper bound (ISO 8601). Must be paired with \`from\`. ` +
+        `Maximum span is ${MAX_DATE_RANGE_DAYS} days.`,
+    }),
 });
 
 const meUsagePath = (suffix: string) =>
@@ -122,6 +145,8 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
     "Chronological signed-ticket history for the authenticated subject. " +
     "`groupBy=session` lists per-manifest sessions; `groupBy=request` (default) " +
     "lists CloudEvents (optionally filtered by `manifestId`). " +
+    "Optional `from`/`to` (ISO 8601, together) override the default " +
+    `calendar-month window (max ${MAX_DATE_RANGE_DAYS} days). ` +
     "Do not pass `userId` / `externalUserId`.",
   security: endUserSecurity,
   request: {
@@ -133,7 +158,7 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
     ...builderErrorResponses,
     400: {
       ...builderErrorResponses[400],
-      description: "Disallowed cross-user filter or invalid groupBy",
+      description: requestsDateRangeBadRequest,
     },
     401: {
       ...builderErrorResponses[401],
@@ -150,7 +175,11 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
 const defineUserUsageRoute = (
   suffix: string,
   summary: string,
-  query?: typeof endUserUsageQueryParams | typeof endUserRequestsQueryParams,
+  options?: {
+    query?: typeof endUserUsageQueryParams | typeof endUserRequestsQueryParams;
+    descriptionExtra?: string;
+    badRequestDescription?: string;
+  },
 ) => {
   defineRouteMetadata("get", `/api/v1/user/usage${suffix}`, {
     tags: [OPENAPI_TAGS.endUserUsage],
@@ -159,21 +188,34 @@ const defineUserUsageRoute = (
       "Usage for the authenticated subject. The app is resolved from the " +
       "Bearer credential (bare `pmth_*` key, optional composite, or user/signer JWT). " +
       "Do not pass `userId` / `externalUserId`. " +
+      (options?.descriptionExtra ? `${options.descriptionExtra} ` : "") +
       `App-scoped equivalent: \`GET ${meUsagePath(suffix)}\`.`,
     security: endUserSecurity,
-    ...(query ? { request: { query } } : {}),
+    ...(options?.query ? { request: { query: options.query } } : {}),
     responses: {
       200: jsonSuccess,
       ...builderErrorResponses,
+      ...(options?.badRequestDescription
+        ? {
+            400: {
+              ...builderErrorResponses[400],
+              description: options.badRequestDescription,
+            },
+          }
+        : {}),
       503: { description: "OpenMeter not configured" },
     },
   });
 };
 
-defineUserUsageRoute("", "End-user usage summary", endUserUsageQueryParams);
+defineUserUsageRoute("", "End-user usage summary", {
+  query: endUserUsageQueryParams,
+});
 defineUserUsageRoute("/balance", "End-user usage balance");
-defineUserUsageRoute(
-  "/requests",
-  "End-user signed-ticket request history",
-  endUserRequestsQueryParams,
-);
+defineUserUsageRoute("/requests", "End-user signed-ticket request history", {
+  query: endUserRequestsQueryParams,
+  descriptionExtra:
+    "Optional `from`/`to` (ISO 8601, together) override the default " +
+    `calendar-month window (max ${MAX_DATE_RANGE_DAYS} days).`,
+  badRequestDescription: requestsDateRangeBadRequest,
+});
