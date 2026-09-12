@@ -34,13 +34,29 @@ function providerIssuer(provider: OauthProviderLike): string {
   return (provider.issuer ?? "").toLowerCase();
 }
 
+function hostnameFromUrl(value: string): string | null {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function issuerHostMatches(
+  issuer: string,
+  allowedHosts: readonly string[],
+): boolean {
+  const host = hostnameFromUrl(issuer);
+  return host !== null && allowedHosts.includes(host);
+}
+
 export function hasGoogleOauthProvider(
   providers: OauthProviderLike[] | null | undefined,
 ): boolean {
   return (providers ?? []).some((provider) => {
     const name = providerName(provider);
     const issuer = providerIssuer(provider);
-    return name.includes("google") || issuer.includes("accounts.google.com");
+    return name.includes("google") || issuerHostMatches(issuer, ["accounts.google.com"]);
   });
 }
 
@@ -50,7 +66,7 @@ export function hasGithubOauthProvider(
   return (providers ?? []).some((provider) => {
     const name = providerName(provider);
     const issuer = providerIssuer(provider);
-    return name.includes("github") || issuer.includes("turnkey-github");
+    return name.includes("github") || issuerHostMatches(issuer, ["github.com"]);
   });
 }
 
@@ -60,7 +76,10 @@ export function hasDiscordOauthProvider(
   return (providers ?? []).some((provider) => {
     const name = providerName(provider);
     const issuer = providerIssuer(provider);
-    return name.includes("discord") || issuer.includes("discord");
+    return (
+      name.includes("discord") ||
+      issuerHostMatches(issuer, ["discord.com", "discordapp.com"])
+    );
   });
 }
 
