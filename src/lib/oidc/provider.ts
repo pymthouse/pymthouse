@@ -9,6 +9,7 @@ import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-pro
 import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
 import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
 import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
+import { resolveOidcProviderTtls } from "@/lib/oidc/ttl";
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
@@ -294,6 +295,7 @@ export async function getProvider(): Promise<Provider> {
 async function buildProvider(): Promise<Provider> {
   const issuer = getIssuer();
   const [jwks, clients] = await Promise.all([loadJWKS(), loadClients()]);
+  const oidcTtls = resolveOidcProviderTtls();
 
   const configuration: Configuration = {
     adapter: PostgresOidcAdapter,
@@ -445,7 +447,7 @@ async function buildProvider(): Promise<Provider> {
             scope: "openid email profile sign:job users:read users:write users:token device:approve admin",
             audience: issuer,
             accessTokenFormat: "jwt" as const,
-            accessTokenTTL: 3600,
+            accessTokenTTL: oidcTtls.accessToken,
             jwt: {
               sign: { alg: "RS256" as const },
             },
@@ -455,16 +457,17 @@ async function buildProvider(): Promise<Provider> {
       },
     },
 
-    // TTLs matching the current implementation
+    // Access default 1h; refresh/grant/session share OIDC_REFRESH_TOKEN_TTL_SECONDS
+    // (default 90d). Programmatic mint and signer JWTs do not use these values.
     ttl: {
-      AccessToken: 3600,          // 1 hour
+      AccessToken: oidcTtls.accessToken,
       AuthorizationCode: 600,     // 10 minutes
       DeviceCode: 600,            // 10 minutes
       IdToken: 3600,              // 1 hour
-      RefreshToken: 30 * 24 * 3600, // 30 days
+      RefreshToken: oidcTtls.refreshToken,
       Interaction: 1800,          // 30 minutes — gives users time to complete login without timing out
-      Session: 14 * 24 * 3600,   // 14 days
-      Grant: 14 * 24 * 3600,     // 14 days
+      Session: oidcTtls.session,
+      Grant: oidcTtls.grant,
     },
 
     // Interaction URL — redirect to our custom consent/login pages

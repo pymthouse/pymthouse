@@ -305,6 +305,8 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID` | Google OAuth Web client ID | Optional; usually set in Auth Proxy dashboard |
 | `TURNKEY_ALLOWED_ORGANIZATION_IDS` | Optional comma-separated org UUIDs | Restrict which orgs’ session JWTs are accepted |
 | `OIDC_DEBUG_LOGS` | `1` to enable | Debug OIDC flows |
+| `OIDC_ACCESS_TOKEN_TTL_SECONDS` | Seconds (default `3600`) | Interactive OIDC access JWT TTL. Keep at 1 hour; clients refresh. |
+| `OIDC_REFRESH_TOKEN_TTL_SECONDS` | Seconds (default `7776000` = 90 days) | Interactive OIDC refresh TTL. Grant and Session follow this so a rotated refresh stays valid. Does not change programmatic mint (`POST …/users/{eu}/token`, 15m/30d) or signer JWTs (5m). |
 
 **Turnkey social logins (wallets for all funders):** enable Google (etc.) under
 Embedded Wallets → Configuration → Social logins. Redirect URL and Google’s
