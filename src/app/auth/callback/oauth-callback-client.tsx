@@ -12,7 +12,10 @@ import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
-import { takeTurnkeyOauthRedirectOnce } from "@/lib/turnkey-oauth-redirect";
+import {
+  hasTurnkeyOauthReturnParams,
+  takeTurnkeyOauthRedirectOnce,
+} from "@/lib/turnkey-oauth-redirect";
 
 /**
  * OAuth return surface for Turnkey Wallet Kit social logins.
@@ -43,9 +46,26 @@ export function OAuthCallbackClient() {
   const bridging = useRef(false);
 
   useEffect(() => {
-    if (nextAuthStatus === "authenticated") {
+    if (nextAuthStatus !== "authenticated") return;
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const goHomeWhenOauthReturnSettles = () => {
+      if (cancelled) return;
+      const pending =
+        typeof window !== "undefined" &&
+        hasTurnkeyOauthReturnParams(window.location.href);
+      if (pending && Date.now() - startedAt < 8000) {
+        window.setTimeout(goHomeWhenOauthReturnSettles, 50);
+        return;
+      }
       router.replace(callbackUrl);
-    }
+    };
+
+    goHomeWhenOauthReturnSettles();
+    return () => {
+      cancelled = true;
+    };
   }, [nextAuthStatus, router, callbackUrl]);
 
   useEffect(() => {

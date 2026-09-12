@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import CopyIdButton from "@/components/apps/CopyIdButton";
 import SidebarCreditPreview from "@/components/SidebarCreditPreview";
 
@@ -139,6 +140,13 @@ export default function UserMenu({
           </div>
 
           <div className="border-t border-zinc-800 px-4 py-2.5">
+            <Link
+              href="/account"
+              className="mb-2 block text-xs font-medium text-zinc-300 hover:text-zinc-100"
+              onClick={() => setOpen(false)}
+            >
+              Sign-in methods
+            </Link>
             <SidebarCreditPreview />
           </div>
         </div>

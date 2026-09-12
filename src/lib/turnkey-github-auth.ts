@@ -18,10 +18,34 @@ export type GithubUserProfile = {
   email: string | null;
 };
 
+export const GITHUB_ACCOUNT_EXISTS_ERROR = "GitHubAccountExists";
+
+export class ExistingAccountError extends Error {
+  readonly email: string;
+  readonly code = GITHUB_ACCOUNT_EXISTS_ERROR;
+
+  constructor(email: string) {
+    super(`An account already exists for ${email}`);
+    this.name = "ExistingAccountError";
+    this.email = email;
+  }
+}
+
+export function isExistingAccountError(
+  err: unknown,
+): err is ExistingAccountError {
+  return err instanceof ExistingAccountError;
+}
+
 type TurnkeyGithubServerClient = {
   getSubOrgIds(input: {
     organizationId: string;
     filterType: "OIDC_TOKEN";
+    filterValue: string;
+  }): Promise<{ organizationIds?: string[] }>;
+  getVerifiedSubOrgIds(input: {
+    organizationId: string;
+    filterType: "EMAIL";
     filterValue: string;
   }): Promise<{ organizationIds?: string[] }>;
   createSubOrganization(input: {
@@ -261,6 +285,16 @@ export async function loginTurnkeyWithGithub(input: {
   });
 
   let subOrganizationId = existing.organizationIds?.[0];
+  if (!subOrganizationId && input.profile.email) {
+    const byEmail = await client.getVerifiedSubOrgIds({
+      organizationId,
+      filterType: "EMAIL",
+      filterValue: input.profile.email,
+    });
+    if (byEmail.organizationIds?.length) {
+      throw new ExistingAccountError(input.profile.email);
+    }
+  }
   if (!subOrganizationId) {
     const userName =
       input.profile.email ||
