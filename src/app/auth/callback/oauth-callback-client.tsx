@@ -16,6 +16,10 @@ import {
   hasTurnkeyOauthReturnParams,
   takeTurnkeyOauthRedirectOnce,
 } from "@/lib/turnkey-oauth-redirect";
+import {
+  isUnreachableOauthSubOrgError,
+  OAUTH_SUBORG_RECOVERY_MESSAGE,
+} from "@/lib/login-auth-error";
 
 /**
  * OAuth return surface for Turnkey Wallet Kit social logins.
@@ -100,6 +104,10 @@ export function OAuthCallbackClient() {
         setError(result.error);
         bridging.current = false;
       } catch (err) {
+        if (isUnreachableOauthSubOrgError(err)) {
+          router.replace("/login?error=PUBLIC_KEY_NOT_FOUND");
+          return;
+        }
         setError(err instanceof Error ? err.message : "Authentication failed");
         bridging.current = false;
       }
@@ -128,13 +136,19 @@ export function OAuthCallbackClient() {
       {error || providerError ? (
         <div className="w-full max-w-sm space-y-3 text-center">
           <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-            {error ||
-              (providerError === "access_denied"
-                ? "Sign-in was canceled. You can try again or use a different method."
-                : "Sign-in failed. Please try again.")}
+            {error && isUnreachableOauthSubOrgError(error)
+              ? OAUTH_SUBORG_RECOVERY_MESSAGE
+              : error ||
+                (providerError === "access_denied"
+                  ? "Sign-in was canceled. You can try again or use a different method."
+                  : "Sign-in failed. Please try again.")}
           </p>
           <a
-            href="/login"
+            href={
+              error && isUnreachableOauthSubOrgError(error)
+                ? "/login?error=PUBLIC_KEY_NOT_FOUND"
+                : "/login"
+            }
             className="inline-block text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
           >
             Back to sign in

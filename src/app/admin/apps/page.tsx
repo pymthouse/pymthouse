@@ -15,6 +15,7 @@ interface AdminApp {
   developerName: string | null;
   createdAt: string;
   publishedAt: string | null;
+  ownerId: string | null;
   ownerEmail: string | null;
   ownerName: string | null;
   clientId: string | null;
@@ -27,7 +28,11 @@ export default function AdminAppsPage() {
   const [apps, setApps] = useState<AdminApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [featuring, setFeaturing] = useState<string | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
+  const [ownerDrafts, setOwnerDrafts] = useState<Record<string, string>>({});
+  const [adminDrafts, setAdminDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const userRole = (session?.user as Record<string, unknown> | undefined)?.role as string | undefined;
 
@@ -74,6 +79,62 @@ export default function AdminAppsPage() {
     }
   };
 
+  const handleReassignOwner = async (app: AdminApp) => {
+    const newOwnerUserId = (ownerDrafts[app.id] ?? "").trim();
+    if (!newOwnerUserId) return;
+    setActing(app.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/v1/admin/apps/${encodeURIComponent(app.id)}/owner`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newOwnerUserId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to reassign owner");
+        return;
+      }
+      setApps((prev) =>
+        prev.map((row) =>
+          row.id === app.id ? { ...row, ownerId: data.ownerId } : row,
+        ),
+      );
+      setNotice(`Reassigned ${app.name} to ${newOwnerUserId}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleGrantCoAdmin = async (app: AdminApp) => {
+    const userId = (adminDrafts[app.id] ?? "").trim();
+    const clientId = app.clientId || app.id;
+    if (!userId) return;
+    setActing(app.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${encodeURIComponent(clientId)}/admins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to grant co-admin");
+        return;
+      }
+      setNotice(`Granted co-admin on ${app.name} to ${userId}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
   if (status === "loading" || (status === "authenticated" && userRole !== "admin")) {
     return (
       <DashboardLayout>
@@ -98,6 +159,11 @@ export default function AdminAppsPage() {
       {error && (
         <div className="mb-6 p-4 rounded-lg border border-red-500/20 bg-red-500/5 text-red-300 text-sm">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mb-6 p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-emerald-300 text-sm">
+          {notice}
         </div>
       )}
 
@@ -172,6 +238,90 @@ export default function AdminAppsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {!loading && apps.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold text-zinc-100">App ownership</h2>
+          <p className="text-sm text-zinc-500 mt-1 mb-4">
+            Reassign an orphaned app to a reachable user, or grant co-admin
+            without moving the billing owner.
+          </p>
+          <div className="space-y-3">
+            {apps.map((app) => {
+              const isActing = acting === app.id;
+              return (
+                <div
+                  key={`owner-${app.id}`}
+                  className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/30"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-zinc-200">
+                        {app.name}
+                      </h3>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        {app.ownerEmail || app.ownerId || "No owner email"}
+                        {app.ownerId ? ` · ${app.ownerId}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-xs text-zinc-500">{app.status}</span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="New owner user id"
+                        value={ownerDrafts[app.id] ?? ""}
+                        onChange={(event) =>
+                          setOwnerDrafts((prev) => ({
+                            ...prev,
+                            [app.id]: event.target.value,
+                          }))
+                        }
+                        className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100"
+                      />
+                      <button
+                        type="button"
+                        disabled={isActing || !(ownerDrafts[app.id] ?? "").trim()}
+                        onClick={() => {
+                          void handleReassignOwner(app);
+                        }}
+                        className="px-3 py-1.5 text-xs text-zinc-200 border border-zinc-700 rounded-lg hover:border-zinc-500 disabled:opacity-50"
+                      >
+                        Reassign owner
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Co-admin user id"
+                        value={adminDrafts[app.id] ?? ""}
+                        onChange={(event) =>
+                          setAdminDrafts((prev) => ({
+                            ...prev,
+                            [app.id]: event.target.value,
+                          }))
+                        }
+                        className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100"
+                      />
+                      <button
+                        type="button"
+                        disabled={isActing || !(adminDrafts[app.id] ?? "").trim()}
+                        onClick={() => {
+                          void handleGrantCoAdmin(app);
+                        }}
+                        className="px-3 py-1.5 text-xs text-zinc-200 border border-zinc-700 rounded-lg hover:border-zinc-500 disabled:opacity-50"
+                      >
+                        Grant co-admin
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </DashboardLayout>

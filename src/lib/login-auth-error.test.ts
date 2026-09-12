@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { loginAuthErrorMessage } from "@/lib/login-auth-error";
+import {
+  isUnreachableOauthSubOrgError,
+  loginAuthErrorMessage,
+} from "@/lib/login-auth-error";
 
 describe("loginAuthErrorMessage", () => {
   it("returns null when there is no error", () => {
@@ -46,5 +49,26 @@ describe("loginAuthErrorMessage", () => {
     assert.match(invalid, /expired or was invalid/);
     assert.match(denied, /denied/);
     assert.match(generic, /Sign-in failed/);
+  });
+
+  it("directs leftover Google failures to email OTP", () => {
+    assert.match(
+      loginAuthErrorMessage(
+        "Turnkey error 16 PUBLIC_KEY_NOT_FOUND no user found for attested identity",
+      ) ?? "",
+      /Enter the same email below/,
+    );
+  });
+});
+
+describe("isUnreachableOauthSubOrgError", () => {
+  it("matches the attested-stamp leftover", () => {
+    assert.equal(
+      isUnreachableOauthSubOrgError(
+        new Error("PUBLIC_KEY_NOT_FOUND: no user found for attested identity"),
+      ),
+      true,
+    );
+    assert.equal(isUnreachableOauthSubOrgError("AccessDenied"), false);
   });
 });

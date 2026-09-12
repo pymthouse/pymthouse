@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DeleteAccountPanel } from "@/components/DeleteAccountPanel";
 import { SignInMethodsPanel } from "@/components/SignInMethodsPanel";
 import { authOptions } from "@/lib/next-auth-options";
 
@@ -28,6 +29,7 @@ export default async function AccountPage() {
           }
         >
           <SignInMethodsPanel />
+          <DeleteAccountPanel />
         </Suspense>
       </div>
     </DashboardLayout>

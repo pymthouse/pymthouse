@@ -26,6 +26,10 @@ import {
   shouldResumeTurnkeyOauthCallback,
   turnkeyOauthOpenInPageParams,
 } from "@/lib/turnkey-oauth-redirect";
+import {
+  isUnreachableOauthSubOrgError,
+  OAUTH_SUBORG_RECOVERY_MESSAGE,
+} from "@/lib/login-auth-error";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
@@ -249,10 +253,21 @@ function TurnkeyEmbeddedAuthInner({
       await start();
     } catch (err) {
       clearTurnkeyOauthRedirect();
+      const recovery = isUnreachableOauthSubOrgError(err);
       setOauthError(
-        err instanceof Error ? err.message : `${provider} sign-in failed`,
+        recovery
+          ? OAUTH_SUBORG_RECOVERY_MESSAGE
+          : err instanceof Error
+            ? err.message
+            : `${provider} sign-in failed`,
       );
       setOauthBusy(null);
+      if (recovery) {
+        requestAnimationFrame(() => {
+          const emailInput = authSectionRef.current?.querySelector("input");
+          if (emailInput instanceof HTMLInputElement) emailInput.focus();
+        });
+      }
     }
   };
 
@@ -456,7 +471,13 @@ function TurnkeyEmbeddedAuthInner({
             </button>
           )}
           {oauthError ? (
-            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            <p
+              className={
+                oauthError === OAUTH_SUBORG_RECOVERY_MESSAGE
+                  ? "text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2"
+                  : "text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"
+              }
+            >
               {oauthError}
             </p>
           ) : null}

@@ -14,6 +14,7 @@ import {
   oauthAccountExistsMessage,
 } from "@/lib/turnkey-account-exists";
 import {
+  oauthProviderIdForMethod,
   type SignInMethodId,
   signInMethodStatuses,
 } from "@/lib/turnkey-sign-in-methods";
@@ -45,6 +46,8 @@ function SignInMethodsPanelInner() {
     user,
     refreshUser,
     handleAddOauthProvider,
+    handleRemoveOauthProvider,
+    handleRemoveUserEmail,
     addOauthProvider,
     createApiKeyPair,
   } = useTurnkey();
@@ -180,6 +183,37 @@ function SignInMethodsPanelInner() {
     }
   };
 
+  const removeMethod = async (id: SignInMethodId) => {
+    if (busyMethod || !sessionReady) return;
+    setBusyMethod(id);
+    setError(null);
+    setNotice(null);
+    try {
+      if (id === "email") {
+        await handleRemoveUserEmail({ successPageDuration: 0 });
+        await refreshUser();
+        setNotice("Email is no longer a sign-in method on this account.");
+        return;
+      }
+      const providerId = oauthProviderIdForMethod(user?.oauthProviders, id);
+      if (!providerId) {
+        throw new Error(`Could not find the ${id} provider on this wallet.`);
+      }
+      await handleRemoveOauthProvider({
+        providerId,
+        successPageDuration: 0,
+      });
+      await refreshUser();
+      setNotice(`${id === "github" ? "GitHub" : id === "discord" ? "Discord" : "Google"} is no longer a sign-in method on this account.`);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not remove sign-in method",
+      );
+    } finally {
+      setBusyMethod(null);
+    }
+  };
+
   return (
     <section className="rounded-md border border-zinc-800 bg-zinc-900/40">
       <div className="border-b border-zinc-800 px-4 py-3.5">
@@ -206,7 +240,18 @@ function SignInMethodsPanelInner() {
                 {method.linked ? "Connected" : "Not connected"}
               </p>
             </div>
-            {method.linked ? (
+            {method.linked && method.removable ? (
+              <button
+                type="button"
+                className={AUTH_BUTTON_CLASS}
+                disabled={!sessionReady || busyMethod !== null}
+                onClick={() => {
+                  void removeMethod(method.id);
+                }}
+              >
+                {busyMethod === method.id ? "Removing…" : "Remove"}
+              </button>
+            ) : method.linked ? (
               <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
                 Linked
               </span>
