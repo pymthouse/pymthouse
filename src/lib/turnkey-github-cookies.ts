@@ -7,6 +7,9 @@ const HANDOFF_MAX_AGE_SEC = 120;
 
 export const GITHUB_OAUTH_STATE_COOKIE = "pmth_github_oauth_state";
 export const GITHUB_SESSION_HANDOFF_COOKIE = "pmth_github_tk_session";
+export const GITHUB_OIDC_HANDOFF_COOKIE = "pmth_github_tk_oidc";
+
+export type GithubOauthIntent = "login" | "link";
 
 export type GithubOauthStatePayload = {
   publicKey: string;
@@ -14,6 +17,7 @@ export type GithubOauthStatePayload = {
   callbackUrl: string;
   csrf: string;
   exp: number;
+  intent: GithubOauthIntent;
 };
 
 function signingSecret(): string {
@@ -47,14 +51,21 @@ export function createGithubOauthCsrf(): string {
 }
 
 export function sealGithubOauthState(
-  payload: Omit<GithubOauthStatePayload, "exp"> & { exp?: number },
+  payload: Omit<GithubOauthStatePayload, "exp" | "intent"> & {
+    exp?: number;
+    intent?: GithubOauthIntent;
+  },
 ): string {
   const body: GithubOauthStatePayload = {
     publicKey: payload.publicKey,
     nonce: payload.nonce,
-    callbackUrl: safeCallbackUrl(payload.callbackUrl),
+    callbackUrl: safeCallbackUrl(
+      payload.callbackUrl,
+      payload.intent === "link" ? "/account" : "/onboarding",
+    ),
     csrf: payload.csrf,
     exp: payload.exp ?? Date.now() + STATE_MAX_AGE_MS,
+    intent: payload.intent === "link" ? "link" : "login",
   };
   const encodedBody = b64urlEncode(Buffer.from(JSON.stringify(body), "utf8"));
   return `${encodedBody}.${signPayload(encodedBody)}`;
@@ -93,12 +104,17 @@ export function openGithubOauthState(
       return null;
     }
     if (obj.exp < Date.now()) return null;
+    const intent: GithubOauthIntent = obj.intent === "link" ? "link" : "login";
     return {
       publicKey: obj.publicKey,
       nonce: obj.nonce,
-      callbackUrl: safeCallbackUrl(obj.callbackUrl),
+      callbackUrl: safeCallbackUrl(
+        obj.callbackUrl,
+        intent === "link" ? "/account" : "/onboarding",
+      ),
       csrf: obj.csrf,
       exp: obj.exp,
+      intent,
     };
   } catch {
     return null;
@@ -129,6 +145,10 @@ export function githubOauthStateCookieOptions() {
 }
 
 export function githubSessionHandoffCookieOptions() {
+  return githubAuthCookieOptions(HANDOFF_MAX_AGE_SEC);
+}
+
+export function githubOidcHandoffCookieOptions() {
   return githubAuthCookieOptions(HANDOFF_MAX_AGE_SEC);
 }
 
