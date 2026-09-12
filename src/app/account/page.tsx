@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -7,10 +8,19 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { DeleteAccountPanel } from "@/components/DeleteAccountPanel";
 import { SignInMethodsPanel } from "@/components/SignInMethodsPanel";
 import { authOptions } from "@/lib/next-auth-options";
+import {
+  OAUTH_ERROR_NOTICE_COOKIE,
+  openOauthErrorNotice,
+} from "@/lib/oauth-error-notice";
 
 export default async function AccountPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
+
+  const noticeEmail =
+    openOauthErrorNotice(
+      (await cookies()).get(OAUTH_ERROR_NOTICE_COOKIE)?.value,
+    )?.email ?? null;
 
   return (
     <DashboardLayout>
@@ -28,7 +38,7 @@ export default async function AccountPage() {
             </div>
           }
         >
-          <SignInMethodsPanel />
+          <SignInMethodsPanel noticeEmail={noticeEmail} />
           <DeleteAccountPanel />
         </Suspense>
       </div>

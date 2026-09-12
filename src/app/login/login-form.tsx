@@ -238,7 +238,9 @@ function LoginPageFooter({
   );
 }
 
-export function LoginForm() {
+export function LoginForm({
+  noticeEmail = null,
+}: Readonly<{ noticeEmail?: string | null }>) {
   const { data: session, status } = useSession();
   const { clientState, authState } = useTurnkey();
   const router = useRouter();
@@ -255,7 +257,7 @@ export function LoginForm() {
   const resumePersona = personaFromCallback(sanitizedCallbackUrl);
   const oauthCallbackMessage = loginAuthErrorMessage(
     searchParams.get("error"),
-    searchParams.get("email"),
+    noticeEmail,
   );
 
   // Preserve legacy ?admin=1 links, and send the CS RP to token login.

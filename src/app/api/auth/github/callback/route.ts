@@ -20,6 +20,10 @@ import {
 } from "@/lib/turnkey-github-auth";
 import { mintTurnkeyGithubOidcToken } from "@/lib/turnkey-github-oidc";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import {
+  normalizeNoticeEmail,
+  oauthErrorNoticeAutoPostResponse,
+} from "@/lib/oauth-error-notice";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 
 export const dynamic = "force-dynamic";
@@ -27,12 +31,27 @@ export const dynamic = "force-dynamic";
 function redirectWithOauthError(
   error: string,
   intent: GithubOauthIntent = "login",
-  email?: string,
 ): NextResponse {
   const url = new URL(intent === "link" ? "/account" : "/login", getPublicOrigin());
   url.searchParams.set("error", error);
-  if (email) url.searchParams.set("email", email);
   const response = NextResponse.redirect(url);
+  response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+  return response;
+}
+
+function existingAccountResponse(
+  intent: GithubOauthIntent,
+  email: string,
+): NextResponse {
+  const noticeEmail = normalizeNoticeEmail(email);
+  if (!noticeEmail) {
+    return redirectWithOauthError(GITHUB_ACCOUNT_EXISTS_ERROR, intent);
+  }
+  const response = oauthErrorNoticeAutoPostResponse({
+    error: GITHUB_ACCOUNT_EXISTS_ERROR,
+    email: noticeEmail,
+    intent,
+  });
   response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
   return response;
 }
@@ -132,11 +151,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err) {
     if (isExistingAccountError(err)) {
-      return redirectWithOauthError(
-        GITHUB_ACCOUNT_EXISTS_ERROR,
-        intent,
-        err.email,
-      );
+      return existingAccountResponse(intent, err.email);
     }
     console.error("GitHub Turnkey login failed:", err);
     return redirectWithOauthError("GitHubTurnkeyLoginFailed", intent);

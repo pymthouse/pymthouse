@@ -82,7 +82,9 @@ function MethodRowAction({
   return <span className="text-xs text-zinc-600">—</span>;
 }
 
-export function SignInMethodsPanel() {
+export function SignInMethodsPanel({
+  noticeEmail = null,
+}: Readonly<{ noticeEmail?: string | null }>) {
   if (!isTurnkeyWalletConfigured()) {
     return (
       <section className="rounded-md border border-zinc-800 bg-zinc-900/40 px-4 py-3.5">
@@ -94,10 +96,12 @@ export function SignInMethodsPanel() {
     );
   }
 
-  return <SignInMethodsPanelInner />;
+  return <SignInMethodsPanelInner noticeEmail={noticeEmail} />;
 }
 
-function SignInMethodsPanelInner() {
+function SignInMethodsPanelInner({
+  noticeEmail,
+}: Readonly<{ noticeEmail: string | null }>) {
   const {
     authState,
     clientState,
@@ -141,11 +145,11 @@ function SignInMethodsPanelInner() {
   useEffect(() => {
     const oauthError = loginAuthErrorMessage(
       searchParams.get("error"),
-      searchParams.get("email"),
+      noticeEmail,
       searchParams.get("provider"),
     );
     if (oauthError) setError(oauthError);
-  }, [searchParams]);
+  }, [searchParams, noticeEmail]);
 
   useEffect(() => {
     if (searchParams.get("link") !== "github") return;
