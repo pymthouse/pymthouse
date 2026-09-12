@@ -37,13 +37,13 @@ function MethodRowAction({
   busyMethod,
   onRemove,
   onAdd,
-}: {
+}: Readonly<{
   method: SignInMethodStatus;
   sessionReady: boolean;
   busyMethod: SignInMethodId | null;
   onRemove: (id: SignInMethodId) => void;
   onAdd: (id: SignInMethodId) => void;
-}) {
+}>) {
   if (method.linked && method.removable) {
     return (
       <button
