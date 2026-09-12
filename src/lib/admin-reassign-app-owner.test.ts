@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { developerApps } from "@/db/schema";
+import { developerApps, providerAdmins } from "@/db/schema";
 import { reassignAppOwner } from "@/lib/admin-reassign-app-owner";
+import { ensureProviderAdminMembership } from "@/lib/provider-apps";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -21,6 +22,7 @@ test("reassignAppOwner moves owner_id when the current owner has no credits", as
     await cleanupTestApp(app);
     await deleteTestUser(nextOwner);
   });
+  await ensureProviderAdminMembership(app.userId, app.clientId);
 
   const result = await reassignAppOwner({
     appId: app.clientId,
@@ -37,6 +39,14 @@ test("reassignAppOwner moves owner_id when the current owner has no credits", as
     .where(eq(developerApps.id, app.clientId))
     .limit(1);
   assert.equal(rows[0]?.ownerId, nextOwner);
+
+  const memberships = await db
+    .select({ userId: providerAdmins.userId })
+    .from(providerAdmins)
+    .where(eq(providerAdmins.clientId, app.clientId));
+  const memberIds = memberships.map((row) => row.userId);
+  assert.equal(memberIds.includes(app.userId), false);
+  assert.equal(memberIds.includes(nextOwner), true);
 });
 
 test("reassignAppOwner refuses an unknown user", async (t) => {

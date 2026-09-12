@@ -11,6 +11,7 @@ import { isPlatformDefaultAppRow } from "@/lib/platform-default-app";
 import {
   ensureProviderAdminMembership,
   getProviderApp,
+  removeProviderAdminMembership,
 } from "@/lib/provider-apps";
 
 export type ReassignAppOwnerResult =
@@ -61,6 +62,7 @@ export async function reassignAppOwner(input: {
     };
   }
 
+  const previousOwnerId = app.ownerId;
   await db
     .update(developerApps)
     .set({
@@ -68,6 +70,7 @@ export async function reassignAppOwner(input: {
       updatedAt: new Date().toISOString(),
     })
     .where(eq(developerApps.id, app.id));
+  await removeProviderAdminMembership(previousOwnerId, app.id);
   await ensureProviderAdminMembership(newOwnerUserId, app.id);
   return { ok: true, ownerId: newOwnerUserId };
 }
