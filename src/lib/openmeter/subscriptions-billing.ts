@@ -242,6 +242,19 @@ async function upsertNeonSubscriptionCache(input: {
   });
 }
 
+function inactivePlanSubscribeMessage(plan: {
+  status: string;
+  isStarterDefault: boolean | null;
+}): string {
+  if (plan.isStarterDefault && plan.status === "draft") {
+    return "This free plan is disabled and cannot accept new subscribers";
+  }
+  if (plan.status === "phase_out") {
+    return "Plan is being phased out and cannot accept new subscribers";
+  }
+  return "Plan is not active";
+}
+
 async function loadActiveTargetPlan(input: {
   clientId: string;
   planId: string;
@@ -256,13 +269,7 @@ async function loadActiveTargetPlan(input: {
     throw new Error("Plan not found");
   }
   if (plan.status !== "active") {
-    throw new Error(
-      plan.isStarterDefault && plan.status === "draft"
-        ? "This free plan is disabled and cannot accept new subscribers"
-        : plan.status === "phase_out"
-          ? "Plan is being phased out and cannot accept new subscribers"
-          : "Plan is not active",
-    );
+    throw new Error(inactivePlanSubscribeMessage(plan));
   }
   if (!plan.openmeterPlanId) {
     throw new Error("Plan is not synced to OpenMeter");

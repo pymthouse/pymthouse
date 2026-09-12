@@ -1428,11 +1428,12 @@ function StarterPlanCard({
   const cardBorder = enabled
     ? "border-sky-500/25"
     : "border-zinc-700";
-  const cardHover = collapsedEditable
-    ? enabled
+  let cardHover = "";
+  if (collapsedEditable) {
+    cardHover = enabled
       ? "hover:border-sky-500/40 hover:bg-zinc-900/50"
-      : "hover:border-zinc-600 hover:bg-zinc-900/50"
-    : "";
+      : "hover:border-zinc-600 hover:bg-zinc-900/50";
+  }
 
   return (
     <article
@@ -1517,10 +1518,7 @@ function StarterPlanCard({
               hyphens, underscores, and periods only (max {CUSTOM_PLAN_NAME_MAX_LENGTH} chars).
             </p>
           </div>
-          <label
-            htmlFor="starter-plan-enabled"
-            className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3"
-          >
+          <div className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3">
             <input
               id="starter-plan-enabled"
               type="checkbox"
@@ -1529,16 +1527,17 @@ function StarterPlanCard({
               disabled={!canEdit}
               className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-sky-500 focus:ring-sky-500/40 shrink-0 disabled:opacity-50"
             />
-            <span>
-              <span className="block text-sm font-medium text-zinc-200">
-                Offer this free plan to new end users
-              </span>
-              <span className="block text-xs text-zinc-500 mt-0.5">
+            <label
+              htmlFor="starter-plan-enabled"
+              className="min-w-0 block text-sm font-medium text-zinc-200"
+            >
+              Offer this free plan to new end users
+              <span className="block text-xs font-normal text-zinc-500 mt-0.5">
                 When off, new users are not auto-enrolled and cannot subscribe to this plan.
                 Existing subscribers keep it until they change.
               </span>
-            </span>
-          </label>
+            </label>
+          </div>
           <div>
             <label
               htmlFor="starter-included-usd"
