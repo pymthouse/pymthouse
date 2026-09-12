@@ -1,12 +1,12 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
-import { getNextAuthSecret } from "@/lib/next-auth-secret";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { GITHUB_ACCOUNT_EXISTS_ERROR } from "@/lib/turnkey-github-auth";
 import {
   type GithubOauthIntent,
   githubAuthCookieOptions,
+  signPayload,
 } from "@/lib/turnkey-github-cookies";
 
 const NOTICE_MAX_AGE_MS = 2 * 60 * 1000;
@@ -21,24 +21,8 @@ export type OauthErrorNotice = {
   exp: number;
 };
 
-function signingSecret(): string {
-  const secret = getNextAuthSecret({ suppressDevWarning: true });
-  if (!secret) {
-    throw new Error("NEXTAUTH_SECRET is required for OAuth error notices");
-  }
-  return secret;
-}
-
 function b64urlEncode(buf: Buffer): string {
   return buf.toString("base64url");
-}
-
-function signPayload(encodedBody: string): string {
-  // HMAC-SHA256 authenticates the OAuth error notice (integrity MAC), not password hashing.
-  // codeql[js/insufficient-password-hash]
-  return createHmac("sha256", signingSecret())
-    .update(encodedBody)
-    .digest("base64url");
 }
 
 export function normalizeNoticeEmail(email: string): string | null {

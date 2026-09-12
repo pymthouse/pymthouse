@@ -37,7 +37,7 @@ function b64urlDecode(value: string): Buffer {
   return Buffer.from(value, "base64url");
 }
 
-function signPayload(encodedBody: string): string {
+export function signPayload(encodedBody: string): string {
   // HMAC-SHA256 authenticates OAuth state (integrity MAC), not password hashing.
   // codeql[js/insufficient-password-hash]
   // lgtm[js/insufficient-password-hash]
