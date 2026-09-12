@@ -454,7 +454,7 @@ End users can read **their own** usage with the credential they already hold (no
 | --- | --- |
 | `GET /api/v1/user/usage` | Aggregates for the authenticated subject; app resolved from the Bearer credential |
 | `GET /api/v1/user/usage/balance` | Plan included-usage allowance for that subject |
-| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
+| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `gatewayRequestId`, `cursor`, `limit`) |
 | `GET /api/v1/apps/{clientId}/me/usage` | Same aggregates with path-scoped app (`{clientId}` must match the credential) |
 | `GET /api/v1/apps/{clientId}/me/usage/balance` | Same balance, path-scoped |
 | `GET /api/v1/apps/{clientId}/me/usage/requests` | Same request history, path-scoped |
@@ -524,12 +524,13 @@ Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `rema
 
 **Endpoint:** `GET /api/v1/user/usage/requests` (or `GET /api/v1/apps/{clientId}/me/usage/requests`)
 
-Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
+Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request`, `manifestId`, and `gatewayRequestId` (same session/request semantics as `/api/v1/me/usage/requests`).
 
 | Query | Description |
 | --- | --- |
 | `groupBy` | `session` or `request` (default `request`) |
 | `manifestId` | When `groupBy=request`, filter to one session mid |
+| `gatewayRequestId` | Repeatable. When `groupBy=request`, return only rows whose `gateway_request_id` matches (max 50) |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
 
