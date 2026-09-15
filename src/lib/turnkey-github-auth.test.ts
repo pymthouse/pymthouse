@@ -9,6 +9,7 @@ import {
   githubAuthorizeUrl,
   githubOAuthCallbackUrl,
   isGithubTurnkeyLoginConfigured,
+  ExistingAccountError,
   loginTurnkeyWithGithub,
 } from "@/lib/turnkey-github-auth";
 
@@ -334,6 +335,9 @@ describe("loginTurnkeyWithGithub", () => {
             getSubOrgIdsCalls.push(input);
             return { organizationIds: ["sub_existing"] };
           },
+          getVerifiedSubOrgIds: async () => {
+            throw new Error("should not look up email when OIDC already matches");
+          },
           createSubOrganization: async () => ({ subOrganizationId: "unused" }),
           oauthLogin: async (input) => {
             oauthLoginCalls.push(input);
@@ -382,6 +386,7 @@ describe("loginTurnkeyWithGithub", () => {
         mintOidcToken: async () => "oidc-token",
         getClient: () => ({
           getSubOrgIds: async () => ({ organizationIds: [] }),
+          getVerifiedSubOrgIds: async () => ({ organizationIds: [] }),
           createSubOrganization: async (input) => {
             createCalls.push({
               organizationId: input.organizationId,
@@ -428,6 +433,9 @@ describe("loginTurnkeyWithGithub", () => {
         mintOidcToken: async () => "oidc-token",
         getClient: () => ({
           getSubOrgIds: async () => ({ organizationIds: [] }),
+          getVerifiedSubOrgIds: async () => {
+            throw new Error("should not look up email when profile has none");
+          },
           createSubOrganization: async (input) => {
             createdUserName = input.rootUsers[0]?.userName ?? "";
             return { subOrganizationId: "sub_new" };
@@ -456,6 +464,7 @@ describe("loginTurnkeyWithGithub", () => {
             mintOidcToken: async () => "oidc-token",
             getClient: () => ({
               getSubOrgIds: async () => ({ organizationIds: [] }),
+              getVerifiedSubOrgIds: async () => ({ organizationIds: [] }),
               createSubOrganization: async () => ({ subOrganizationId: undefined }),
               oauthLogin: async () => ({ session: "never" }),
             }),
@@ -481,6 +490,9 @@ describe("loginTurnkeyWithGithub", () => {
             mintOidcToken: async () => "oidc-token",
             getClient: () => ({
               getSubOrgIds: async () => ({ organizationIds: ["sub_existing"] }),
+              getVerifiedSubOrgIds: async () => {
+                throw new Error("should not look up email when OIDC already matches");
+              },
               createSubOrganization: async () => ({ subOrganizationId: "unused" }),
               oauthLogin: async () => ({ session: "   " }),
             }),
@@ -489,5 +501,100 @@ describe("loginTurnkeyWithGithub", () => {
         ),
       /Turnkey oauthLogin returned no session/,
     );
+  });
+
+  it("blocks create when a verified-email sub-org already exists", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    let created = false;
+    await assert.rejects(
+      () =>
+        loginTurnkeyWithGithub(
+          {
+            publicKey,
+            nonce,
+            profile: { ...profile },
+          },
+          {
+            mintOidcToken: async () => "oidc-token",
+            getClient: () => ({
+              getSubOrgIds: async () => ({ organizationIds: [] }),
+              getVerifiedSubOrgIds: async (input) => {
+                assert.equal(input.filterType, "EMAIL");
+                assert.equal(input.filterValue, profile.email);
+                return { organizationIds: ["sub_email_existing"] };
+              },
+              createSubOrganization: async () => {
+                created = true;
+                return { subOrganizationId: "should-not-create" };
+              },
+              oauthLogin: async () => ({ session: "never" }),
+            }),
+            nowMs: () => 1700000000000,
+          },
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof ExistingAccountError);
+        assert.equal(err.email, profile.email);
+        assert.equal(err.code, "GitHubAccountExists");
+        return true;
+      },
+    );
+    assert.equal(created, false);
+  });
+
+  it("creates when the profile has no email even if OIDC misses", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    const result = await loginTurnkeyWithGithub(
+      {
+        publicKey,
+        nonce,
+        profile: {
+          id: 99,
+          login: "no-email",
+          name: null,
+          email: null,
+        },
+      },
+      {
+        mintOidcToken: async () => "oidc-token",
+        getClient: () => ({
+          getSubOrgIds: async () => ({ organizationIds: [] }),
+          getVerifiedSubOrgIds: async () => {
+            throw new Error("should not look up email when profile has none");
+          },
+          createSubOrganization: async () => ({ subOrganizationId: "sub_no_email" }),
+          oauthLogin: async () => ({ session: "ok" }),
+        }),
+        nowMs: () => 1700000000000,
+      },
+    );
+
+    assert.equal(result.subOrganizationId, "sub_no_email");
+  });
+
+  it("creates when verified-email lookup returns no sub-orgs", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    const result = await loginTurnkeyWithGithub(
+      {
+        publicKey,
+        nonce,
+        profile: { ...profile },
+      },
+      {
+        mintOidcToken: async () => "oidc-token",
+        getClient: () => ({
+          getSubOrgIds: async () => ({ organizationIds: [] }),
+          getVerifiedSubOrgIds: async () => ({ organizationIds: [] }),
+          createSubOrganization: async () => ({ subOrganizationId: "sub_fresh" }),
+          oauthLogin: async () => ({ session: "ok" }),
+        }),
+        nowMs: () => 1700000000000,
+      },
+    );
+
+    assert.equal(result.subOrganizationId, "sub_fresh");
   });
 });

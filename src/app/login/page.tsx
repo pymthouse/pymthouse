@@ -1,7 +1,17 @@
+import { cookies } from "next/headers";
 import { Suspense } from "react";
 import { LoginForm } from "./login-form";
+import {
+  OAUTH_ERROR_NOTICE_COOKIE,
+  openOauthErrorNotice,
+} from "@/lib/oauth-error-notice";
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const noticeEmail =
+    openOauthErrorNotice(
+      (await cookies()).get(OAUTH_ERROR_NOTICE_COOKIE)?.value,
+    )?.email ?? null;
+
   return (
     <Suspense
       fallback={
@@ -10,7 +20,7 @@ export default function LoginPage() {
         </div>
       }
     >
-      <LoginForm />
+      <LoginForm noticeEmail={noticeEmail} />
     </Suspense>
   );
 }
