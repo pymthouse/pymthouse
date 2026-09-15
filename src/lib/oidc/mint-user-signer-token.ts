@@ -32,7 +32,8 @@ import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export { SIGN_MINT_USER_TOKEN_SCOPE };
-const SIGNER_JWT_TTL_SECONDS = 300;
+// Signer session JWTs stay 5 minutes. Do not follow OIDC access/refresh env TTLs.
+export const SIGNER_JWT_TTL_SECONDS = 300;
 
 export class MintUserSignerTokenError extends Error {
   code: string;
