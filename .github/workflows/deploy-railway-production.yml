@@ -24,6 +24,8 @@ name: Deploy Railway production clearinghouse stack
 #   RAILWAY_PRODUCTION_NEXTAUTH_URL → https://pymthouse.com
 #   RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true — post-deploy meter bootstrap
 #   SIGNER_NETWORK → arbitrum-one-mainnet
+#   TURNKEY_WALLET_NAME → livepeer-remote-signer
+#   SIGNER_ETH_ADDR — optional 0x pin for the Turnkey wallet account
 #
 # OIDC_ISSUER / OIDC_AUDIENCE / JWKS_URI on the pymthouse service are derived from
 # NEXTAUTH_URL in scripts/railway-apply-stack-env.sh (see config/railway/production.env.example).
@@ -74,7 +76,7 @@ jobs:
       TURNKEY_API_PUBLIC_KEY: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
       TURNKEY_API_PRIVATE_KEY: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
       SIGNER_ETH_KEYSTORE_PASSWORD: ${{ secrets.SIGNER_ETH_KEYSTORE_PASSWORD }}
-      TURNKEY_WALLET_NAME: ${{ vars.TURNKEY_WALLET_NAME }}
+      TURNKEY_WALLET_NAME: ${{ vars.TURNKEY_WALLET_NAME || 'livepeer-remote-signer' }}
       SIGNER_ETH_ADDR: ${{ vars.SIGNER_ETH_ADDR }}
 
     steps:
