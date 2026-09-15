@@ -57,7 +57,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
     make && \
     make install
 
-FROM golang:1.25.13-bookworm AS turnkey-bootstrap-build
+FROM golang:1.26.6-bookworm AS turnkey-bootstrap-build
 
 WORKDIR /src
 COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
