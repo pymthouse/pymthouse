@@ -5,6 +5,7 @@ import {
   buildAppCapabilityFeatureKey,
   buildCapabilityFeatureKey,
   buildCapabilityMeterGroupByFilters,
+  capabilityWireAppAttribution,
   resolveCapabilityFeatureKey,
   validateCapabilityFeatureKeys,
 } from "./capability-features";
@@ -59,19 +60,60 @@ test("validateCapabilityFeatureKeys accepts typical capability rows", () => {
   assert.equal(result.ok, true);
 });
 
-test("buildCapabilityMeterGroupByFilters omits model for wildcard", () => {
+test("capabilityWireAppAttribution matches ingest data.app", () => {
+  assert.equal(
+    capabilityWireAppAttribution({
+      pipeline: "livepeer-example",
+      modelId: "hello-world",
+    }),
+    "livepeer-example/hello-world",
+  );
+  assert.equal(
+    capabilityWireAppAttribution({
+      pipeline: "live-video-to-video",
+      modelId: "scope",
+    }),
+    "live-video-to-video/scope",
+  );
+  assert.equal(
+    capabilityWireAppAttribution({
+      pipeline: "streamdiffusion-sdxl",
+      modelId: "streamdiffusion-sdxl",
+    }),
+    "streamdiffusion-sdxl",
+  );
+  assert.equal(
+    capabilityWireAppAttribution({
+      pipeline: "text-to-image",
+      modelId: "stabilityai/sdxl",
+    }),
+    "text-to-image/stabilityai/sdxl",
+  );
+});
+
+test("buildCapabilityMeterGroupByFilters uses wire app, omits for wildcard", () => {
   assert.deepEqual(
     buildCapabilityMeterGroupByFilters({ pipeline: "text-to-image", modelId: "*" }),
     { pipeline: { $eq: "text-to-image" } },
   );
   assert.deepEqual(
     buildCapabilityMeterGroupByFilters({
-      pipeline: "text-to-image",
-      modelId: "stabilityai/sdxl",
+      pipeline: "livepeer-example",
+      modelId: "hello-world",
     }),
     {
-      pipeline: { $eq: "text-to-image" },
-      app: { $eq: "stabilityai/sdxl" },
+      pipeline: { $eq: "livepeer-example" },
+      app: { $eq: "livepeer-example/hello-world" },
+    },
+  );
+  assert.deepEqual(
+    buildCapabilityMeterGroupByFilters({
+      pipeline: "streamdiffusion-sdxl",
+      modelId: "streamdiffusion-sdxl",
+    }),
+    {
+      pipeline: { $eq: "streamdiffusion-sdxl" },
+      app: { $eq: "streamdiffusion-sdxl" },
     },
   );
 });

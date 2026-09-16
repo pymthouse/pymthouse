@@ -85,6 +85,28 @@ export function validateCapabilityFeatureKeys(input: {
   return { ok: true };
 }
 
+/**
+ * CloudEvent `data.app` value for a plan capability row.
+ *
+ * Plan rows store the discovery split `{ pipeline, modelId }`. Ingest writes the
+ * wire capability on `data.app` (e.g. `livepeer-example/hello-world`, or the bare
+ * token when pipeline === modelId). Meter filters must match that string.
+ */
+export function capabilityWireAppAttribution(input: {
+  pipeline: string;
+  modelId: string;
+}): string {
+  const pipeline = input.pipeline.trim();
+  const modelId = input.modelId.trim();
+  if (!pipeline || !modelId || modelId === "*") {
+    return modelId;
+  }
+  if (pipeline === modelId) {
+    return modelId;
+  }
+  return `${pipeline}/${modelId}`;
+}
+
 export function buildCapabilityMeterGroupByFilters(input: {
   pipeline: string;
   modelId: string;
@@ -93,9 +115,41 @@ export function buildCapabilityMeterGroupByFilters(input: {
     pipeline: { $eq: input.pipeline },
   };
   if (input.modelId !== "*") {
-    filters.app = { $eq: input.modelId };
+    filters.app = { $eq: capabilityWireAppAttribution(input) };
   }
   return filters;
+}
+
+type OpenMeterFeatureRow = {
+  id?: string;
+  key: string;
+  advancedMeterGroupByFilters?: Record<string, { $eq?: string } | unknown>;
+};
+
+function capabilityMeterFiltersMatch(
+  existing: OpenMeterFeatureRow["advancedMeterGroupByFilters"] | undefined,
+  expected: Record<string, { $eq: string }>,
+): boolean {
+  if (!existing) {
+    return false;
+  }
+  const expectedKeys = Object.keys(expected);
+  const existingKeys = Object.keys(existing);
+  if (expectedKeys.length !== existingKeys.length) {
+    return false;
+  }
+  for (const key of expectedKeys) {
+    const want = expected[key]?.$eq;
+    const got = existing[key];
+    const gotEq =
+      got && typeof got === "object" && "$eq" in got
+        ? String((got as { $eq?: unknown }).$eq ?? "")
+        : "";
+    if (want !== gotEq) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function ensureCapabilityOpenMeterFeature(input: {
@@ -120,25 +174,59 @@ export async function ensureCapabilityOpenMeterFeature(input: {
     );
   }
 
+  const filters = buildCapabilityMeterGroupByFilters({
+    pipeline: input.pipeline,
+    modelId: input.modelId,
+  });
+
+  let existingMatch: OpenMeterFeatureRow | undefined;
   try {
-    const existing = unwrapOpenMeterListResult<{ key: string }>(
+    const existing = unwrapOpenMeterListResult<OpenMeterFeatureRow>(
       await input.client.features.list(),
     );
-    if (existing.some((f) => f.key === key)) {
+    existingMatch = existing.find((f) => f.key === key);
+  } catch {
+    existingMatch = undefined;
+  }
+
+  if (existingMatch) {
+    let detail = existingMatch;
+    if (existingMatch.id) {
+      try {
+        const fetched = await input.client.features.get(existingMatch.id);
+        if (fetched?.key) {
+          detail = fetched;
+        }
+      } catch {
+        /* use list row */
+      }
+    }
+    if (
+      capabilityMeterFiltersMatch(detail.advancedMeterGroupByFilters, filters)
+    ) {
       return key;
     }
-  } catch {
-    /* create below */
+    // Only replace when we can see filters and they disagree. Missing filter
+    // payloads must not thrash delete/create on every plan sync.
+    if (
+      detail.advancedMeterGroupByFilters != null &&
+      existingMatch.id
+    ) {
+      await input.client.features.delete(existingMatch.id);
+    } else if (detail.advancedMeterGroupByFilters != null) {
+      throw new Error(
+        `OpenMeter feature ${key} has stale meter filters and cannot be replaced (missing id)`,
+      );
+    } else {
+      return key;
+    }
   }
 
   await input.client.features.create({
     key,
     name: input.displayName,
     meterSlug: NETWORK_FEE_USD_MICROS_METER,
-    advancedMeterGroupByFilters: buildCapabilityMeterGroupByFilters({
-      pipeline: input.pipeline,
-      modelId: input.modelId,
-    }),
+    advancedMeterGroupByFilters: filters,
   });
 
   return key;
