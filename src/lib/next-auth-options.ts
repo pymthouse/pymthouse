@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { validateBearerToken, hasScope } from "@/lib/auth";
 import {
   findOrCreateDeveloperUser,
+  resolveTurnkeyDeveloperIdentity,
   verifyTurnkeySessionJwt,
 } from "@/lib/turnkey";
 import { getNextAuthSecret } from "@/lib/next-auth-secret";
@@ -63,16 +64,14 @@ export const authOptions: NextAuthOptions = {
         );
         if (!claims) return null;
 
-        const walletRaw = credentials.walletAddress?.trim();
-        const emailRaw = credentials.email?.trim();
-        const nameRaw = credentials.name?.trim();
-
-        const { id } = await findOrCreateDeveloperUser(
-          claims.userId,
-          walletRaw || undefined,
-          nameRaw || undefined,
-          emailRaw || undefined,
-        );
+        const identity = await resolveTurnkeyDeveloperIdentity(claims);
+        const { id } = await findOrCreateDeveloperUser({
+          turnkeyUserId: claims.userId,
+          organizationId: claims.organizationId,
+          walletAddress: identity.walletAddress,
+          name: identity.name,
+          email: identity.email,
+        });
 
         const userRows = await db
           .select()

@@ -2,7 +2,8 @@ import { verifySessionJwtSignature } from "@turnkey/crypto";
 import { decode as base64urlDecode } from "jose/base64url";
 import { db } from "@/db/index";
 import { endUsers, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { getTurnkeyServerApiClient } from "@/lib/onramp/turnkey-client";
 import { v4 as uuidv4 } from "uuid";
 
 export type TurnkeySessionClaims = {
@@ -139,47 +140,193 @@ export async function getEndUserByTurnkeyUserId(turnkeyUserId: string) {
   return rows[0];
 }
 
+export type TurnkeyIdentityClient = {
+  getUsers(input: { organizationId: string }): Promise<{
+    users?: Array<{
+      userId: string;
+      userName?: string;
+      userEmail?: string;
+    }>;
+  }>;
+  getWallets(input: { organizationId: string }): Promise<{
+    wallets?: Array<{ accounts?: Array<{ address?: string }> }>;
+  }>;
+};
+
+export function isPlaceholderTurnkeyEmail(
+  email: string | null | undefined,
+  turnkeyUserId: string,
+): boolean {
+  if (!email?.trim()) return true;
+  return (
+    email.trim().toLowerCase() ===
+    `${turnkeyUserId.trim().toLowerCase()}@turnkey.local`
+  );
+}
+
+export function normalizeTurnkeyEmail(
+  email: string | null | undefined,
+): string | undefined {
+  const trimmed = email?.trim().toLowerCase();
+  return trimmed || undefined;
+}
+
+export function firstEvmAddressFromTurnkeyWallets(
+  wallets: Array<{ accounts?: Array<{ address?: string }> }>,
+): string | undefined {
+  for (const wallet of wallets) {
+    for (const account of wallet.accounts ?? []) {
+      const addr = account.address?.trim();
+      if (addr?.startsWith("0x")) return addr;
+    }
+  }
+  return undefined;
+}
+
+export function developerUserUpdates(input: {
+  existing: {
+    email: string | null;
+    name: string | null;
+    walletAddress: string | null;
+    turnkeyUserId: string | null;
+  };
+  email?: string;
+  name?: string;
+  walletAddress?: string;
+}): { email?: string; name?: string; walletAddress?: string } | null {
+  const updates: {
+    email?: string;
+    name?: string;
+    walletAddress?: string;
+  } = {};
+  if (
+    input.email &&
+    isPlaceholderTurnkeyEmail(
+      input.existing.email,
+      input.existing.turnkeyUserId ?? "",
+    )
+  ) {
+    updates.email = input.email;
+  }
+  if (input.name && !input.existing.name) {
+    updates.name = input.name;
+  }
+  if (
+    input.walletAddress &&
+    input.walletAddress !== input.existing.walletAddress
+  ) {
+    updates.walletAddress = input.walletAddress;
+  }
+  return Object.keys(updates).length > 0 ? updates : null;
+}
+
+/**
+ * Read email / name / wallet from the parent org's view of the sub-org.
+ * Never trust client-supplied identity fields for this.
+ */
+export async function resolveTurnkeyDeveloperIdentity(
+  claims: TurnkeySessionClaims,
+  deps?: { getClient(): TurnkeyIdentityClient },
+): Promise<{
+  email?: string;
+  name?: string;
+  walletAddress?: string;
+}> {
+  try {
+    const client =
+      deps?.getClient() ??
+      (getTurnkeyServerApiClient() as TurnkeyIdentityClient);
+    const [usersResult, walletsResult] = await Promise.all([
+      client.getUsers({ organizationId: claims.organizationId }),
+      client.getWallets({ organizationId: claims.organizationId }),
+    ]);
+    const tkUser = (usersResult.users ?? []).find(
+      (u) => u.userId === claims.userId,
+    );
+    return {
+      email: normalizeTurnkeyEmail(tkUser?.userEmail),
+      name: tkUser?.userName?.trim() || undefined,
+      walletAddress: firstEvmAddressFromTurnkeyWallets(
+        walletsResult.wallets ?? [],
+      ),
+    };
+  } catch (err) {
+    console.warn(
+      "Failed to resolve Turnkey user profile from parent org",
+      err,
+    );
+    return {};
+  }
+}
+
 /**
  * Find or create a developer user in the users table by Turnkey user id.
  */
-export async function findOrCreateDeveloperUser(
-  turnkeyUserId: string,
-  walletAddress?: string,
-  name?: string,
-  email?: string,
-): Promise<{ id: string; isNew: boolean }> {
+export async function findOrCreateDeveloperUser(input: {
+  turnkeyUserId: string;
+  walletAddress?: string;
+  name?: string;
+  email?: string;
+  organizationId?: string;
+}): Promise<{ id: string; isNew: boolean }> {
+  const email = normalizeTurnkeyEmail(input.email);
   const existingRows = await db
     .select()
     .from(users)
-    .where(eq(users.turnkeyUserId, turnkeyUserId))
+    .where(eq(users.turnkeyUserId, input.turnkeyUserId))
     .limit(1);
   const existing = existingRows[0];
 
   if (existing) {
-    if (walletAddress && walletAddress !== existing.walletAddress) {
-      await db
-        .update(users)
-        .set({ walletAddress })
-        .where(eq(users.id, existing.id));
+    const updates = developerUserUpdates({
+      existing,
+      email,
+      name: input.name,
+      walletAddress: input.walletAddress,
+    });
+    if (updates) {
+      await db.update(users).set(updates).where(eq(users.id, existing.id));
     }
     return { id: existing.id, isNew: false };
   }
 
+  if (email) {
+    const collisions = await db
+      .select({
+        id: users.id,
+        turnkeyUserId: users.turnkeyUserId,
+      })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email}`)
+      .limit(5);
+    if (collisions.length > 0) {
+      console.warn(
+        "Turnkey identity collision: new turnkey_user_id for an existing email",
+        {
+          email,
+          existingUserIds: collisions.map((row) => row.id),
+          existingTurnkeyUserIds: collisions.map((row) => row.turnkeyUserId),
+          newTurnkeyUserId: input.turnkeyUserId,
+          newOrganizationId: input.organizationId,
+        },
+      );
+    }
+  }
+
   const id = uuidv4();
-  const safeEmail = email || `${turnkeyUserId}@turnkey.local`;
   await db.insert(users).values({
     id,
-    email: safeEmail,
+    email: email ?? null,
     name:
-      name ||
-      (walletAddress
-        ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
+      input.name ||
+      (input.walletAddress
+        ? `${input.walletAddress.slice(0, 6)}...${input.walletAddress.slice(-4)}`
         : null),
     oauthProvider: "turnkey-wallet",
-    oauthSubject: turnkeyUserId,
+    oauthSubject: input.turnkeyUserId,
     role: "developer",
-    walletAddress: walletAddress || null,
-    turnkeyUserId,
+    walletAddress: input.walletAddress || null,
+    turnkeyUserId: input.turnkeyUserId,
   });
 
   return { id, isNew: true };

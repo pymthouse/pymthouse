@@ -5,10 +5,17 @@ import {
   type TurnkeyProviderConfig,
 } from "@turnkey/react-wallet-kit";
 import { useEffect } from "react";
+import {
+  OAUTH_ACCOUNT_EXISTS_ERROR,
+  isTurnkeyAccountAlreadyExistsError,
+} from "@/lib/turnkey-account-exists";
 import { buildTurnkeyWalletOauthAuthConfig } from "@/lib/turnkey-oauth-config";
+import { parseOauthStatePairs } from "@/lib/turnkey-oauth-redirect";
 import { getTurnkeyWalletConfigId } from "@/lib/turnkey-wallet-config";
 import { TurnkeyModalDismissGuard } from "./TurnkeyModalDismissGuard";
 import { TurnkeyOauthRedirectResume } from "./TurnkeyOauthRedirectResume";
+
+const OAUTH_ADD_PROVIDER_METADATA_KEY = "oauth_add_provider_metadata";
 
 // Wallet Kit auto-calls fetchUser/fetchWallets on mount whenever it thinks
 // a session might exist. On /login (or after a stale/expired session) these
@@ -36,6 +43,7 @@ const BENIGN_TURNKEY_CODES = new Set([
   "SESSION_EXPIRED",
   "CLIENT_NOT_INITIALIZED",
   "INVALID_OTP_CODE",
+  "ACCOUNT_ALREADY_EXISTS",
 ]);
 
 /** Kit OTP UI catches, shows a friendly message, then rethrows → unhandledRejection. */
@@ -77,13 +85,60 @@ function isQuietTurnkeyError(error: unknown): boolean {
   return (
     BENIGN_TURNKEY_MESSAGES.has(message) ||
     EXPECTED_USER_TURNKEY_MESSAGES.has(message) ||
-    BENIGN_TURNKEY_CODES.has(code)
+    BENIGN_TURNKEY_CODES.has(code) ||
+    isTurnkeyAccountAlreadyExistsError(error)
   );
+}
+
+function consumeAddProviderMetadata(): boolean {
+  try {
+    const had = Boolean(localStorage.getItem(OAUTH_ADD_PROVIDER_METADATA_KEY));
+    localStorage.removeItem(OAUTH_ADD_PROVIDER_METADATA_KEY);
+    return had;
+  } catch {
+    return false;
+  }
+}
+
+function providerFromOauthReturnHref(href: string): string {
+  try {
+    const url = new URL(href, "https://pymthouse.local");
+    const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const state =
+      url.searchParams.get("state") ||
+      new URLSearchParams(hash).get("state") ||
+      "";
+    return parseOauthStatePairs(state).provider;
+  } catch {
+    return "";
+  }
+}
+
+/** Link-from-account: send the user back to /account instead of the Next.js overlay. */
+function redirectToAccountExists(provider: string): void {
+  const params = new URLSearchParams({ error: OAUTH_ACCOUNT_EXISTS_ERROR });
+  if (provider) params.set("provider", provider);
+  const next = `/account?${params.toString()}`;
+  if (
+    window.location.pathname === "/account" &&
+    window.location.search.includes(OAUTH_ACCOUNT_EXISTS_ERROR)
+  ) {
+    return;
+  }
+  window.location.replace(next);
 }
 
 function TurnkeyExpectedErrorGuard() {
   useEffect(() => {
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isTurnkeyAccountAlreadyExistsError(event.reason)) {
+        event.preventDefault();
+        const fromAdd = consumeAddProviderMetadata();
+        if (fromAdd) {
+          redirectToAccountExists(providerFromOauthReturnHref(window.location.href));
+        }
+        return;
+      }
       if (!isExpectedTurnkeyOtpRejection(event.reason)) return;
       event.preventDefault();
       console.debug("Turnkey (expected OTP failure):", event.reason);
@@ -126,6 +181,16 @@ export default function TurnkeyProviderWrapper({
       config={turnkeyConfig}
       callbacks={{
         onError: (error) => {
+          if (isTurnkeyAccountAlreadyExistsError(error)) {
+            const fromAdd = consumeAddProviderMetadata();
+            if (fromAdd) {
+              redirectToAccountExists(
+                providerFromOauthReturnHref(window.location.href),
+              );
+            }
+            console.debug("Turnkey (account already exists):", error);
+            return;
+          }
           if (isQuietTurnkeyError(error)) {
             const message = (error as { message?: string })?.message ?? "";
             const code = (error as { code?: string })?.code ?? "";
