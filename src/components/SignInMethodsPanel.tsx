@@ -8,6 +8,11 @@ import {
 import { OAuthProviders } from "@turnkey/sdk-types";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  accountSessionBindingMessage,
+  requireAccountSessionBinding,
+  useAccountSessionBinding,
+} from "@/lib/account-session-binding-client";
 import { loginAuthErrorMessage } from "@/lib/login-auth-error";
 import {
   isTurnkeyAccountAlreadyExistsError,
@@ -106,6 +111,7 @@ function SignInMethodsPanelInner({
     authState,
     clientState,
     config,
+    getSession,
     user,
     refreshUser,
     handleAddOauthProvider,
@@ -126,6 +132,10 @@ function SignInMethodsPanelInner({
   const discordEnabled = Boolean(
     config?.ui?.authModal?.methods?.discordOauthEnabled,
   );
+  const turnkeySessionReady =
+    clientState === ClientState.Ready && authState === AuthState.Authenticated;
+  const binding = useAccountSessionBinding(turnkeySessionReady, getSession);
+  const sessionReady = turnkeySessionReady && binding.status === "bound";
 
   useEffect(() => {
     let cancelled = false;
@@ -154,13 +164,13 @@ function SignInMethodsPanelInner({
   useEffect(() => {
     if (searchParams.get("link") !== "github") return;
     if (githubLinkStarted.current) return;
-    if (clientState !== ClientState.Ready) return;
-    if (authState !== AuthState.Authenticated) return;
+    if (!sessionReady) return;
 
     githubLinkStarted.current = true;
     setBusyMethod("github");
     setError(null);
     (async () => {
+      await requireAccountSessionBinding(getSession);
       const res = await fetch("/api/auth/github/oidc", { method: "POST" });
       if (!res.ok) {
         throw new Error("GitHub link token expired. Please try again.");
@@ -181,7 +191,13 @@ function SignInMethodsPanelInner({
       setBusyMethod(null);
       setError(err instanceof Error ? err.message : "Could not link GitHub");
     });
-  }, [searchParams, clientState, authState, addOauthProvider, refreshUser]);
+  }, [
+    searchParams,
+    sessionReady,
+    getSession,
+    addOauthProvider,
+    refreshUser,
+  ]);
 
   const methods = useMemo(
     () =>
@@ -194,15 +210,13 @@ function SignInMethodsPanelInner({
     [user, googleEnabled, githubEnabled, discordEnabled],
   );
 
-  const sessionReady =
-    clientState === ClientState.Ready && authState === AuthState.Authenticated;
-
   const addMethod = async (id: SignInMethodId) => {
     if (busyMethod || !sessionReady) return;
     setBusyMethod(id);
     setError(null);
     setNotice(null);
     try {
+      await requireAccountSessionBinding(getSession);
       if (id === "google") {
         await handleAddOauthProvider({
           providerName: OAuthProviders.GOOGLE,
@@ -252,6 +266,7 @@ function SignInMethodsPanelInner({
     setError(null);
     setNotice(null);
     try {
+      await requireAccountSessionBinding(getSession);
       if (id === "email") {
         await handleRemoveUserEmail({ successPageDuration: 0 });
         await refreshUser();
@@ -287,8 +302,7 @@ function SignInMethodsPanelInner({
       </div>
       {!sessionReady ? (
         <p className="px-4 py-3 text-sm text-zinc-500">
-          Sign in again on this device to add a method. Linking has to be stamped
-          by your live Turnkey session.
+          {accountSessionBindingMessage(turnkeySessionReady, binding)}
         </p>
       ) : null}
       <ul className="divide-y divide-zinc-800">

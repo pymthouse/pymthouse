@@ -3,6 +3,11 @@
 import { AuthState, ClientState, useTurnkey } from "@turnkey/react-wallet-kit";
 import { signOut } from "next-auth/react";
 import { useEffect, useState } from "react";
+import {
+  accountSessionBindingMessage,
+  requireAccountSessionBinding,
+  useAccountSessionBinding,
+} from "@/lib/account-session-binding-client";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 type Eligibility = {
@@ -36,7 +41,13 @@ function deletionConsequence(eligibility: Eligibility | null): string {
 }
 
 function DeleteAccountPanelInner() {
-  const { authState, clientState, deleteSubOrganization } = useTurnkey();
+  const {
+    authState,
+    clientState,
+    deleteSubOrganization,
+    getSession,
+    logout,
+  } = useTurnkey();
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmLogin, setConfirmLogin] = useState(false);
@@ -45,8 +56,10 @@ function DeleteAccountPanelInner() {
   const [error, setError] = useState<string | null>(null);
   const [handedOff, setHandedOff] = useState(false);
 
-  const sessionReady =
+  const turnkeySessionReady =
     clientState === ClientState.Ready && authState === AuthState.Authenticated;
+  const binding = useAccountSessionBinding(turnkeySessionReady, getSession);
+  const sessionReady = turnkeySessionReady && binding.status === "bound";
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +94,7 @@ function DeleteAccountPanelInner() {
     setBusy(true);
     setError(null);
     try {
+      await requireAccountSessionBinding(getSession);
       await ignoreMissingSubOrg(deleteSubOrganization);
 
       const res = await fetch("/api/v1/me/account", { method: "DELETE" });
@@ -93,9 +107,11 @@ function DeleteAccountPanelInner() {
         throw new Error(data.error || "Could not delete this PymtHouse account.");
       }
       if (data.handedOff) {
+        await logout().catch(() => undefined);
         setHandedOff(true);
         return;
       }
+      await logout().catch(() => undefined);
       await signOut({ callbackUrl: "/login" });
     } catch (err) {
       setError(
@@ -118,10 +134,9 @@ function DeleteAccountPanelInner() {
         </p>
       </div>
       <div className="space-y-3 px-4 py-3.5">
-        {!sessionReady ? (
+        {!sessionReady && !handedOff ? (
           <p className="text-sm text-zinc-500">
-            Sign in again on this device. Deleting a sub-organization has to be
-            stamped by your live Turnkey session.
+            {accountSessionBindingMessage(turnkeySessionReady, binding)}
           </p>
         ) : null}
         {loadError ? (

@@ -4,9 +4,8 @@ import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { AccountManagementPanels } from "@/components/AccountManagementPanels";
 import DashboardLayout from "@/components/DashboardLayout";
-import { DeleteAccountPanel } from "@/components/DeleteAccountPanel";
-import { SignInMethodsPanel } from "@/components/SignInMethodsPanel";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   OAUTH_ERROR_NOTICE_COOKIE,
@@ -38,8 +37,7 @@ export default async function AccountPage() {
             </div>
           }
         >
-          <SignInMethodsPanel noticeEmail={noticeEmail} />
-          <DeleteAccountPanel />
+          <AccountManagementPanels noticeEmail={noticeEmail} />
         </Suspense>
       </div>
     </DashboardLayout>
