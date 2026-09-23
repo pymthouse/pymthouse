@@ -39,6 +39,7 @@
     "stripe:connect-cutover": "npx tsx scripts/stripe-connect-cutover.ts",
     "stripe:connect-cutover-audit": "npx tsx scripts/stripe-connect-cutover-audit.ts",
     "turnkey:create-webhook": "npx tsx scripts/turnkey-create-webhook.ts",
+    "turnkey:identity-audit": "npx tsx scripts/turnkey-identity-audit.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
     "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",
