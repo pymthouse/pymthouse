@@ -96,9 +96,9 @@
     "proxy-addr": "2.0.8"
   },
   "devDependencies": {
-    "@redocly/cli": "^2.52.1",
-    "@turnkey/sdk-server": "^8.4.0",
-    "@types/node": "^26.5.1",
+    "@redocly/cli": "^2.53.3",
+    "@turnkey/sdk-server": "^8.5.0",
+    "@types/node": "^26.6.1",
     "@types/oidc-provider": "^9.12.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
