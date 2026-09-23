@@ -28,7 +28,7 @@ Default billing is **without Stripe Connect** (`billing_mode=owner_rollup`). The
 
 Admin configures tiers in the **customer-service** console (pymthouse APIs under `/api/v1/admin/billing/*`). Keys are `pymthouse_owner_paid` or `pymthouse_owner_paid_<slug>`.
 
-**Builders vs M2M end-users:** A Builder’s own owner wallet follows the same Starter → Upgrade path. End-users of a Builder app under `owner_rollup` ride the **owner’s** cost rail (usage rolls up to the owner Konnect customer). They do **not** each get an Owner Paid plan. Session/M2M allowance grant routes are not the shared-owner credit pool (see follow-ups in PR #352 / design.md §1).
+**Builders vs M2M end-users:** A Builder’s own owner wallet follows the same Starter → Upgrade path. End-users of a Builder app under `owner_rollup` ride the **owner’s** cost rail (usage rolls up to the owner Konnect customer). They do **not** each get an Owner Paid plan. Customer-service credits that shared owner wallet (`POST /api/v1/admin/billing/owners/{userId}/grants`); direct M2M grants on owner-rollup apps return `409 owner_rollup_credit_owner`.
 
 The platform default app is flagged `is_platform_default = 1` (or pinned via `PYMTHOUSE_DEFAULT_APP_CLIENT_ID`). Only platform **admins** may edit its config. Its `m2m_…` credentials are **not** for third-party Builder integrations — use your own app.
 

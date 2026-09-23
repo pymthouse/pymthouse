@@ -8,7 +8,7 @@ import {
 
 /**
  * GET /api/v1/admin/billing/owners?q=&page=&pageSize=&status=
- * Search developer accounts (email, name, id, or app name) with cycle usage.
+ * Search developer accounts (email, name, id, app name, or M2M email) with cycle usage.
  * Ordered by most used. `status=blocked|overage|attention` filters the list.
  */
 export const GET = withAdminGuard(async (request) => {

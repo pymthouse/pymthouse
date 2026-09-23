@@ -80,12 +80,26 @@ scope, plus DB admin role):
 | GET | `/api/v1/admin/billing/owners` |
 | GET/PATCH | `/api/v1/admin/billing/owners/{userId}` (GET includes `wallet`) |
 | POST | `/api/v1/admin/billing/owners/{userId}/grants` |
+| GET | `/api/v1/admin/billing/apps` |
+| GET | `/api/v1/admin/billing/apps/{appId}` |
+| POST | `/api/v1/admin/billing/apps/{appId}/users/{externalUserId}/grants` |
 
-`GET /owners` accepts `q` (email, name, user id, **app name**, or app id),
-`status=blocked|overage|attention`, and `page`/`pageSize`. Results are ordered
-by current-cycle OpenMeter spend (same meters as owner detail). Each row includes
-`ownedApps`, `cycleUsage`, `usageStatus`, and `planKind`. Prepaid credits and
+`GET /owners` accepts `q` (email, name, user id, **app name**, app id, or
+**M2M / app-user email or external id**), `status=blocked|overage|attention`,
+and `page`/`pageSize`. Results are ordered by current-cycle OpenMeter spend
+(same meters as owner detail). Each row includes `ownedApps` (with
+`billingMode`), `cycleUsage`, `usageStatus`, and `planKind`. Prepaid credits and
 live OpenMeter subscriptions remain on the owner detail `wallet`.
+
+`GET /apps` is app-primary for owner-rollup ops: owner, `billingMode`, active
+M2M counts, and `blockedM2mUserCount` when the owner Starter wallet is exhausted.
+Search includes M2M email / external id. `status=blocked` is owner-rollup apps
+whose M2M users are gated on that empty owner wallet.
+
+Owner-rollup M2M grants return `409 owner_rollup_credit_owner` — credit
+`POST /owners/{ownerUserId}/grants` instead, which unblocks every M2M user on
+those apps. Merchant (and platform-default self-wallet) users may be credited
+on the app-user grants route.
 
 Free Builder `POST …/users/{externalUserId}/allowances` is disabled
 (`403 free_grant_admin_only`).
