@@ -184,3 +184,26 @@ test("aggregateDailyUserRows sorts by date then identity", () => {
     ["2026-07-02:alpha", "2026-07-02:beta", "2026-07-03:zeta"],
   );
 });
+
+test("aggregateDailyUserRows filters to one actor", () => {
+  const result = aggregateDailyUserRows({
+    clientId: "app_1",
+    filterExternalUserId: "alpha",
+    countRows: rows(
+      {
+        value: 2,
+        windowStart: new Date("2026-07-02T00:00:00Z"),
+        groupBy: { client_id: "app_1", external_user_id: "alpha" },
+      },
+      {
+        value: 9,
+        windowStart: new Date("2026-07-02T00:00:00Z"),
+        groupBy: { client_id: "app_1", external_user_id: "beta" },
+      },
+    ),
+    feeRows: rows(),
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.externalUserId, "alpha");
+  assert.equal(result[0]?.requestCount, 2);
+});

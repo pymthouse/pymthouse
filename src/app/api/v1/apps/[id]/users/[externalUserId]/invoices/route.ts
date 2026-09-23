@@ -4,15 +4,8 @@ import {
   authorizeAppUserBillingRoute,
   isAppUserBillingAccess,
 } from "@/lib/billing/app-user-billing-route";
+import { listAppUserBillingInvoices } from "@/lib/billing/app-user-invoices-read";
 import { clampPageParam } from "@/lib/billing/wallet-http";
-import {
-  getHostedAdminClient,
-  isHostedAdminClientAvailable,
-} from "@/lib/openmeter/admin-client";
-import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
-import { appUserPaymentMethodRequiresMerchantConnect } from "@/lib/openmeter/app-user-payment-method";
-import { listAppUserInvoices } from "@/lib/openmeter/invoices";
-import { listMerchantConnectInvoicesForAppUser } from "@/lib/stripe/merchant-connect";
 
 /**
  * GET /api/v1/apps/{clientId}/users/{externalUserId}/invoices
@@ -39,54 +32,11 @@ export async function GET(
     100,
   );
 
-  // Fail open — same posture as payment-methods GET. Starter / sandbox users
-  // often have no Stripe customer yet; list UI should show "none yet", not 503.
-  try {
-    const config = await getAppBillingConfig(access.app.id);
-    const result = appUserPaymentMethodRequiresMerchantConnect(config)
-      ? await listMerchantConnectInvoicesForAppUser({
-          clientId: access.app.id,
-          externalUserId: access.externalUserId,
-          page: normalizedPage,
-          pageSize: normalizedPageSize,
-        })
-      : await listOwnerRollupInvoices({
-          clientId: access.app.id,
-          externalUserId: access.externalUserId,
-          page: normalizedPage,
-          pageSize: normalizedPageSize,
-        });
-    return NextResponse.json(result);
-  } catch (err) {
-    console.warn(
-      "app-user-invoices: list failed",
-      err instanceof Error ? err.message : String(err),
-    );
-    return NextResponse.json({
-      items: [],
-      page: normalizedPage,
-      pageSize: normalizedPageSize,
-      totalCount: 0,
-    });
-  }
-}
-
-async function listOwnerRollupInvoices(input: {
-  clientId: string;
-  externalUserId: string;
-  page: number;
-  pageSize: number;
-}) {
-  if (!isHostedAdminClientAvailable()) {
-    return {
-      items: [],
-      page: input.page,
-      pageSize: input.pageSize,
-      totalCount: 0,
-    };
-  }
-  return listAppUserInvoices({
-    client: getHostedAdminClient(),
-    ...input,
+  const result = await listAppUserBillingInvoices({
+    appId: access.app.id,
+    externalUserId: access.externalUserId,
+    page: normalizedPage,
+    pageSize: normalizedPageSize,
   });
+  return NextResponse.json(result);
 }
