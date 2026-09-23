@@ -16,7 +16,15 @@ This is a **standalone** `oidc_clients` row (not a developer app). There is no
 ## Issuer
 
 Production: `https://pymthouse.com/api/v1/oidc`  
+Staging: `https://staging.pymthouse.com/api/v1/oidc`  
 Local: `{NEXTAUTH_URL}/api/v1/oidc` (e.g. `http://localhost:3001/api/v1/oidc`)
+
+Console callbacks are Vercel env on this project, not source constants:
+
+| Vercel target | `CS_OIDC_BUILTIN_REDIRECT_URIS` | `CS_OIDC_EXCLUDED_REDIRECT_URIS` |
+| --- | --- | --- |
+| Production | `https://ops.pymthouse.com/api/auth/callback/pymthouse` | `https://opstest.pymthouse.com/api/auth/callback/pymthouse` |
+| Preview, branch `staging` | `https://opstest.pymthouse.com/api/auth/callback/pymthouse` | `https://ops.pymthouse.com/api/auth/callback/pymthouse` |
 
 Discovery: `{issuer}/.well-known/openid-configuration`
 
@@ -35,9 +43,10 @@ Discovery: `{issuer}/.well-known/openid-configuration`
 Later bootstrap runs merge redirect URIs only when `CS_OIDC_REDIRECT_URI`,
 `CUSTOMER_SERVICE_URL`, or `NEXT_PUBLIC_CUSTOMER_SERVICE_URL` are set in
 pymthouse env. They do **not** merge `NEXTAUTH_URL` on re-run (avoids adding
-the issuer origin). The customer-service RP always also includes
-`https://opstest.pymthouse.com/api/auth/callback/pymthouse` (issuer client
-load and redirect-origin allowlist, and bootstrap). They also repair
+the issuer origin). The customer-service RP also includes
+`CS_OIDC_BUILTIN_REDIRECT_URIS` and drops `CS_OIDC_EXCLUDED_REDIRECT_URIS`
+(issuer client load, redirect-origin allowlist, and bootstrap). Leave both
+unset locally and on feature-branch previews. They also repair
 scopes/grants. The client secret is
 written **once** on create (or when the hash is missing) to
 `.env.customer-service-oidc` (gitignored, mode 600) — not stdout.
@@ -63,9 +72,9 @@ CS_OIDC_CLIENT_SECRET=…
 # Local:
 # CS_OIDC_REDIRECT_URI=http://localhost:3010/api/auth/callback/pymthouse
 # NEXTAUTH_URL=http://localhost:3010
-# Deployed CS console (ops + Vercel preview must both be listed).
-# opstest.pymthouse.com is built into the issuer and does not need to be repeated here.
-CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse,https://customer-service-git-feat-bootstrap-cs-oidc-client-ecs-vercel.vercel.app/api/auth/callback/pymthouse
+# Extra callbacks (Vercel preview consoles). The ops host for this issuer is
+# CS_OIDC_BUILTIN_REDIRECT_URIS on the pymthouse project, not this list.
+CS_OIDC_REDIRECT_URI=https://customer-service-git-feat-bootstrap-cs-oidc-client-ecs-vercel.vercel.app/api/auth/callback/pymthouse
 # NEXTAUTH_URL is local-only; on Vercel the request host is the origin.
 NEXTAUTH_SECRET=…
 ```

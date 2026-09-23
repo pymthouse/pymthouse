@@ -6,10 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { test } from "@/test-utils/db-guard";
-import {
-  BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS,
-  redirectUrisForOidcClient,
-} from "@/lib/oidc/customer-service-id";
+import { redirectUrisForOidcClient } from "@/lib/oidc/customer-service-id";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import {
   CUSTOMER_SERVICE_OIDC_CLIENT_ID,
@@ -38,25 +35,72 @@ function restoreEnv(t: { after: (fn: () => void) => void }, key: string): void {
   });
 }
 
-const OPSTEST_CALLBACK = BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS[0];
+const STAGING_CALLBACK = "https://opstest.example/api/auth/callback/pymthouse";
+const PRODUCTION_CALLBACK = "https://ops.example/api/auth/callback/pymthouse";
 
-nodeTest("redirectUrisForOidcClient adds opstest only for the customer-service RP", () => {
+function withCustomerServiceRedirectEnv(
+  t: { after: (fn: () => void) => void },
+  builtin: string | undefined,
+  excluded: string | undefined,
+): void {
+  restoreEnv(t, "CS_OIDC_BUILTIN_REDIRECT_URIS");
+  restoreEnv(t, "CS_OIDC_EXCLUDED_REDIRECT_URIS");
+  if (builtin === undefined) delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
+  else process.env.CS_OIDC_BUILTIN_REDIRECT_URIS = builtin;
+  if (excluded === undefined) delete process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS;
+  else process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS = excluded;
+}
+
+nodeTest("redirectUrisForOidcClient uses deployment redirect env", (t) => {
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK, PRODUCTION_CALLBACK);
   assert.deepEqual(
     redirectUrisForOidcClient("web_customer_service", [
-      "https://ops.pymthouse.com/api/auth/callback/pymthouse",
+      PRODUCTION_CALLBACK,
+      "https://preview.example/api/auth/callback/pymthouse",
     ]),
     [
-      "https://ops.pymthouse.com/api/auth/callback/pymthouse",
-      OPSTEST_CALLBACK,
+      "https://preview.example/api/auth/callback/pymthouse",
+      STAGING_CALLBACK,
     ],
   );
   assert.deepEqual(
-    redirectUrisForOidcClient("web_customer_service", [OPSTEST_CALLBACK]),
-    [OPSTEST_CALLBACK],
+    redirectUrisForOidcClient("web_customer_service", [STAGING_CALLBACK]),
+    [STAGING_CALLBACK],
+  );
+
+  process.env.CS_OIDC_BUILTIN_REDIRECT_URIS = PRODUCTION_CALLBACK;
+  process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS = STAGING_CALLBACK;
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_customer_service", [
+      STAGING_CALLBACK,
+      "https://preview.example/api/auth/callback/pymthouse",
+    ]),
+    [
+      "https://preview.example/api/auth/callback/pymthouse",
+      PRODUCTION_CALLBACK,
+    ],
+  );
+
+  delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
+  delete process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS;
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_customer_service", [
+      PRODUCTION_CALLBACK,
+      STAGING_CALLBACK,
+      "http://localhost:3010/api/auth/callback/pymthouse",
+    ]),
+    [
+      PRODUCTION_CALLBACK,
+      STAGING_CALLBACK,
+      "http://localhost:3010/api/auth/callback/pymthouse",
+    ],
   );
   assert.deepEqual(
-    redirectUrisForOidcClient("web_other", ["https://portal.example/cb"]),
-    ["https://portal.example/cb"],
+    redirectUrisForOidcClient("web_other", [
+      "https://portal.example/cb",
+      STAGING_CALLBACK,
+    ]),
+    ["https://portal.example/cb", STAGING_CALLBACK],
   );
 });
 
@@ -208,11 +252,13 @@ test("ensureCustomerServiceOidcClient does not add localhost when CS env unset o
   const csClientId = testClientId();
   t.after(() => cleanupClient(csClientId));
   restoreEnv(t, "CS_OIDC_CLIENT_ID");
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK, PRODUCTION_CALLBACK);
   process.env.CS_OIDC_CLIENT_ID = csClientId;
   const csClient = await ensureCustomerServiceOidcClient({
     clientId: csClientId,
   });
-  assert.equal(csClient.redirectUris.includes(OPSTEST_CALLBACK), true);
+  assert.equal(csClient.redirectUris.includes(STAGING_CALLBACK), true);
+  assert.equal(csClient.redirectUris.includes(PRODUCTION_CALLBACK), false);
   assert.notEqual(second.clientSecret, first.clientSecret);
 });
 

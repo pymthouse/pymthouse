@@ -26,23 +26,39 @@ export function customerServiceCallbackUri(origin?: string): string {
   return `${base}/api/auth/callback/pymthouse`;
 }
 
-/**
- * Customer-service consoles that stay registered on the issuer even when
- * `CS_OIDC_REDIRECT_URI` does not list them. NextAuth's callback path is fixed.
- */
-export const BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS = [
-  "https://opstest.pymthouse.com/api/auth/callback/pymthouse",
-] as const;
+function splitRedirectUriEnv(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
+  const out: string[] = [];
+  for (const part of raw.split(/[,\s]+/)) {
+    const uri = part.trim();
+    if (uri.length > 0 && !out.includes(uri)) out.push(uri);
+  }
+  return out;
+}
 
-/** Merge built-in customer-service callbacks onto that RP only. */
+/** Callbacks this deployment always allows for the customer-service RP. */
+export function builtinCustomerServiceRedirectUris(): string[] {
+  return splitRedirectUriEnv(process.env.CS_OIDC_BUILTIN_REDIRECT_URIS);
+}
+
+/** Callbacks this deployment removes from the customer-service RP. */
+export function excludedCustomerServiceRedirectUris(): string[] {
+  return splitRedirectUriEnv(process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS);
+}
+
+/**
+ * Merge this deployment's customer-service callbacks onto that RP, and drop
+ * callbacks listed in `CS_OIDC_EXCLUDED_REDIRECT_URIS`.
+ */
 export function redirectUrisForOidcClient(
   clientId: string,
   stored: string[],
 ): string[] {
   if (!isCustomerServiceOidcClient(clientId)) return stored;
-  const out = [...stored];
-  for (const uri of BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS) {
-    if (!out.includes(uri)) out.push(uri);
+  const excluded = new Set(excludedCustomerServiceRedirectUris());
+  const out = stored.filter((uri) => !excluded.has(uri));
+  for (const uri of builtinCustomerServiceRedirectUris()) {
+    if (!excluded.has(uri) && !out.includes(uri)) out.push(uri);
   }
   return out;
 }
