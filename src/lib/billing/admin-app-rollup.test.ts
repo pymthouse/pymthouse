@@ -6,6 +6,7 @@ import {
   appNeedsAttention,
   appSharesOwnerCostRail,
   blockedRollupM2mUserCount,
+  ownerSummaryAfterPrepaid,
   decideAppUserCreditGrant,
   ownerRollupSpendableUsdMicros,
   parseAppListQuery,
@@ -161,6 +162,29 @@ test("decideAppUserCreditGrant credits platform-default members as owners", () =
     mode: "self_owner_wallet",
     ownerUserId: "member-owner",
   });
+});
+
+test("prepaid credits clear a starter owner-rollup block", () => {
+  const blocked = {
+    id: "owner-1",
+    email: "owner@example.test",
+    name: null,
+    planKind: "starter" as const,
+    usageStatus: "blocked" as const,
+    cycleUsage: {
+      usedUsdMicros: "5000000",
+      includedUsdMicros: "5000000",
+      remainingUsdMicros: "0",
+      overageUsdMicros: "0",
+      requestCount: 3,
+    },
+  };
+  assert.equal(
+    ownerSummaryAfterPrepaid(blocked, "175000000").usageStatus,
+    "ok",
+  );
+  assert.equal(ownerSummaryAfterPrepaid(blocked, "0").usageStatus, "blocked");
+  assert.equal(ownerSummaryAfterPrepaid(blocked, null).usageStatus, "blocked");
 });
 
 test("owner-rollup spendable is prepaid plus remaining included", () => {

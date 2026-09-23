@@ -248,6 +248,28 @@ export function blockedRollupM2mUserCount(input: {
   return input.activeM2mUserCount;
 }
 
+/**
+ * Starter list status ignores prepaid. A grant leaves included usage exhausted
+ * but the owner wallet spendable, so M2M users are not blocked.
+ */
+export function ownerSummaryAfterPrepaid(
+  owner: AdminAppOwnerSummary,
+  creditBalanceUsdMicros: string | null | undefined,
+): AdminAppOwnerSummary {
+  if (owner.planKind !== "starter" || owner.usageStatus !== "blocked") {
+    return owner;
+  }
+  const spendable = microsOrZero(
+    ownerRollupSpendableUsdMicros({
+      creditBalanceUsdMicros,
+      includedUsdMicros: owner.cycleUsage.includedUsdMicros,
+      usedUsdMicros: owner.cycleUsage.usedUsdMicros,
+    }),
+  );
+  if (spendable <= 0n) return owner;
+  return { ...owner, usageStatus: "ok" };
+}
+
 export function appNeedsAttention(input: {
   sharesOwnerCostRail: boolean;
   ownerUsageStatus: OwnerListUsageStatus;
@@ -537,6 +559,32 @@ function toListItem(input: {
   };
 }
 
+async function applyPrepaidToBlockedStarters(
+  ownerSummaries: Map<string, AdminAppOwnerSummary>,
+): Promise<void> {
+  const ownerIds = [...ownerSummaries.values()]
+    .filter((owner) => owner.planKind === "starter" && owner.usageStatus === "blocked")
+    .map((owner) => owner.id);
+  const concurrency = 8;
+  for (let index = 0; index < ownerIds.length; index += concurrency) {
+    const chunk = ownerIds.slice(index, index + concurrency);
+    const balances = await Promise.all(
+      chunk.map(async (ownerId) => {
+        const balance = await getOwnerPrepaidCreditBalance(ownerId).catch(() => null);
+        return [ownerId, balance?.balanceUsdMicros] as const;
+      }),
+    );
+    for (const [ownerId, balanceUsdMicros] of balances) {
+      const current = ownerSummaries.get(ownerId);
+      if (!current) continue;
+      ownerSummaries.set(
+        ownerId,
+        ownerSummaryAfterPrepaid(current, balanceUsdMicros),
+      );
+    }
+  }
+}
+
 export async function listAdminBillingApps(
   query: AdminAppListQuery,
 ): Promise<AdminAppListResult> {
@@ -611,6 +659,8 @@ export async function listAdminBillingApps(
       }),
     );
   }
+
+  await applyPrepaidToBlockedStarters(ownerSummaries);
 
   const items: AdminAppListItem[] = rows.map((row) =>
     toListItem({
@@ -854,17 +904,20 @@ export async function getAdminBillingApp(
       getOwnerPrepaidCreditBalance(row.ownerId).catch(() => null),
     ]);
 
-  const owner = buildOwnerSummary({
-    ownerId: row.ownerId,
-    email: row.ownerEmail,
-    name: row.ownerName,
-    starterIncludedUsdMicros: row.starterIncludedUsdMicros,
-    endUserCap: row.endUserCap,
-    note: row.note,
-    defaults,
-    paid: paidByOwner.get(row.ownerId),
-    usage: usageByOwner.get(row.ownerId),
-  });
+  const owner = ownerSummaryAfterPrepaid(
+    buildOwnerSummary({
+      ownerId: row.ownerId,
+      email: row.ownerEmail,
+      name: row.ownerName,
+      starterIncludedUsdMicros: row.starterIncludedUsdMicros,
+      endUserCap: row.endUserCap,
+      note: row.note,
+      defaults,
+      paid: paidByOwner.get(row.ownerId),
+      usage: usageByOwner.get(row.ownerId),
+    }),
+    creditAllowance?.balanceUsdMicros,
+  );
   const app = toListItem({
     row,
     owner,
