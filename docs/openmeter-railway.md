@@ -78,8 +78,11 @@ On the **openmeter** project (or per-service), set:
 | `OPENMETER_POSTGRES_PASSWORD` | postgres + openmeter + both workers | `openssl rand -hex 24` |
 | `OPENMETER_CLICKHOUSE_SECRET` | openmeter-clickhouse | `openssl rand -hex 24` |
 | `OPENMETER_API_KEY` | optional; set on OM if you enable auth | random secret |
+| `OPENMETER_APPS_BASE_URL` | openmeter + both workers | Same as the **public** OpenMeter domain from step 4 (no trailing slash) |
 
 Use the **same** `OPENMETER_POSTGRES_PASSWORD` on `openmeter-postgres`, `openmeter`, `openmeter-sink-worker`, and `openmeter-balance-worker`.
+
+`OPENMETER_APPS_BASE_URL` is required for **Stripe Connect** (per-app merchant billing in PymtHouse). Without it, `GET …/marketplace/listings/stripe/install/oauth2` returns **501 Unimplemented**. Set it to the OpenMeter API origin (e.g. `https://openmeter-production-xxxx.up.railway.app`), not the PymtHouse URL. If unset, use the same value as `OPENMETER_URL` on `openmeter` and both workers.
 
 ## 4. Public URL for the API
 
