@@ -11,6 +11,7 @@ import {
   syncConfidentialWebGrantTypes,
 } from "@/lib/oidc/confidential-web";
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
+import { redirectUrisForOidcClient } from "@/lib/oidc/customer-service-id";
 import {
   DEFAULT_OIDC_SCOPES,
   ensureConfidentialWebIdentityScopes,
@@ -107,7 +108,10 @@ export async function getRegisteredRedirectOrigins(): Promise<Set<string>> {
   ];
 
   for (const row of rows) {
-    const uris = JSON.parse(row.redirectUris) as string[];
+    const uris = redirectUrisForOidcClient(
+      row.clientId,
+      JSON.parse(row.redirectUris) as string[],
+    );
     for (const uri of uris) {
       if (uri.includes("*")) {
         for (const port of commonPorts) {

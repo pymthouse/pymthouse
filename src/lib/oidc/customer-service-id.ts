@@ -26,6 +26,27 @@ export function customerServiceCallbackUri(origin?: string): string {
   return `${base}/api/auth/callback/pymthouse`;
 }
 
+/**
+ * Customer-service consoles that stay registered on the issuer even when
+ * `CS_OIDC_REDIRECT_URI` does not list them. NextAuth's callback path is fixed.
+ */
+export const BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS = [
+  "https://opstest.pymthouse.com/api/auth/callback/pymthouse",
+] as const;
+
+/** Merge built-in customer-service callbacks onto that RP only. */
+export function redirectUrisForOidcClient(
+  clientId: string,
+  stored: string[],
+): string[] {
+  if (!isCustomerServiceOidcClient(clientId)) return stored;
+  const out = [...stored];
+  for (const uri of BUILTIN_CUSTOMER_SERVICE_REDIRECT_URIS) {
+    if (!out.includes(uri)) out.push(uri);
+  }
+  return out;
+}
+
 export function getCustomerServiceOidcClientId(): string {
   return process.env.CS_OIDC_CLIENT_ID?.trim() || CUSTOMER_SERVICE_OIDC_CLIENT_ID;
 }
