@@ -64,7 +64,7 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@turnkey/crypto": "^2.12.1",
     "@turnkey/react-wallet-kit": "^2.4.4",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.0",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.12",
     "next": "16.3.4",
