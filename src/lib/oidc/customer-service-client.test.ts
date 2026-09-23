@@ -41,21 +41,16 @@ const PRODUCTION_CALLBACK = "https://ops.example/api/auth/callback/pymthouse";
 function withCustomerServiceRedirectEnv(
   t: { after: (fn: () => void) => void },
   builtin: string | undefined,
-  excluded: string | undefined,
 ): void {
   restoreEnv(t, "CS_OIDC_BUILTIN_REDIRECT_URIS");
-  restoreEnv(t, "CS_OIDC_EXCLUDED_REDIRECT_URIS");
   if (builtin === undefined) delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
   else process.env.CS_OIDC_BUILTIN_REDIRECT_URIS = builtin;
-  if (excluded === undefined) delete process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS;
-  else process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS = excluded;
 }
 
-nodeTest("redirectUrisForOidcClient uses deployment redirect env", (t) => {
-  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK, PRODUCTION_CALLBACK);
+nodeTest("redirectUrisForOidcClient adds the deployment callback for the customer-service RP", (t) => {
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK);
   assert.deepEqual(
     redirectUrisForOidcClient("web_customer_service", [
-      PRODUCTION_CALLBACK,
       "https://preview.example/api/auth/callback/pymthouse",
     ]),
     [
@@ -68,32 +63,12 @@ nodeTest("redirectUrisForOidcClient uses deployment redirect env", (t) => {
     [STAGING_CALLBACK],
   );
 
-  process.env.CS_OIDC_BUILTIN_REDIRECT_URIS = PRODUCTION_CALLBACK;
-  process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS = STAGING_CALLBACK;
-  assert.deepEqual(
-    redirectUrisForOidcClient("web_customer_service", [
-      STAGING_CALLBACK,
-      "https://preview.example/api/auth/callback/pymthouse",
-    ]),
-    [
-      "https://preview.example/api/auth/callback/pymthouse",
-      PRODUCTION_CALLBACK,
-    ],
-  );
-
   delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
-  delete process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS;
   assert.deepEqual(
     redirectUrisForOidcClient("web_customer_service", [
-      PRODUCTION_CALLBACK,
-      STAGING_CALLBACK,
       "http://localhost:3010/api/auth/callback/pymthouse",
     ]),
-    [
-      PRODUCTION_CALLBACK,
-      STAGING_CALLBACK,
-      "http://localhost:3010/api/auth/callback/pymthouse",
-    ],
+    ["http://localhost:3010/api/auth/callback/pymthouse"],
   );
   assert.deepEqual(
     redirectUrisForOidcClient("web_other", [
@@ -252,7 +227,7 @@ test("ensureCustomerServiceOidcClient does not add localhost when CS env unset o
   const csClientId = testClientId();
   t.after(() => cleanupClient(csClientId));
   restoreEnv(t, "CS_OIDC_CLIENT_ID");
-  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK, PRODUCTION_CALLBACK);
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK);
   process.env.CS_OIDC_CLIENT_ID = csClientId;
   const csClient = await ensureCustomerServiceOidcClient({
     clientId: csClientId,

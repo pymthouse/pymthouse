@@ -19,12 +19,13 @@ Production: `https://pymthouse.com/api/v1/oidc`
 Staging: `https://staging.pymthouse.com/api/v1/oidc`  
 Local: `{NEXTAUTH_URL}/api/v1/oidc` (e.g. `http://localhost:3001/api/v1/oidc`)
 
-Console callbacks are Vercel env on this project, not source constants:
+Each issuer allows only the console callback in `CS_OIDC_BUILTIN_REDIRECT_URIS`.
+A callback that is not listed is rejected.
 
-| Vercel target | `CS_OIDC_BUILTIN_REDIRECT_URIS` | `CS_OIDC_EXCLUDED_REDIRECT_URIS` |
-| --- | --- | --- |
-| Production | `https://ops.pymthouse.com/api/auth/callback/pymthouse` | `https://opstest.pymthouse.com/api/auth/callback/pymthouse` |
-| Preview, branch `staging` | `https://opstest.pymthouse.com/api/auth/callback/pymthouse` | `https://ops.pymthouse.com/api/auth/callback/pymthouse` |
+| Vercel target | `CS_OIDC_BUILTIN_REDIRECT_URIS` |
+| --- | --- |
+| Production | `https://ops.pymthouse.com/api/auth/callback/pymthouse` |
+| Preview, branch `staging` | `https://opstest.pymthouse.com/api/auth/callback/pymthouse` |
 
 Discovery: `{issuer}/.well-known/openid-configuration`
 
@@ -44,9 +45,9 @@ Later bootstrap runs merge redirect URIs only when `CS_OIDC_REDIRECT_URI`,
 `CUSTOMER_SERVICE_URL`, or `NEXT_PUBLIC_CUSTOMER_SERVICE_URL` are set in
 pymthouse env. They do **not** merge `NEXTAUTH_URL` on re-run (avoids adding
 the issuer origin). The customer-service RP also includes
-`CS_OIDC_BUILTIN_REDIRECT_URIS` and drops `CS_OIDC_EXCLUDED_REDIRECT_URIS`
-(issuer client load, redirect-origin allowlist, and bootstrap). Leave both
-unset locally and on feature-branch previews. They also repair
+`CS_OIDC_BUILTIN_REDIRECT_URIS` (issuer client load, redirect-origin
+allowlist, and bootstrap). Leave it unset locally and on feature-branch
+previews. They also repair
 scopes/grants. The client secret is
 written **once** on create (or when the hash is missing) to
 `.env.customer-service-oidc` (gitignored, mode 600) — not stdout.

@@ -36,29 +36,20 @@ function splitRedirectUriEnv(raw: string | undefined): string[] {
   return out;
 }
 
-/** Callbacks this deployment always allows for the customer-service RP. */
+/** Callbacks this deployment allows for the customer-service RP. */
 export function builtinCustomerServiceRedirectUris(): string[] {
   return splitRedirectUriEnv(process.env.CS_OIDC_BUILTIN_REDIRECT_URIS);
 }
 
-/** Callbacks this deployment removes from the customer-service RP. */
-export function excludedCustomerServiceRedirectUris(): string[] {
-  return splitRedirectUriEnv(process.env.CS_OIDC_EXCLUDED_REDIRECT_URIS);
-}
-
-/**
- * Merge this deployment's customer-service callbacks onto that RP, and drop
- * callbacks listed in `CS_OIDC_EXCLUDED_REDIRECT_URIS`.
- */
+/** Add this deployment's customer-service callbacks onto that RP. */
 export function redirectUrisForOidcClient(
   clientId: string,
   stored: string[],
 ): string[] {
   if (!isCustomerServiceOidcClient(clientId)) return stored;
-  const excluded = new Set(excludedCustomerServiceRedirectUris());
-  const out = stored.filter((uri) => !excluded.has(uri));
+  const out = [...stored];
   for (const uri of builtinCustomerServiceRedirectUris()) {
-    if (!excluded.has(uri) && !out.includes(uri)) out.push(uri);
+    if (!out.includes(uri)) out.push(uri);
   }
   return out;
 }
