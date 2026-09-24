@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import nodeTest from "node:test";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { test } from "@/test-utils/db-guard";
+import { redirectUrisForOidcClient } from "@/lib/oidc/customer-service-id";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import {
   CUSTOMER_SERVICE_OIDC_CLIENT_ID,
@@ -32,6 +34,50 @@ function restoreEnv(t: { after: (fn: () => void) => void }, key: string): void {
     else process.env[key] = previous;
   });
 }
+
+const STAGING_CALLBACK = "https://opstest.example/api/auth/callback/pymthouse";
+const PRODUCTION_CALLBACK = "https://ops.example/api/auth/callback/pymthouse";
+
+function withCustomerServiceRedirectEnv(
+  t: { after: (fn: () => void) => void },
+  builtin: string | undefined,
+): void {
+  restoreEnv(t, "CS_OIDC_BUILTIN_REDIRECT_URIS");
+  if (builtin === undefined) delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
+  else process.env.CS_OIDC_BUILTIN_REDIRECT_URIS = builtin;
+}
+
+nodeTest("redirectUrisForOidcClient adds the deployment callback for the customer-service RP", (t) => {
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK);
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_customer_service", [
+      "https://preview.example/api/auth/callback/pymthouse",
+    ]),
+    [
+      "https://preview.example/api/auth/callback/pymthouse",
+      STAGING_CALLBACK,
+    ],
+  );
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_customer_service", [STAGING_CALLBACK]),
+    [STAGING_CALLBACK],
+  );
+
+  delete process.env.CS_OIDC_BUILTIN_REDIRECT_URIS;
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_customer_service", [
+      "http://localhost:3010/api/auth/callback/pymthouse",
+    ]),
+    ["http://localhost:3010/api/auth/callback/pymthouse"],
+  );
+  assert.deepEqual(
+    redirectUrisForOidcClient("web_other", [
+      "https://portal.example/cb",
+      STAGING_CALLBACK,
+    ]),
+    ["https://portal.example/cb", STAGING_CALLBACK],
+  );
+});
 
 function testClientId(): string {
   return `web_cs_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
@@ -177,6 +223,17 @@ test("ensureCustomerServiceOidcClient does not add localhost when CS env unset o
   assert.deepEqual(second.redirectUris, [
     "https://cs.example.com/api/auth/callback/pymthouse",
   ]);
+
+  const csClientId = testClientId();
+  t.after(() => cleanupClient(csClientId));
+  restoreEnv(t, "CS_OIDC_CLIENT_ID");
+  withCustomerServiceRedirectEnv(t, STAGING_CALLBACK);
+  process.env.CS_OIDC_CLIENT_ID = csClientId;
+  const csClient = await ensureCustomerServiceOidcClient({
+    clientId: csClientId,
+  });
+  assert.equal(csClient.redirectUris.includes(STAGING_CALLBACK), true);
+  assert.equal(csClient.redirectUris.includes(PRODUCTION_CALLBACK), false);
   assert.notEqual(second.clientSecret, first.clientSecret);
 });
 

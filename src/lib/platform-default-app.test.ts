@@ -180,6 +180,35 @@ test("ensurePlatformDefaultApp reassigns non-admin ownership to admin", async (t
   });
 });
 
+test("ensurePlatformDefaultApp does not throw when the preferred admin is already gone", async (t) => {
+  const developerId = await createTestUser({ role: "developer" });
+  const adminId = await createTestUser({ role: "admin" });
+  const app = await seedDeveloperAppWithClient({
+    ownerId: developerId,
+    name: `GoneAdmin ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+    await db.delete(users).where(eq(users.id, developerId));
+  });
+
+  await db.delete(users).where(eq(users.id, adminId));
+
+  await withTemporaryPlatformDefault(app.clientId, async () => {
+    const result = await ensurePlatformDefaultApp({ ownerId: adminId });
+    assert.equal(result.created, false);
+    assert.equal(result.clientId, app.clientId);
+
+    const after = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .where(eq(developerApps.id, app.clientId))
+      .limit(1);
+    assert.ok(after[0]?.ownerId);
+    assert.notEqual(after[0]?.ownerId, adminId);
+  });
+});
+
 test("ensurePlatformDefaultApp reassigns leftover test-admin owner to bootstrap admin", async (t) => {
   const bootstrapAdmins = await db
     .select({ id: users.id })
