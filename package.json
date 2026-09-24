@@ -62,12 +62,12 @@
     "@pymthouse/builder-sdk": "^0.6.5",
     "@pymthouse/clearinghouse-identity-webhook": "0.5.0-rc.0",
     "@tailwindcss/postcss": "^4.3.3",
-    "@turnkey/crypto": "^2.12.1",
-    "@turnkey/react-wallet-kit": "^2.4.4",
+    "@turnkey/crypto": "^2.13.0",
+    "@turnkey/react-wallet-kit": "^2.4.5",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.12",
-    "next": "16.3.4",
+    "next": "16.3.5",
     "next-auth": "^4.24.15",
     "oidc-provider": "^9.12.2",
     "postgres": "^3.4.9",
@@ -75,7 +75,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "uuid": "^14.0.2",
-    "zod": "^4.6.2"
+    "zod": "^4.6.5"
   },
   "overrides": {
     "@babel/core": "7.29.6",
