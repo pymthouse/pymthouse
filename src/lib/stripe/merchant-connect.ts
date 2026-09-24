@@ -520,6 +520,36 @@ export async function forgetMerchantConnectPlane(
     );
 }
 
+/**
+ * Whether a Connect flag refresh may mutate the active `app_billing_config` row.
+ *
+ * After a Live↔Sandbox plane switch, `syncConnectedAccountFlags` / webhooks can
+ * still finish Stripe I/O for the plane that was just parked. Writing that
+ * `acct_` onto active without flipping `stripeLivemode` leaves a corrupted
+ * active plane (sandbox livemode + live account, or the reverse).
+ */
+export function shouldWriteActiveConnectFlags(input: {
+  existing:
+    | {
+        stripeConnectedAccountId?: string | null;
+        stripeLivemode?: boolean | null;
+      }
+    | null
+    | undefined;
+  accountId: string;
+  livemode: boolean;
+}): boolean {
+  if (!input.existing) {
+    // No active row yet — allow create/seed during first onboarding.
+    return true;
+  }
+  const activeAccountId = input.existing.stripeConnectedAccountId?.trim() || "";
+  return (
+    activeAccountId === input.accountId &&
+    appStripeLivemode(input.existing) === input.livemode
+  );
+}
+
 async function persistConnectedAccountFlags(input: {
   clientId: string;
   accountId: string;
@@ -529,36 +559,112 @@ async function persistConnectedAccountFlags(input: {
   detailsSubmitted: boolean;
 }): Promise<void> {
   const ready = input.chargesEnabled && input.detailsSubmitted;
-  const existing = await getAppBillingConfig(input.clientId);
-  const merchantProfileId =
-    existing?.openmeterMerchantBillingProfileId?.trim() ||
-    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
-    null;
-  const connectedAt = ready
-    ? (existing?.connectedAt ?? new Date().toISOString())
-    : (existing?.connectedAt ?? null);
-  // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
-  // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
-  await upsertAppBillingConfig(input.clientId, {
-    stripeConnectedAccountId: input.accountId,
-    stripeChargesEnabled: input.chargesEnabled,
-    stripePayoutsEnabled: input.payoutsEnabled,
-    stripeDetailsSubmitted: input.detailsSubmitted,
-    connectedAt,
-    ...(existing?.billingMode === "merchant" && merchantProfileId
-      ? { openmeterMerchantBillingProfileId: merchantProfileId }
-      : {}),
+
+  // Serialize against switchMerchantConnectPlane's row lock so we re-check the
+  // active plane after Stripe I/O, not on a stale pre-switch snapshot.
+  await db.transaction(async (tx) => {
+    const locked = await tx
+      .select()
+      .from(appBillingConfig)
+      .where(eq(appBillingConfig.clientId, input.clientId))
+      .for("update")
+      .limit(1);
+    const existing = locked[0] ?? null;
+    const writeActive = shouldWriteActiveConnectFlags({
+      existing,
+      accountId: input.accountId,
+      livemode: input.livemode,
+    });
+    const parkedBefore = writeActive
+      ? null
+      : await getMerchantConnectPlane(input.clientId, input.livemode, tx);
+    const merchantProfileId =
+      existing?.openmeterMerchantBillingProfileId?.trim() ||
+      process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+      null;
+    const connectedAtSource = writeActive ? existing : parkedBefore;
+    const connectedAt = ready
+      ? (connectedAtSource?.connectedAt ?? new Date().toISOString())
+      : (connectedAtSource?.connectedAt ?? null);
+    const onboardingMethod = coerceOnboardingMethod(
+      writeActive
+        ? existing?.stripeOnboardingMethod
+        : (parkedBefore?.stripeOnboardingMethod ??
+            existing?.stripeOnboardingMethod),
+    );
+
+    // Always refresh the parked row for this plane so switching back still
+    // sees up-to-date charges/details flags — even when we must not touch active.
+    await parkConnectedAccountPlane(
+      {
+        clientId: input.clientId,
+        livemode: input.livemode,
+        accountId: input.accountId,
+        onboardingMethod,
+        chargesEnabled: input.chargesEnabled,
+        payoutsEnabled: input.payoutsEnabled,
+        detailsSubmitted: input.detailsSubmitted,
+        connectedAt,
+      },
+      tx,
+    );
+
+    if (!writeActive) {
+      return;
+    }
+
+    // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
+    // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
+    const now = new Date().toISOString();
+    const values = {
+      stripeConnectedAccountId: input.accountId,
+      stripeChargesEnabled: input.chargesEnabled,
+      stripePayoutsEnabled: input.payoutsEnabled,
+      stripeDetailsSubmitted: input.detailsSubmitted,
+      connectedAt,
+      ...(existing?.billingMode === "merchant" && merchantProfileId
+        ? { openmeterMerchantBillingProfileId: merchantProfileId }
+        : {}),
+      updatedAt: now,
+    };
+    if (existing) {
+      await tx
+        .update(appBillingConfig)
+        .set(values)
+        .where(eq(appBillingConfig.clientId, input.clientId));
+      return;
+    }
+    await tx.insert(appBillingConfig).values({
+      id: uuidv4(),
+      clientId: input.clientId,
+      stripeConnectStatus: "disconnected",
+      defaultCurrency: "USD",
+      endUserCap: platformDefaultEndUserCap(),
+      applicationFeeBps: platformDefaultApplicationFeeBps(),
+      createdAt: now,
+      ...values,
+    });
   });
-  await parkConnectedAccountPlane({
-    clientId: input.clientId,
-    livemode: input.livemode,
-    accountId: input.accountId,
-    onboardingMethod: coerceOnboardingMethod(existing?.stripeOnboardingMethod),
-    chargesEnabled: input.chargesEnabled,
-    payoutsEnabled: input.payoutsEnabled,
-    detailsSubmitted: input.detailsSubmitted,
-    connectedAt,
-  });
+}
+
+/**
+ * Test-only entry to exercise Connect flag persistence after a plane switch.
+ * Always throws outside NODE_ENV=test.
+ */
+export async function __persistConnectedAccountFlagsForTests(input: {
+  clientId: string;
+  accountId: string;
+  livemode: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+}): Promise<void> {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__persistConnectedAccountFlagsForTests is only available in test",
+    );
+  }
+  await persistConnectedAccountFlags(input);
 }
 
 async function syncConnectedAccountFlags(
