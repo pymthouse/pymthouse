@@ -482,17 +482,26 @@ function identityCacheKey(input: {
  * App owners and owner_rollup end-users share the owner's `{users.id}` wallet;
  * platform-default (Livepeer Direct) members bill their own owner wallet;
  * merchant end-users bill `eu_{end_users.id}` (live) or `sbx_eu_{id}` (sandbox).
+ *
+ * Pass `stripeLivemode` when settling a Connect webhook so prepaid credits land
+ * on the payment plane's wallet even if the operator already switched planes.
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
   externalUserId: string;
+  /** Override active `app_billing_config.stripeLivemode` (Connect settlement). */
+  stripeLivemode?: boolean;
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId.trim();
   if (!externalUserId) {
     throw new Error("externalUserId is required");
   }
   const clientId = input.clientId.trim();
-  const app = await loadAppIdentity(clientId);
+  const loaded = await loadAppIdentity(clientId);
+  const app =
+    loaded && typeof input.stripeLivemode === "boolean"
+      ? { ...loaded, stripeLivemode: input.stripeLivemode }
+      : loaded;
   return getIdentityCache().get(
     identityCacheKey({ clientId, externalUserId, app }),
     () =>

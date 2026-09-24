@@ -26,6 +26,11 @@ export type GrantAllowanceUsdMicros = (input: {
   featureKey?: string;
   /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
   idempotencyKey?: string;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
 }) => Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -57,6 +62,11 @@ export async function grantAllowanceUsdMicros(input: {
   featureKey?: string;
   /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
   idempotencyKey?: string;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -77,6 +87,7 @@ export async function grantAllowanceUsdMicros(input: {
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId,
+    stripeLivemode: input.stripeLivemode,
   });
   const provisionExternalUserId = identity.isOwner
     ? identity.payerPlatformUserId || externalUserId

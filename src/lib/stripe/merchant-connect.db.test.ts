@@ -455,6 +455,77 @@ test("switchMerchantConnectPlane parks each plane and restores it on the way bac
   assert.equal(again.accountId, "acct_swap_live");
 });
 
+test("parked Connect plane still matches in-flight settlement webhooks", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripeParkedSettle ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  const {
+    appLivemodeMatchesWebhookPlane,
+    resolveMerchantConnectAccountPlane,
+  } = await import("@/lib/stripe/merchant-connect");
+  const { merchantTopUpAccountMatches } = await import(
+    "@/lib/stripe/topup-ownership"
+  );
+  const { db: database } = await import("@/db/index");
+  const { appStripeConnectAccounts } = await import("@/db/schema");
+
+  // Active plane is live.
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_park_live",
+    stripeOnboardingMethod: "account_link",
+    stripeChargesEnabled: true,
+    stripePayoutsEnabled: true,
+    stripeDetailsSubmitted: true,
+    connectedAt: "2026-01-03T00:00:00.000Z",
+  });
+  // Sandbox plane exists only as a parked row (left behind by a prior switch).
+  await database.insert(appStripeConnectAccounts).values({
+    id: randomUUID(),
+    clientId: app.clientId,
+    livemode: false,
+    stripeConnectedAccountId: "acct_park_sandbox",
+    stripeOnboardingMethod: "account_link",
+    stripeChargesEnabled: true,
+    stripePayoutsEnabled: true,
+    stripeDetailsSubmitted: true,
+    connectedAt: "2026-01-02T00:00:00.000Z",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  assert.equal(
+    (await getAppBillingConfig(app.clientId))?.stripeConnectedAccountId,
+    "acct_park_live",
+  );
+  assert.equal(
+    (await resolveMerchantConnectAccountPlane(app.clientId, "acct_park_sandbox"))
+      ?.livemode,
+    false,
+  );
+  assert.equal(
+    await merchantTopUpAccountMatches(app.clientId, "acct_park_sandbox"),
+    true,
+  );
+  assert.equal(await appLivemodeMatchesWebhookPlane(app.clientId, false), true);
+  assert.equal(
+    await merchantTopUpAccountMatches(app.clientId, "acct_unknown"),
+    false,
+  );
+
+  // Active live account still matches; live livemode still matches.
+  assert.equal(
+    await merchantTopUpAccountMatches(app.clientId, "acct_park_live"),
+    true,
+  );
+  assert.equal(await appLivemodeMatchesWebhookPlane(app.clientId, true), true);
+});
+
 test("an app user keeps a separate Stripe customer per plane", async (t) => {
   const app = await seedDeveloperAppWithClient({
     name: `StripePlaneCustomer ${randomUUID().slice(0, 8)}`,

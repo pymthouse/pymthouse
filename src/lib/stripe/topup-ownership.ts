@@ -109,7 +109,8 @@ export async function topUpClientOwnedByOwner(
 
 /**
  * Merchant Connect top-up: the event's `account` must match the app's
- * Connected Account id from `app_billing_config`.
+ * Connected Account — active plane in `app_billing_config`, or a parked plane
+ * in `app_stripe_connect_accounts` after a Live↔Sandbox switch.
  */
 export async function merchantTopUpAccountMatches(
   clientId: string,
@@ -126,6 +127,9 @@ export async function merchantTopUpAccountMatches(
   if (!app) {
     return false;
   }
-  const config = await getAppBillingConfig(app.id);
-  return config?.stripeConnectedAccountId?.trim() === accountId;
+  const { resolveMerchantConnectAccountPlane } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  const plane = await resolveMerchantConnectAccountPlane(app.id, accountId);
+  return plane != null;
 }

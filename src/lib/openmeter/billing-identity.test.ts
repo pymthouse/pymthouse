@@ -408,6 +408,38 @@ test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
   });
 });
 
+test("stripeLivemode override credits the payment plane after a switch", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  // Active plane is live, but a sandbox Connect webhook must still resolve
+  // sbx_eu_ so prepaid credits do not land on the live wallet.
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(isSandboxEndUserCustomerKey(live.payerCustomerKey), false);
+
+  resetBillingIdentityCache();
+  const sandboxSettle = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    stripeLivemode: false,
+  });
+  assert.equal(
+    sandboxSettle.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(sandboxSettle.actorEndUserId),
+  );
+  assert.equal(sandboxSettle.actorEndUserId, live.actorEndUserId);
+  assert.notEqual(sandboxSettle.payerCustomerKey, live.payerCustomerKey);
+});
+
 test("normal app owner bills shared owner wallet", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
