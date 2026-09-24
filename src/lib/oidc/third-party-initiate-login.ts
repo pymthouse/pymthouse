@@ -134,8 +134,9 @@ export function buildInitiateLoginRedirectUrl(
  * when the app federates device approval it targets the RP's registered
  * `initiate_login_uri` directly (OIDC Core third-party initiated login). The
  * browser never transits `/oidc/device/initiate-login`. Return trips to
- * `target_link_uri` must not re-federate once the DeviceCode is bound — see
- * `/oidc/device` which gates on `isDeviceCodeBound`. Falls back to the
+ * `target_link_uri` must not re-federate once the DeviceCode is settled
+ * (approved or denied) — see `/oidc/device` which gates on
+ * `isDeviceCodeBound` / `isDeviceCodeDenied`. Falls back to the
  * authorization-server URL whenever the RP target cannot be built.
  */
 export function deviceAuthVerificationUris(args: {

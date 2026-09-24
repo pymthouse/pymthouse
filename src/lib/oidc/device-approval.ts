@@ -29,6 +29,21 @@ export function isDeviceCodeBound(payload: Record<string, unknown>): boolean {
 }
 
 /**
+ * True once the user (or AS) has denied the device authorization request.
+ * Denial is terminal per RFC 8628 / oidc-provider: the device poll returns the
+ * error and the code must not be approvable afterward.
+ */
+export function isDeviceCodeDenied(payload: Record<string, unknown>): boolean {
+  const error = payload.error;
+  return typeof error === "string" && error.length > 0;
+}
+
+/** Approved or denied — do not re-federate or show the approve/deny form. */
+export function isDeviceCodeSettled(payload: Record<string, unknown>): boolean {
+  return isDeviceCodeBound(payload) || isDeviceCodeDenied(payload);
+}
+
+/**
  * Bind a pending device code to an OIDC account and grant scopes.
  * `oidcClientId` must match the client that requested the device code.
  */
@@ -54,6 +69,15 @@ export async function approveDeviceCodeForAccount(
       ok: false,
       error: "invalid_grant",
       description: "Device code already used",
+      status: 400,
+    };
+  }
+
+  if (isDeviceCodeDenied(deviceCode as Record<string, unknown>)) {
+    return {
+      ok: false,
+      error: "access_denied",
+      description: "The user denied the authorization request",
       status: 400,
     };
   }
@@ -123,7 +147,17 @@ export async function approveDeviceCodeForAccount(
     };
   }
 
-  if (isDeviceCodeBound(latest as Record<string, unknown>)) {
+  const latestRecord = latest as Record<string, unknown>;
+  if (isDeviceCodeDenied(latestRecord)) {
+    return {
+      ok: false,
+      error: "access_denied",
+      description: "The user denied the authorization request",
+      status: 400,
+    };
+  }
+
+  if (isDeviceCodeBound(latestRecord)) {
     return { ok: true };
   }
 
@@ -153,8 +187,6 @@ export async function approveDeviceCodeForAccount(
         authTime: now,
         acr: typeof latest.acr === "string" ? latest.acr : "urn:pmth:session",
         amr: Array.isArray(latest.amr) ? latest.amr : ["pwd"],
-        error: undefined,
-        errorDescription: undefined,
       },
       expiresIn,
     );
