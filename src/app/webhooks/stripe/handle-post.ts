@@ -458,6 +458,10 @@ async function settleMerchantTopUp(input: {
       // Credit the payment plane's wallet (eu_ / sbx_eu_), not the active plane
       // after a Live↔Sandbox switch.
       stripeLivemode: input.livemode,
+      // Pin merchant eu_/sbx_eu_ even if billingMode already flipped to
+      // owner_rollup (Connect acct_ can still match while identity would
+      // otherwise re-resolve onto the owner wallet).
+      billingMode: "merchant",
     });
     return NextResponse.json({
       received: true,
@@ -656,6 +660,9 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
       idempotencyKey: legacyAutoTopUpGrantIdempotencyKey(paymentIntentId),
       // Credit the payment plane's wallet after a Live↔Sandbox switch.
       stripeLivemode: livemode,
+      // Same pin as merchant Checkout settle — Connect auto-topup charged the
+      // end-user wallet even if billingMode flipped before this delivery.
+      billingMode: "merchant",
     });
     return NextResponse.json({
       received: true,

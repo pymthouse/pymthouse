@@ -22,6 +22,11 @@ export async function ensureTrialAllowanceForAppUser(input: {
    * app's active stripeLivemode may already have switched.
    */
   stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<void> {
   if (!isHostedAdminClientAvailable()) {
     return;
@@ -31,6 +36,7 @@ export async function ensureTrialAllowanceForAppUser(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
 
   await ensureStarterPlanSynced(identity.developerAppId);
@@ -38,5 +44,6 @@ export async function ensureTrialAllowanceForAppUser(input: {
     clientId: identity.developerAppId,
     externalUserId: input.externalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
 }

@@ -51,6 +51,7 @@ async function resolveStarterPlaneIdentity(input: {
   clientId: string;
   externalUserId: string;
   stripeLivemode?: boolean;
+  billingMode?: "owner_rollup" | "merchant";
 }) {
   const { resolveOpenMeterBillingIdentity } = await import(
     "@/lib/openmeter/billing-identity"
@@ -59,6 +60,7 @@ async function resolveStarterPlaneIdentity(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
   if (process.env.NODE_ENV === "test") {
     starterPlaneIdentityProbe = {
@@ -470,6 +472,11 @@ export async function ensureStarterSubscriptionForAppUser(input: {
    * app's active stripeLivemode may already have switched.
    */
   stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<{
   openmeterSubscriptionId: string | null;
   planId: string;

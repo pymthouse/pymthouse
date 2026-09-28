@@ -485,12 +485,18 @@ function identityCacheKey(input: {
  *
  * Pass `stripeLivemode` when settling a Connect webhook so prepaid credits land
  * on the payment plane's wallet even if the operator already switched planes.
+ * Pass `billingMode` when settling a Connect top-up so prepaid credits stay on
+ * the `eu_` / `sbx_eu_` wallet even if the operator already switched the app to
+ * `owner_rollup` (Connect `acct_` may still match while identity would otherwise
+ * re-resolve onto the owner bare id).
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
   externalUserId: string;
   /** Override active `app_billing_config.stripeLivemode` (Connect settlement). */
   stripeLivemode?: boolean;
+  /** Override active `app_billing_config.billingMode` (Connect settlement). */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId.trim();
   if (!externalUserId) {
@@ -499,8 +505,15 @@ export async function resolveOpenMeterBillingIdentity(input: {
   const clientId = input.clientId.trim();
   const loaded = await loadAppIdentity(clientId);
   const app =
-    loaded && typeof input.stripeLivemode === "boolean"
-      ? { ...loaded, stripeLivemode: input.stripeLivemode }
+    loaded &&
+    (input.billingMode || typeof input.stripeLivemode === "boolean")
+      ? {
+          ...loaded,
+          ...(input.billingMode ? { billingMode: input.billingMode } : {}),
+          ...(typeof input.stripeLivemode === "boolean"
+            ? { stripeLivemode: input.stripeLivemode }
+            : {}),
+        }
       : loaded;
   return getIdentityCache().get(
     identityCacheKey({ clientId, externalUserId, app }),
