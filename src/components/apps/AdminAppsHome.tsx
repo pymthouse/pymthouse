@@ -3,6 +3,7 @@
 import { useState } from "react";
 import AdminAppsSection from "@/components/apps/AdminAppsSection";
 import MyAppsShortcutTiles from "@/components/apps/MyAppsShortcutTiles";
+import McpClientsSection from "@/components/mcp/McpClientsSection";
 import type { UserAppSummary } from "@/lib/user-apps";
 
 /**
@@ -19,6 +20,8 @@ export default function AdminAppsHome({
   return (
     <>
       <MyAppsShortcutTiles showApiKeys={false} />
+
+      <McpClientsSection />
 
       <AdminAppsSection
         initialApps={myApps}

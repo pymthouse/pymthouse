@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import MyAppsShortcutTiles from "@/components/apps/MyAppsShortcutTiles";
+import McpClientsSection from "@/components/mcp/McpClientsSection";
 
 /**
  * My Apps home for explorers who have not created a provider app yet.
@@ -18,6 +19,8 @@ export default function ExplorerHome() {
       </div>
 
       <MyAppsShortcutTiles />
+
+      <McpClientsSection />
 
       <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/20 p-6">
         <p className="text-sm font-medium text-zinc-200">Ready to ship a product?</p>

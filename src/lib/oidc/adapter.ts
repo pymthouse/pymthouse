@@ -48,7 +48,7 @@ export class PostgresOidcAdapter implements Adapter {
         model: this.model,
         payload: payloadJson,
         expiresAt,
-        uid: payload.uid ?? null,
+        uid: payload.uid ?? payload.jti ?? null,
         userCode: payload.userCode ?? null,
         grantId: payload.grantId ?? null,
         consumedAt: null,
@@ -58,7 +58,7 @@ export class PostgresOidcAdapter implements Adapter {
         set: {
           payload: payloadJson,
           expiresAt,
-          uid: payload.uid ?? null,
+          uid: payload.uid ?? payload.jti ?? null,
           userCode: payload.userCode ?? null,
           grantId: payload.grantId ?? null,
         },
@@ -117,7 +117,7 @@ export class PostgresOidcAdapter implements Adapter {
       .set({
         payload: payloadJson,
         expiresAt,
-        uid: payload.uid ?? null,
+        uid: payload.uid ?? payload.jti ?? null,
         userCode: payload.userCode ?? null,
         grantId: grantIdCol,
       })

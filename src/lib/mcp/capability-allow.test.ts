@@ -6,6 +6,8 @@ import {
   capabilityAllowKeys,
   filterAllowedCapabilities,
   isCapabilityAllowed,
+  isCapabilityExcluded,
+  partitionByExclusions,
 } from "@/lib/mcp/capability-allow";
 
 test("capabilityAllowKeys emits pipe and colon forms", () => {
@@ -167,4 +169,75 @@ test("canonicalizeCapability splits canonically and keeps legacy candidates", ()
   );
   assert.equal(canonicalizeCapability("   "), null);
   assert.equal(canonicalizeCapability(""), null);
+});
+
+test("partitionByExclusions permits everything when nothing is excluded", () => {
+  const requested = [
+    "streamdiffusion-sdxl",
+    "livepeer-example/flux-klein",
+    "some-brand-new/capability",
+  ];
+  assert.deepEqual(partitionByExclusions(requested, []), {
+    permitted: requested,
+    excluded: [],
+  });
+});
+
+test("partitionByExclusions permits capabilities absent from the catalog", () => {
+  // Regression: orchestrators advertise `streamdiffusion-sdxl` bare while the
+  // catalog spells it `live-video-to-video/streamdiffusion-sdxl`. A catalog gap
+  // is not a denial.
+  const { permitted, excluded } = partitionByExclusions(
+    ["streamdiffusion-sdxl"],
+    [{ pipeline: "transcode", modelId: "ffmpeg" }],
+  );
+  assert.deepEqual(permitted, ["streamdiffusion-sdxl"]);
+  assert.deepEqual(excluded, []);
+});
+
+test("partitionByExclusions blocks explicitly excluded capabilities", () => {
+  const { permitted, excluded } = partitionByExclusions(
+    ["transcode/ffmpeg", "livepeer-example/hello-world"],
+    [{ pipeline: "transcode", modelId: "ffmpeg" }],
+  );
+  assert.deepEqual(permitted, ["livepeer-example/hello-world"]);
+  assert.deepEqual(excluded, ["transcode/ffmpeg"]);
+});
+
+test("partitionByExclusions catches legacy spellings and wildcards", () => {
+  const excludedManifest = [
+    { pipeline: "transcode", modelId: "ffmpeg" },
+    { pipeline: "vllm", modelId: "*" },
+  ];
+  const { permitted, excluded } = partitionByExclusions(
+    [
+      "transcode|ffmpeg",
+      "transcode:ffmpeg",
+      "vllm/qwen3-coder-30b",
+      "livepeer-example/hello-world",
+    ],
+    excludedManifest,
+  );
+  assert.deepEqual(permitted, ["livepeer-example/hello-world"]);
+  assert.deepEqual(excluded, [
+    "transcode|ffmpeg",
+    "transcode:ffmpeg",
+    "vllm/qwen3-coder-30b",
+  ]);
+});
+
+test("partitionByExclusions returns the caller's original strings", () => {
+  const { permitted } = partitionByExclusions(
+    ["  livepeer-example/hello-world  "],
+    [{ pipeline: "transcode", modelId: "ffmpeg" }],
+  );
+  assert.deepEqual(permitted, ["  livepeer-example/hello-world  "]);
+});
+
+test("isCapabilityExcluded matches the same spellings as the allow side", () => {
+  const deny = capabilityAllowKeys([{ pipeline: "transcode", modelId: "ffmpeg" }]);
+  assert.equal(isCapabilityExcluded("transcode/ffmpeg", deny), true);
+  assert.equal(isCapabilityExcluded("transcode|ffmpeg", deny), true);
+  assert.equal(isCapabilityExcluded("transcode/av1", deny), false);
+  assert.equal(isCapabilityExcluded("   ", deny), false);
 });

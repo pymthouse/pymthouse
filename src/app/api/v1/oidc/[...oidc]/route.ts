@@ -7,9 +7,24 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/oidc/provider";
+import { buildOpenIdProviderDiscovery } from "@/lib/oidc/as-metadata";
+import {
+  isTrustedOidcWarmRequest,
+  warmOidcPageIsolates,
+  warmOidcProvider,
+} from "@/lib/oidc/warm";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import { normalizeProviderPath } from "@/lib/oidc/routes";
+import {
+  consumeDcrRegistrationSlot,
+  dcrRegistrationClientKey,
+} from "@/lib/oidc/dcr-rate-limit";
+import {
+  handleOidcInteractionGet,
+  handleOidcInteractionPost,
+  parseOidcInteractionUid,
+} from "@/lib/oidc/interaction-api";
 import {
   OIDC_MOUNT_PATH,
   getIssuer,
@@ -21,7 +36,7 @@ import {
 import { deviceAuthVerificationUris } from "@/lib/oidc/third-party-initiate-login";
 import { isVerifiedCustomDomain } from "@/lib/oidc/custom-domains";
 import { getSecureHeaders } from "@/lib/oidc/security";
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins, reencodeOAuthRedirectLocation } from "./utils";
 import { isTokenExchangeGrant, handleTokenExchange, TokenExchangeError } from "@/lib/oidc/token-exchange";
 import {
   handleGatewayTokenExchange,
@@ -96,12 +111,6 @@ function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
  * node-oidc-provider (a Koa app) expects, then convert the result back.
  */
 async function handleOIDC(request: NextRequest): Promise<NextResponse> {
-  const provider = await getProvider();
-  const registeredRedirectOriginsList = await getRegisteredRedirectOrigins();
-  const trustedOidcOriginsSet = await getTrustedOidcOrigins();
-
-  // Build the path relative to the OIDC mount point.
-  // The provider is mounted at /api/v1/oidc, so strip that prefix.
   const url = new URL(request.url);
   const mountPath = OIDC_MOUNT_PATH;
   let path = url.pathname;
@@ -109,12 +118,53 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
     path = path.slice(mountPath.length) || "/";
   }
 
-  // Alias legacy paths to node-oidc-provider routes.
   const normalizedPath = normalizeProviderPath(path);
   if (DEBUG_OIDC_LOGS && normalizedPath !== path) {
     console.info("[OIDC] route alias", { from: path, to: normalizedPath });
   }
   path = normalizedPath;
+
+  if (request.method === "POST" && path === "/reg") {
+    const clientKey = dcrRegistrationClientKey(request.headers);
+    if (!consumeDcrRegistrationSlot(clientKey)) {
+      return NextResponse.json(
+        {
+          error: "slow_down",
+          error_description: "Too many dynamic client registrations from this address",
+        },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+  }
+
+  if (
+    request.method === "GET" &&
+    (path === "/.well-known/openid-configuration" ||
+      path === "/.well-known/oauth-authorization-server")
+  ) {
+    return NextResponse.json(buildOpenIdProviderDiscovery(), {
+      headers: {
+        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+        "Content-Type": "application/json",
+      },
+    });
+  }
+
+  if (request.method === "GET" && path === "/warm") {
+    if (!isTrustedOidcWarmRequest(request.headers)) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const warmed = await warmOidcProvider();
+    const pages = await warmOidcPageIsolates();
+    return NextResponse.json(
+      { ...warmed, pages },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  const provider = await getProvider();
+  const registeredRedirectOriginsList = await getRegisteredRedirectOrigins();
+  const trustedOidcOriginsSet = await getTrustedOidcOrigins();
 
   // Create a Node.js IncomingMessage from the NextRequest
   let body = request.body ? Buffer.from(await request.arrayBuffer()) : null;
@@ -453,10 +503,36 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             ...registeredRedirectOriginsList,
             ...trustedOidcOriginsSet,
           ]);
-          const redirectResponse = NextResponse.redirect(
-            resolveRedirectLocation(location, externalOrigin, allowedOrigins),
-            statusCode as 301 | 302 | 303 | 307 | 308,
-          );
+          let redirectUrl: URL;
+          try {
+            redirectUrl = resolveRedirectLocation(
+              location,
+              externalOrigin,
+              allowedOrigins,
+            );
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Redirect blocked";
+            resolve(
+              NextResponse.json(
+                { error: "invalid_redirect_uri", error_description: message },
+                { status: 400 },
+              ),
+            );
+            return originalEnd(chunk, ...args);
+          }
+
+          const locationHeader = /^(https?|cursor):\/\//i.test(location.trim())
+            ? (/^https?:\/\//i.test(location.trim())
+              ? reencodeOAuthRedirectLocation(location)
+              : location)
+            : reencodeOAuthRedirectLocation(redirectUrl.href);
+          const redirectResponse = new NextResponse(null, {
+            status: statusCode as 301 | 302 | 303 | 307 | 308,
+            headers: {
+              Location: locationHeader,
+            },
+          });
           const setCookies = rawHeaders["set-cookie"];
           if (setCookies) {
             const cookies = Array.isArray(setCookies) ? setCookies : [setCookies];
@@ -554,11 +630,28 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
   });
 }
 
+function interactionUidFromRequest(request: NextRequest): string | null {
+  const url = new URL(request.url);
+  let path = url.pathname;
+  if (path.startsWith(OIDC_MOUNT_PATH)) {
+    path = path.slice(OIDC_MOUNT_PATH.length) || "/";
+  }
+  return parseOidcInteractionUid(normalizeProviderPath(path));
+}
+
 export async function GET(request: NextRequest) {
+  const uid = interactionUidFromRequest(request);
+  if (uid) {
+    return handleOidcInteractionGet(request, uid);
+  }
   return handleOIDC(request);
 }
 
 export async function POST(request: NextRequest) {
+  const uid = interactionUidFromRequest(request);
+  if (uid) {
+    return handleOidcInteractionPost(request, uid);
+  }
   return handleOIDC(request);
 }
 

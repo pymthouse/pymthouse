@@ -5,17 +5,19 @@ import { authenticateAppClient } from "@/lib/auth";
 import { authenticateEndUser } from "@/lib/auth/end-user";
 import { extractBearerToken } from "@/lib/mcp/config";
 import {
-  resolveSubjectAccessToken,
+  resolveMcpAccessToken,
   SubjectAccessTokenResolveError,
 } from "@/lib/oidc/resolve-subject-access-token";
 import { resolveLinkedM2mApp } from "@/lib/oidc/mint-user-signer-token";
 
 export type McpPrincipal = {
   /** How the caller authenticated to Livepeer MCP. */
-  kind: "api_key" | "jwt" | "m2m";
+  kind: "api_key" | "jwt" | "m2m" | "mcp_oauth";
   publicClientId: string;
   developerAppId: string;
   externalUserId: string;
+  /** Space-delimited OAuth scopes. Set for MCP resource tokens. */
+  scope?: string;
   /**
    * Bearer subject for RFC 8693 exchange (API key / user JWT).
    * Empty for M2M Basic — session mint uses owner identity directly.
@@ -87,13 +89,17 @@ export async function resolveMcpPrincipal(
   }
 
   try {
-    const resolved = await resolveSubjectAccessToken(bearer);
+    const resolved = await resolveMcpAccessToken(bearer);
     return {
-      kind: "jwt",
+      kind: "mcp_oauth",
       publicClientId: resolved.publicClientId,
       developerAppId: resolved.developerAppId,
       externalUserId: resolved.externalUserId,
-      subjectToken: bearer,
+      subjectToken: "",
+      scope:
+        typeof resolved.payload.scope === "string"
+          ? resolved.payload.scope
+          : "",
     };
   } catch (err) {
     if (err instanceof SubjectAccessTokenResolveError) {

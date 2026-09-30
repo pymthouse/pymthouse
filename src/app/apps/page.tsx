@@ -18,6 +18,7 @@ import {
 } from "@/lib/onboarding";
 import ExplorerHome from "@/components/onboarding/ExplorerHome";
 import CompleteSetupBanner from "@/components/onboarding/CompleteSetupBanner";
+import McpClientsSection from "@/components/mcp/McpClientsSection";
 
 function myAppsSummaryText(count: number): string {
   if (count === 0) return "No apps yet — create one to get started.";
@@ -98,6 +99,8 @@ async function DeveloperMyApps({
       {(showSetupBanner || incompleteBuilder) && <CompleteSetupBanner />}
 
       <MyAppsShortcutTiles />
+
+      <McpClientsSection />
 
       <AppsListSection
         apps={apps}

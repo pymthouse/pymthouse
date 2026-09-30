@@ -50,6 +50,23 @@ test("checkAppAccess allows public, m2m, and web sibling client ids", async (t) 
   assert.equal(unknown.reason, "Client not found");
 });
 
+test("checkAppAccess allows open DCR client ids", async () => {
+  const result = await checkAppAccess("dcr_abcdef0123456789", null);
+  assert.equal(result.allowed, true);
+  assert.equal(result.dynamicClient, true);
+});
+
+test("checkAppAccess allows CIMD and catalog static MCP clients", async () => {
+  const cimd = await checkAppAccess(
+    "https://claude.ai/oauth/mcp-oauth-client-metadata",
+    null,
+  );
+  assert.equal(cimd.allowed, true);
+  const cursor = await checkAppAccess("mcp_cursor", null);
+  assert.equal(cursor.allowed, true);
+  assert.equal(cursor.dynamicClient, true);
+});
+
 test("checkAppAccess rejects oidc row with no developer app link", async (t) => {
   const orphanId = `web_orphan_${Date.now().toString(16)}`;
   await db.insert(oidcClients).values({

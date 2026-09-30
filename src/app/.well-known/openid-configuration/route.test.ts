@@ -8,7 +8,7 @@ test("discovery metadata advertises implemented endpoints", async () => {
   const response = await GET();
   assert.equal(response.status, 200);
 
-  const payload = await response.json() as Record<string, string | string[]>;
+  const payload = await response.json() as Record<string, unknown>;
   const issuer = payload.issuer as string;
   assert.equal(payload.authorization_endpoint, `${issuer}${PROVIDER_ENDPOINT_PATHS.authorization}`);
   assert.equal(payload.token_endpoint, `${issuer}${PROVIDER_ENDPOINT_PATHS.token}`);
@@ -17,6 +17,9 @@ test("discovery metadata advertises implemented endpoints", async () => {
   assert.equal(payload.introspection_endpoint, `${issuer}${PROVIDER_ENDPOINT_PATHS.introspection}`);
   assert.equal(payload.revocation_endpoint, `${issuer}${PROVIDER_ENDPOINT_PATHS.revocation}`);
   assert.equal(payload.end_session_endpoint, `${issuer}${PROVIDER_ENDPOINT_PATHS.endSession}`);
+  assert.equal(payload.registration_endpoint, `${issuer}/reg`);
+  assert.equal(payload.client_id_metadata_document_supported, true);
   assert.ok((payload.scopes_supported as string[]).includes("sign:job"));
+  assert.ok((payload.code_challenge_methods_supported as string[]).includes("S256"));
   assert.ok(!(payload.claims_supported as string[]).includes("gateway"));
 });

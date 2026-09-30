@@ -10,6 +10,7 @@ function grantCtx(overrides: {
   clientId?: string;
   accountId?: string;
   found?: { accountId: string; clientId: string } | null;
+  foundIfIgnoreExpiration?: { accountId: string; clientId: string; jti?: string };
 }) {
   const clientId = overrides.clientId ?? "web_customer_service";
   return {
@@ -25,8 +26,16 @@ function grantCtx(overrides: {
       },
       provider: {
         Grant: {
-          find: async (id: string) => {
-            if (overrides.found === null) return undefined;
+          find: async (
+            id: string,
+            opts?: { ignoreExpiration?: boolean },
+          ) => {
+            if (overrides.found === null) {
+              if (opts?.ignoreExpiration && overrides.foundIfIgnoreExpiration) {
+                return overrides.foundIfIgnoreExpiration;
+              }
+              return undefined;
+            }
             if (overrides.found) return overrides.found;
             return {
               accountId: overrides.accountId ?? "acct",
@@ -39,6 +48,22 @@ function grantCtx(overrides: {
     },
   } as never;
 }
+
+test("loadExistingGrant retries find with ignoreExpiration when verify rejects the row", async () => {
+  const grant = await loadExistingGrant(
+    grantCtx({
+      consentGrantId: "g_exp",
+      accountId: "acct",
+      found: null,
+      foundIfIgnoreExpiration: {
+        accountId: "acct",
+        clientId: "web_customer_service",
+        jti: "g_exp",
+      },
+    }),
+  );
+  assert.equal((grant as { jti?: string })?.jti, "g_exp");
+});
 
 test("loadExistingGrant prefers consent grantId and does not require session", async () => {
   const grant = await loadExistingGrant(
@@ -57,6 +82,18 @@ test("loadExistingGrant returns undefined when session is missing", async () => 
   ctx.oidc.session = undefined;
   const grant = await loadExistingGrant(ctx as never);
   assert.equal(grant, undefined);
+});
+
+test("loadExistingGrant fills missing accountId so the provider will not throw mismatch", async () => {
+  const grant = await loadExistingGrant(
+    grantCtx({
+      consentGrantId: "g_partial",
+      accountId: "acct",
+      found: { accountId: "", clientId: "" } as { accountId: string; clientId: string },
+    }),
+  );
+  assert.equal((grant as { accountId?: string })?.accountId, "acct");
+  assert.equal((grant as { clientId?: string })?.clientId, "web_customer_service");
 });
 
 test("loadExistingGrant ignores grants for a different account instead of throwing", async () => {

@@ -1,15 +1,11 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
-import { appUsers, developerApps, users } from "@/db/schema";
+import { developerApps, users } from "@/db/schema";
 import { createAppUserApiKey } from "@/lib/app-api-keys";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
-import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
-import {
-  ensurePlatformDefaultApp,
-  resolvePlatformDefaultClientId,
-} from "@/lib/platform-default-app";
+import { ensurePlatformDefaultAppUser } from "@/lib/mcp/platform-default-member";
+import { resolvePlatformDefaultClientId } from "@/lib/platform-default-app";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export type OnboardingPersona = "explorer" | "builder";
@@ -142,56 +138,15 @@ export async function mintDefaultAppNetworkKey(input: {
   sdkToken: string | null;
   correlationId: string;
 }> {
-  const { clientId } = await ensurePlatformDefaultApp();
-  const externalUserId = input.userId;
-  const now = new Date().toISOString();
-
-  const appRows = await db
-    .select({ id: developerApps.id })
-    .from(developerApps)
-    .where(eq(developerApps.id, clientId))
-    .limit(1);
-  const developerAppId = appRows[0]?.id;
-  if (!developerAppId) {
-    throw new Error("Platform default app is missing");
-  }
-
-  const newUser = {
-    id: uuidv4(),
-    clientId: developerAppId,
-    externalUserId,
-    email: input.email?.trim() || null,
-    status: "active",
-    role: "user",
-    createdAt: now,
-  };
-
-  const upserted = await db
-    .insert(appUsers)
-    .values(newUser)
-    .onConflictDoUpdate({
-      target: [appUsers.clientId, appUsers.externalUserId],
-      set: {
-        status: "active",
-        role: "user",
-        ...(input.email != null ? { email: input.email.trim() || null } : {}),
-      },
-    })
-    .returning();
-  const appUser = upserted[0] ?? newUser;
-
-  try {
-    await provisionAppUserBilling({
-      clientId: developerAppId,
-      externalUserId,
-    });
-  } catch (err) {
-    console.error("Network key billing provision failed:", err);
-  }
+  const member = await ensurePlatformDefaultAppUser({
+    userId: input.userId,
+    email: input.email,
+  });
+  const { clientId, developerAppId, externalUserId, appUserId } = member;
 
   const created = await createAppUserApiKey({
     developerAppId,
-    appUserId: appUser.id,
+    appUserId,
     label: input.label?.trim() || "network-signing-token",
   });
 

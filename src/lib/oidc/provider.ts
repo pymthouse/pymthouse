@@ -6,7 +6,7 @@
 
 import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
-import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
+import { consentPromptNeeded, promptIncludesConsent } from "@/lib/oidc/consent-prompt";
 import {
   oidcInteractionPath,
   redirectUrisForOidcClient,
@@ -21,6 +21,25 @@ import { parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
 import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-login";
+import {
+  applyMcpDcrRegistrationPolicy,
+  createDcrClientId,
+} from "./dcr-client";
+import { findMcpAppGrantBinding } from "./mcp-app-grant";
+import { redirectUrisMatch } from "./mcp-dynamic-redirects";
+import { isAllowedCimdClientId } from "./cimd";
+import { materializeCimdClient } from "./cimd-materialize";
+import {
+  isMcpCatalogStaticClientId,
+  isMcpOAuthPublicClientId,
+} from "@/lib/mcp/catalog";
+import { ensureMcpCatalogStaticClients } from "@/lib/mcp/catalog-static-clients";
+import {
+  getMcpResourceUrl,
+  isMcpResourceIndicator,
+  MCP_OAUTH_APP_CLAIM,
+  MCP_RESOURCE_SCOPES,
+} from "@/lib/mcp/oauth-resource";
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
 import { desc, eq, or } from "drizzle-orm";
@@ -35,6 +54,16 @@ const KEY_ALGORITHM = "RS256";
  * Credentials — never use a redirect_uri.
  */
 const REDIRECT_DEPENDENT_GRANTS = new Set(["authorization_code", "implicit"]);
+
+function normalizeTokenAudiences(aud: string | string[] | undefined): string[] {
+  if (Array.isArray(aud)) {
+    return aud;
+  }
+  if (typeof aud === "string") {
+    return [aud];
+  }
+  return [];
+}
 
 /**
  * Load JWKS from the `oidc_signing_keys` table.
@@ -124,6 +153,9 @@ async function loadClients(): Promise<ClientMetadata[]> {
       scope: toProviderScopeMetadata(row.allowedScopes, row.clientId),
     };
     meta.response_types = providerGrantTypes.includes("authorization_code") ? ["code"] : [];
+    if (isMcpCatalogStaticClientId(row.clientId)) {
+      meta.application_type = "native";
+    }
 
     if (row.clientSecretHash) {
       meta.client_secret = row.clientSecretHash;
@@ -188,6 +220,47 @@ function patchHashedClientSecretComparison(provider: Provider): void {
   clientPrototype.__pmthHashedSecretPatchApplied = true;
 }
 
+function patchMcpRedirectMatching(provider: Provider): void {
+  const clientPrototype = (
+    provider.Client as unknown as {
+      prototype?: {
+        redirectUriAllowed?: (value: string) => boolean;
+        redirectUris?: string[];
+        __pmthMcpRedirectPatchApplied?: boolean;
+      };
+    }
+  ).prototype;
+  if (!clientPrototype?.redirectUriAllowed) return;
+  if (clientPrototype.__pmthMcpRedirectPatchApplied) return;
+
+  const original = clientPrototype.redirectUriAllowed;
+  clientPrototype.redirectUriAllowed = function patchedRedirect(
+    this: { redirectUris?: string[] },
+    value: string,
+  ) {
+    if (original.call(this, value)) return true;
+    const registered = this.redirectUris ?? [];
+    return registered.some((uri) => redirectUrisMatch(uri, value));
+  };
+  clientPrototype.__pmthMcpRedirectPatchApplied = true;
+}
+
+function patchCimdClientLookup(provider: Provider): void {
+  const Client = provider.Client as unknown as {
+    find: (id: string) => Promise<unknown>;
+    __pmthCimdFindPatchApplied?: boolean;
+  };
+  if (Client.__pmthCimdFindPatchApplied) return;
+  const originalFind = Client.find.bind(Client);
+  Client.find = async function findWithCimd(id: string) {
+    if (isAllowedCimdClientId(id)) {
+      await materializeCimdClient(id);
+    }
+    return originalFind(id);
+  };
+  Client.__pmthCimdFindPatchApplied = true;
+}
+
 /**
  * Build the interaction policy with consent prompts for new scopes.
  */
@@ -213,6 +286,12 @@ function buildInteractionPolicy() {
               : undefined,
             findGrant: async (grantId) =>
               oidc.provider.Grant.find(grantId),
+            forceConsent: promptIncludesConsent(oidc.params?.prompt),
+            accountId: oidc.session?.accountId,
+            resource:
+              typeof oidc.params?.resource === "string"
+                ? oidc.params.resource
+                : null,
           });
           return needed ? Check.REQUEST_PROMPT : Check.NO_NEED_TO_PROMPT;
         },
@@ -299,6 +378,7 @@ export async function getProvider(): Promise<Provider> {
 
 async function buildProvider(): Promise<Provider> {
   const issuer = getIssuer();
+  await ensureMcpCatalogStaticClients();
   const [jwks, clients] = await Promise.all([loadJWKS(), loadClients()]);
 
   const configuration: Configuration = {
@@ -357,6 +437,7 @@ async function buildProvider(): Promise<Provider> {
       "openid",
       "email",
       "profile",
+      "offline_access",
       "sign:job",
       "users:read",
       "users:write",
@@ -383,22 +464,93 @@ async function buildProvider(): Promise<Provider> {
     // Support these auth methods
     clientAuthMethods: ["none", "client_secret_post", "client_secret_basic"],
 
-    // PKCE required for public clients
+    // PKCE S256 required for public clients (MCP CIMD / DCR / catalog).
     pkce: {
       required: (_ctx, client) => client.tokenEndpointAuthMethod === "none",
     },
 
+    extraParams: ["app_client_id"],
+
     // Rotate refresh tokens on use
     rotateRefreshToken: true,
 
-    // Always issue refresh tokens when refresh_token grant is allowed
+    // Registered Builder/device clients keep refresh tokens whenever the
+    // refresh_token grant is enabled. MCP public clients follow OIDC and only
+    // receive a refresh token when the grant includes offline_access.
     issueRefreshToken: async (_ctx, client, code) => {
       if (!client.grantTypeAllowed("refresh_token")) return false;
+      if (
+        isMcpOAuthPublicClientId(client.clientId) &&
+        code &&
+        typeof code.scopes?.has === "function"
+      ) {
+        return code.scopes.has("offline_access");
+      }
       return true;
+    },
+
+    extraClientMetadata: {
+      properties: ["pymthouse_dcr"],
+      validator(ctx, _key, _value, metadata) {
+        applyMcpDcrRegistrationPolicy(
+          ctx,
+          metadata as unknown as Record<string, unknown>,
+        );
+      },
+    },
+
+    extraTokenClaims: async (_ctx, token) => {
+      const tokenRecord = token as {
+        grantId?: string;
+        aud?: string | string[];
+        resourceServer?: { audience?: string };
+        clientId?: string;
+      };
+      const grantId =
+        typeof tokenRecord.grantId === "string" ? tokenRecord.grantId : undefined;
+      if (!grantId) return undefined;
+
+      const audiences = normalizeTokenAudiences(tokenRecord.aud);
+      const resourceServerAud =
+        typeof tokenRecord.resourceServer?.audience === "string"
+          ? tokenRecord.resourceServer.audience
+          : undefined;
+      const mcpUrl = getMcpResourceUrl();
+      const isMcp =
+        audiences.some((a) => typeof a === "string" && isMcpResourceIndicator(a)) ||
+        (resourceServerAud !== undefined &&
+          isMcpResourceIndicator(resourceServerAud)) ||
+        (typeof tokenRecord.aud === "string" && tokenRecord.aud === mcpUrl) ||
+        (typeof tokenRecord.clientId === "string" &&
+          isMcpOAuthPublicClientId(tokenRecord.clientId));
+
+      if (!isMcp) return undefined;
+
+      const binding = await findMcpAppGrantBinding(grantId);
+      if (!binding) return undefined;
+      return { [MCP_OAUTH_APP_CLAIM]: binding.publicClientId };
     },
 
     features: {
       devInteractions: { enabled: false },
+      registration: {
+        enabled: true,
+        initialAccessToken: false,
+        idFactory: () => createDcrClientId(),
+        issueRegistrationAccessToken: false,
+      },
+      registrationManagement: {
+        enabled: false,
+        rotateRegistrationAccessToken: true,
+      },
+      clientIdMetadataDocument: {
+        enabled: true,
+        ack: "draft-02",
+        async allowFetch(_ctx, clientId) {
+          return isAllowedCimdClientId(clientId);
+        },
+        cacheDuration: { min: 60, max: 60 },
+      },
       clientCredentials: { enabled: true },
       deviceFlow: {
         enabled: true,
@@ -442,6 +594,18 @@ async function buildProvider(): Promise<Provider> {
           return issuer;
         },
         getResourceServerInfo: async (_ctx, resourceIndicator, _client) => {
+          if (isMcpResourceIndicator(resourceIndicator)) {
+            const mcp = getMcpResourceUrl();
+            return {
+              scope: MCP_RESOURCE_SCOPES.join(" "),
+              audience: mcp,
+              accessTokenFormat: "jwt" as const,
+              accessTokenTTL: 3600,
+              jwt: {
+                sign: { alg: "RS256" as const },
+              },
+            };
+          }
           if (resourceIndicator !== issuer) {
             throw new oidcErrors.InvalidTarget(
               `Unknown resource indicator: ${resourceIndicator}`,
@@ -526,6 +690,8 @@ async function buildProvider(): Promise<Provider> {
 
   _provider = new Provider(issuer, configuration);
   patchHashedClientSecretComparison(_provider);
+  patchMcpRedirectMatching(_provider);
+  patchCimdClientLookup(_provider);
   _provider.on("server_error", (ctx, err) => {
     const clientId = (ctx as { oidc?: { client?: { clientId?: string } } })
       .oidc?.client?.clientId;

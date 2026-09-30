@@ -102,21 +102,29 @@ export function canonicalizeCapability(
   };
 }
 
-export function isCapabilityAllowed(
+/**
+ * Does `capability` match any key in `keys`?
+ *
+ * Separator- and wildcard-aware, and direction-agnostic: the same matching
+ * powers the inclusion check (`isCapabilityAllowed`) and the exclusion check
+ * (`isCapabilityExcluded`), so a capability spelled in a legacy form is caught
+ * by an exclusion exactly as reliably as it would be by an allow entry.
+ */
+function capabilityMatchesKeys(
   capability: string,
-  allow: Set<string>,
+  keys: Set<string>,
 ): boolean {
   const canonical = canonicalizeCapability(capability);
   if (!canonical) return false;
 
   // 1. Literal request string. Covers slash, bare-token, `|` and `:` spellings,
   //    including capability names that legitimately contain colons.
-  if (allow.has(canonical.raw)) return true;
+  if (keys.has(canonical.raw)) return true;
 
   // 2. Canonical split re-spelled into the other separators, so a slash request
   //    still resolves against a manifest key stored in a legacy spelling.
   for (const sep of SEPARATORS) {
-    if (allow.has(`${canonical.pipeline}${sep}${canonical.modelId}`)) {
+    if (keys.has(`${canonical.pipeline}${sep}${canonical.modelId}`)) {
       return true;
     }
   }
@@ -124,11 +132,58 @@ export function isCapabilityAllowed(
   // 3. Wildcard manifest rows (`modelId: "*"`), last so literals always win.
   for (const pipeline of canonical.pipelineCandidates) {
     for (const sep of SEPARATORS) {
-      if (allow.has(`${pipeline}${sep}${CAPABILITY_WILDCARD}`)) return true;
+      if (keys.has(`${pipeline}${sep}${CAPABILITY_WILDCARD}`)) return true;
     }
   }
 
   return false;
+}
+
+/** Inclusion check against manifest allow keys. */
+export function isCapabilityAllowed(
+  capability: string,
+  allow: Set<string>,
+): boolean {
+  return capabilityMatchesKeys(capability, allow);
+}
+
+/** Exclusion check against the app's `excludedCapabilities` keys. */
+export function isCapabilityExcluded(
+  capability: string,
+  deny: Set<string>,
+): boolean {
+  return capabilityMatchesKeys(capability, deny);
+}
+
+/**
+ * Split requested capabilities by the app's exclusions — the fail-open gate.
+ *
+ * Discovery limits capabilities; it does not grant them. Anything the app has
+ * not explicitly excluded is permitted, including capabilities absent from the
+ * resolved catalog: orchestrators advertise names the catalog does not always
+ * enumerate (bare `streamdiffusion-sdxl` vs catalog
+ * `live-video-to-video/streamdiffusion-sdxl`), and a catalog gap must not read
+ * as a denial.
+ *
+ * CONTRACT: both arrays hold the caller's ORIGINAL strings, unmodified — the
+ * discovery-service `QueryResponse.results` map is keyed by the exact request
+ * string.
+ */
+export function partitionByExclusions(
+  requested: string[],
+  excludedCapabilities: ManifestCapability[],
+): { permitted: string[]; excluded: string[] } {
+  const deny = capabilityAllowKeys(excludedCapabilities);
+  if (deny.size === 0) return { permitted: [...requested], excluded: [] };
+
+  const permitted: string[] = [];
+  const excluded: string[] = [];
+  for (const capability of requested) {
+    (isCapabilityExcluded(capability, deny) ? excluded : permitted).push(
+      capability,
+    );
+  }
+  return { permitted, excluded };
 }
 
 /**
