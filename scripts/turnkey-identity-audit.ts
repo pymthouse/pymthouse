@@ -41,26 +41,29 @@ function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
+async function listSubOrgPage(
+  client: ReturnType<typeof getTurnkeyServerApiClient>,
+  after: string | undefined,
+  page: number,
+): Promise<string[]> {
+  if (page >= 100) return [];
+  const result = await client.getSubOrgIds({
+    organizationId: PARENT_ORG_ID,
+    paginationOptions: {
+      limit: "100",
+      ...(after ? { after } : {}),
+    },
+  });
+  const batch = result.organizationIds ?? [];
+  if (batch.length === 0 || batch.length < 100) return batch;
+  const rest = await listSubOrgPage(client, batch.at(-1), page + 1);
+  return batch.concat(rest);
+}
+
 async function listSubOrgIds(
   client: ReturnType<typeof getTurnkeyServerApiClient>,
 ): Promise<string[]> {
-  const ids: string[] = [];
-  let after: string | undefined;
-  for (let page = 0; page < 100; page += 1) {
-    const result = await client.getSubOrgIds({
-      organizationId: PARENT_ORG_ID,
-      paginationOptions: {
-        limit: "100",
-        ...(after ? { after } : {}),
-      },
-    });
-    const batch = result.organizationIds ?? [];
-    if (batch.length === 0) break;
-    ids.push(...batch);
-    if (batch.length < 100) break;
-    after = batch.at(-1);
-  }
-  return ids;
+  return listSubOrgPage(client, undefined, 0);
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -69,23 +72,25 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
-async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("Resource exhausted") && !message.includes("error 8")) {
-        throw err;
-      }
-      const waitMs = 1500 * (attempt + 1);
-      console.warn(`${label}: rate-limited, retrying in ${waitMs}ms`);
-      await sleep(waitMs);
-    }
+function isRateLimited(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("Resource exhausted") || message.includes("error 8");
+}
+
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempt = 0,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isRateLimited(err) || attempt >= 4) throw err;
+    const waitMs = 1500 * (attempt + 1);
+    console.warn(`${label}: rate-limited, retrying in ${waitMs}ms`);
+    await sleep(waitMs);
+    return withRetry(label, fn, attempt + 1);
   }
-  throw lastError;
 }
 
 async function inspectSubOrg(
@@ -110,6 +115,15 @@ async function inspectSubOrg(
   };
 }
 
+async function* inspectSubOrgs(
+  client: ReturnType<typeof getTurnkeyServerApiClient>,
+  organizationIds: string[],
+): AsyncGenerator<SubOrgRecord> {
+  for (const organizationId of organizationIds) {
+    yield inspectSubOrg(client, organizationId);
+  }
+}
+
 async function main(): Promise<void> {
   if (!PARENT_ORG_ID) {
     throw new Error("Missing TURNKEY_ORG_ID / NEXT_PUBLIC_ORGANIZATION_ID");
@@ -118,8 +132,8 @@ async function main(): Promise<void> {
   const client = getTurnkeyServerApiClient();
   const subOrgIds = await listSubOrgIds(client);
   const records: SubOrgRecord[] = [];
-  for (const organizationId of subOrgIds) {
-    records.push(await inspectSubOrg(client, organizationId));
+  for await (const record of inspectSubOrgs(client, subOrgIds)) {
+    records.push(record);
   }
 
   const emailOnly = records.filter((r) => r.email && r.oauthCount === 0);
@@ -182,9 +196,14 @@ async function main(): Promise<void> {
       to: nextEmail,
       turnkeyUserId: row.turnkeyUserId,
     });
-    if (apply) {
-      await db.update(users).set({ email: nextEmail }).where(eq(users.id, row.id));
-    }
+  }
+
+  if (apply) {
+    await Promise.all(
+      updates.map((update) =>
+        db.update(users).set({ email: update.to }).where(eq(users.id, update.id)),
+      ),
+    );
   }
 
   console.log(
