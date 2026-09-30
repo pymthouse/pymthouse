@@ -6,7 +6,9 @@ import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 import { normalizeTurnkeyEmail } from "@/lib/turnkey";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import {
+  openWalletConfirm,
   sealWalletOtp,
+  WALLET_CONFIRM_COOKIE,
   WALLET_OTP_COOKIE,
   walletOtpCookieOptions,
 } from "@/lib/turnkey-wallet-handoff";
@@ -34,9 +36,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   const obj = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
-  const email = normalizeTurnkeyEmail(typeof obj.email === "string" ? obj.email : "");
-  const publicKey = typeof obj.publicKey === "string" ? obj.publicKey.trim() : "";
-  if (!email || !email.includes("@") || !/^[0-9a-fA-F]{66,130}$/.test(publicKey)) {
+  const confirmed = obj.confirm === true
+    ? openWalletConfirm(request.cookies.get(WALLET_CONFIRM_COOKIE)?.value)
+    : null;
+  if (obj.confirm === true && !confirmed) {
+    return NextResponse.json({ error: "This sign-in expired. Start again." }, { status: 400 });
+  }
+  const email = normalizeTurnkeyEmail(
+    confirmed?.email ?? (typeof obj.email === "string" ? obj.email : ""),
+  );
+  const publicKey = (confirmed?.publicKey ?? (typeof obj.publicKey === "string" ? obj.publicKey : "")).trim();
+  const callbackUrl = confirmed?.callbackUrl ?? (typeof obj.callbackUrl === "string" ? obj.callbackUrl : null);
+  if (!email || !email.includes("@") || email.endsWith("@turnkey.local") || !/^[0-9a-fA-F]{66,130}$/.test(publicKey)) {
     return NextResponse.json({ error: "A valid email and session key are required." }, { status: 400 });
   }
   const organizationId = parentOrganizationId();
@@ -71,7 +82,7 @@ export async function POST(request: NextRequest) {
       otpEncryptionTargetBundle: init.otpEncryptionTargetBundle,
       email,
       publicKey,
-      callbackUrl: safeCallbackUrl(typeof obj.callbackUrl === "string" ? obj.callbackUrl : null),
+      callbackUrl: safeCallbackUrl(callbackUrl),
     }),
     walletOtpCookieOptions(),
   );

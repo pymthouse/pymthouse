@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  brandedSignInIdentity,
   oauthProviderIdForMethod,
   signInMethodStatuses,
 } from "@/lib/turnkey-sign-in-methods";
@@ -78,5 +79,40 @@ describe("oauthProviderIdForMethod", () => {
     assert.equal(oauthProviderIdForMethod(providers, "github"), "gh-1");
     assert.equal(oauthProviderIdForMethod(providers, "discord"), null);
     assert.equal(oauthProviderIdForMethod(providers, "email"), null);
+  });
+});
+
+describe("brandedSignInIdentity", () => {
+  it("prefers a Discord subject and strips the GitHub prefix", () => {
+    assert.deepEqual(
+      brandedSignInIdentity(
+        [
+          { providerName: "Google", subject: "google-sub" },
+          {
+            providerName: "Discord",
+            issuer: "http://oidc.turnkey.com/",
+            subject: "1526339011935998002",
+          },
+        ],
+        "Ada",
+      ),
+      { provider: "discord", label: "Discord", userId: "1526339011935998002" },
+    );
+    assert.deepEqual(
+      brandedSignInIdentity(
+        [{ providerName: "GitHub", subject: "github:4242" }],
+        "Ada",
+      ),
+      { provider: "github", label: "GitHub", userId: "4242" },
+    );
+  });
+
+  it("falls back to the account name when no social provider is present", () => {
+    assert.deepEqual(brandedSignInIdentity([], "Ada"), {
+      provider: "wallet",
+      label: "Account",
+      userId: "Ada",
+    });
+    assert.equal(brandedSignInIdentity([], "  "), null);
   });
 });

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/next-auth-options";
+import { loadVerifyEmailPrompt } from "@/lib/verify-email-prompt";
 import { VerifyEmailForm } from "./verify-email-form";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ export default async function VerifyEmailPage() {
   if (email && !email.endsWith("@turnkey.local")) {
     redirect("/onboarding");
   }
+  const prompt = await loadVerifyEmailPrompt(user.id);
   return (
     <Suspense
       fallback={
@@ -22,7 +24,7 @@ export default async function VerifyEmailPage() {
         </div>
       }
     >
-      <VerifyEmailForm />
+      <VerifyEmailForm identity={prompt.identity} email={prompt.email} />
     </Suspense>
   );
 }

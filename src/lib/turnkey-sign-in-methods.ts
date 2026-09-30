@@ -20,7 +20,61 @@ type OauthProviderLike = {
   providerId?: string | null;
   providerName?: string | null;
   issuer?: string | null;
+  subject?: string | null;
 };
+
+export type BrandedSignIn = {
+  provider: "google" | "github" | "discord" | "wallet";
+  label: string;
+  userId: string;
+};
+
+const BRANDED_PROVIDER_LABELS = {
+  google: "Google",
+  github: "GitHub",
+  discord: "Discord",
+} as const;
+
+function providerMatches(
+  id: keyof typeof BRANDED_PROVIDER_LABELS,
+  provider: OauthProviderLike,
+): boolean {
+  if (id === "google") return hasGoogleOauthProvider([provider]);
+  if (id === "github") return hasGithubOauthProvider([provider]);
+  return hasDiscordOauthProvider([provider]);
+}
+
+function visibleSubject(
+  provider: keyof typeof BRANDED_PROVIDER_LABELS,
+  subject: string,
+): string {
+  if (provider === "github" && subject.toLowerCase().startsWith("github:")) {
+    return subject.slice("github:".length);
+  }
+  return subject;
+}
+
+/** Provider mark plus the id that provider uses for this person. */
+export function brandedSignInIdentity(
+  providers: OauthProviderLike[] | null | undefined,
+  fallbackName?: string | null,
+): BrandedSignIn | null {
+  for (const providerId of ["discord", "google", "github"] as const) {
+    const match = (providers ?? []).find((provider) => providerMatches(providerId, provider));
+    if (!match) continue;
+    const raw = match.subject?.trim() ?? "";
+    const userId = raw ? visibleSubject(providerId, raw) : (fallbackName?.trim() ?? "");
+    if (!userId) continue;
+    return {
+      provider: providerId,
+      label: BRANDED_PROVIDER_LABELS[providerId],
+      userId,
+    };
+  }
+  const name = fallbackName?.trim();
+  if (!name) return null;
+  return { provider: "wallet", label: "Account", userId: name };
+}
 
 type TurnkeyUserLike = {
   userEmail?: string | null;
