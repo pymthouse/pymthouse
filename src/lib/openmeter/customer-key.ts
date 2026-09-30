@@ -103,8 +103,20 @@ export function isEndUserCustomerKey(key: string): boolean {
 }
 
 /**
+ * `end_users.id` is always a UUID. A subject that only starts with `eu_` or
+ * `sbx_eu_` (for example `eu_billing_1`) is an integrator id, not a payer key.
+ */
+const END_USER_ROW_ID_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isEndUserRowId(id: string): boolean {
+  return END_USER_ROW_ID_UUID.test(id.trim());
+}
+
+/**
  * Strip `sbx_` / `eu_` prefixes to the `end_users.id`, or null when not an
- * end-user key.
+ * end-user key. The suffix is not required to be a UUID — callers that remap
+ * payer keys must check {@link isEndUserRowId} before touching the database.
  */
 export function parseEndUserCustomerKey(key: string): string | null {
   const trimmed = key.trim();

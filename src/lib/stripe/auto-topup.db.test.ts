@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import nodeTest from "node:test";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
@@ -114,4 +115,43 @@ test("resolveAppUserExternalIdFromCustomerKey maps eu_ keys to the integrator id
     await resolveAppUserExternalIdFromCustomerKey("eu_missing-row"),
     "eu_missing-row",
   );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey("eu_billing_1"),
+    "eu_billing_1",
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey("eu_tenant"),
+    "eu_tenant",
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey("sbx_eu_tenant"),
+    "sbx_eu_tenant",
+  );
+  const missingId = randomUUID();
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey(`eu_${missingId}`),
+    `eu_${missingId}`,
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey(`sbx_eu_${missingId}`),
+    `sbx_eu_${missingId}`,
+  );
 });
+
+nodeTest(
+  "resolveAppUserExternalIdFromCustomerKey skips non-uuid prefixes without a database",
+  async () => {
+    assert.equal(
+      await resolveAppUserExternalIdFromCustomerKey("eu_billing_1"),
+      "eu_billing_1",
+    );
+    assert.equal(
+      await resolveAppUserExternalIdFromCustomerKey("  eu_tenant  "),
+      "eu_tenant",
+    );
+    assert.equal(
+      await resolveAppUserExternalIdFromCustomerKey("sbx_eu_billing_1"),
+      "sbx_eu_billing_1",
+    );
+  },
+);
