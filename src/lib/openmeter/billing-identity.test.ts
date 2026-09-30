@@ -30,6 +30,10 @@ import {
   isSandboxEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import {
+  __readStarterPlaneIdentityProbeForTests,
+  ensureStarterSubscriptionForAppUser,
+} from "@/lib/openmeter/starter-subscription";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -406,6 +410,110 @@ test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
   assert.deepEqual(billingSubjectClaim(identity), {
     billing_subject_key: identity.payerCustomerKey,
   });
+});
+
+test("stripeLivemode override credits the payment plane after a switch", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  // Active plane is live, but a sandbox Connect webhook must still resolve
+  // sbx_eu_ so prepaid credits do not land on the live wallet.
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(isSandboxEndUserCustomerKey(live.payerCustomerKey), false);
+
+  resetBillingIdentityCache();
+  const sandboxSettle = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    stripeLivemode: false,
+  });
+  assert.equal(
+    sandboxSettle.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(sandboxSettle.actorEndUserId),
+  );
+  assert.equal(sandboxSettle.actorEndUserId, live.actorEndUserId);
+  assert.notEqual(sandboxSettle.payerCustomerKey, live.payerCustomerKey);
+});
+
+test("starter provisioning keeps the payment-plane wallet after a switch", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  await ensureStarterSubscriptionForAppUser({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    stripeLivemode: false,
+  });
+  const probe = __readStarterPlaneIdentityProbeForTests();
+  assert.ok(probe);
+  assert.equal(probe.stripeLivemode, false);
+  assert.equal(
+    probe.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(live.actorEndUserId),
+  );
+  assert.notEqual(probe.payerCustomerKey, live.payerCustomerKey);
+});
+
+test("billingMode override keeps merchant eu_ after switch to owner_rollup", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const whileMerchant = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(whileMerchant.sharesOwnerCostRail, false);
+  assert.ok(isEndUserCustomerKey(whileMerchant.payerCustomerKey));
+
+  // Operator flips to owner_rollup while a Connect top-up is in flight.
+  // Settlement must still credit the eu_ wallet the card paid for.
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "owner_rollup",
+  });
+  const withoutPin = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(withoutPin.sharesOwnerCostRail, true);
+  assert.equal(
+    withoutPin.payerCustomerKey,
+    buildOwnerCustomerKey(seeded.userId),
+  );
+
+  const pinned = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    billingMode: "merchant",
+  });
+  assert.equal(pinned.sharesOwnerCostRail, false);
+  assert.equal(pinned.payerKind, "end_user");
+  assert.equal(pinned.payerCustomerKey, whileMerchant.payerCustomerKey);
+  assert.equal(pinned.actorEndUserId, whileMerchant.actorEndUserId);
 });
 
 test("normal app owner bills shared owner wallet", async (t) => {

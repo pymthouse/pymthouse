@@ -107,13 +107,10 @@ export async function topUpClientOwnedByOwner(
   return owned.includes(clientId);
 }
 
-/**
- * Merchant Connect top-up: the event's `account` must match the app's
- * Connected Account id from `app_billing_config`.
- */
-export async function merchantTopUpAccountMatches(
+async function merchantConnectedAccountMatches(
   clientId: string,
   connectedAccountId: string,
+  activePlaneOnly: boolean,
 ): Promise<boolean> {
   if (merchantTopUpAccountMatchesForTests) {
     return merchantTopUpAccountMatchesForTests(clientId, connectedAccountId);
@@ -126,6 +123,36 @@ export async function merchantTopUpAccountMatches(
   if (!app) {
     return false;
   }
-  const config = await getAppBillingConfig(app.id);
-  return config?.stripeConnectedAccountId?.trim() === accountId;
+  if (activePlaneOnly) {
+    const config = await getAppBillingConfig(app.id);
+    return config?.stripeConnectedAccountId?.trim() === accountId;
+  }
+  const { resolveMerchantConnectAccountPlane } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  const plane = await resolveMerchantConnectAccountPlane(app.id, accountId);
+  return plane != null;
+}
+
+/**
+ * Payment-method restore: the event's `account` must be the app's *active*
+ * Connected Account. A parked `acct_` must not restore onto the active plane.
+ */
+export async function merchantActiveConnectedAccountMatches(
+  clientId: string,
+  connectedAccountId: string,
+): Promise<boolean> {
+  return merchantConnectedAccountMatches(clientId, connectedAccountId, true);
+}
+
+/**
+ * Merchant Connect top-up: the event's `account` must match the app's
+ * Connected Account — active plane in `app_billing_config`, or a parked plane
+ * in `app_stripe_connect_accounts` after a Live↔Sandbox switch.
+ */
+export async function merchantTopUpAccountMatches(
+  clientId: string,
+  connectedAccountId: string,
+): Promise<boolean> {
+  return merchantConnectedAccountMatches(clientId, connectedAccountId, false);
 }
