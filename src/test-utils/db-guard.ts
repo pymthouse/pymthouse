@@ -16,7 +16,7 @@ const skipDb = !(
 type TestFn = (t: TestContext) => void | Promise<void>;
 
 function gatedTest(name: string, fn: TestFn): void {
-  nodeTest(name, { skip: skipDb }, fn);
+  void nodeTest(name, { skip: skipDb }, fn);
 }
 
 export const test = Object.assign(gatedTest, {

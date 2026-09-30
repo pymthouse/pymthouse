@@ -5,7 +5,7 @@
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 # Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
-ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-e60d2bcaea498b73b1f203ef2fa34ba71daf9d23
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:0.9.3
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -57,7 +57,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
     make && \
     make install
 
-FROM golang:1.25.13-bookworm AS turnkey-bootstrap-build
+FROM golang:1.26.6-bookworm AS turnkey-bootstrap-build
 
 WORKDIR /src
 COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
