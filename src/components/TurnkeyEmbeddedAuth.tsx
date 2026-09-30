@@ -31,6 +31,7 @@ import {
   OAUTH_SUBORG_RECOVERY_MESSAGE,
 } from "@/lib/login-auth-error";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
+import { WalletIssuerLogin } from "@/components/WalletIssuerLogin";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
 const AUTH_BUTTON_CLASS =
@@ -71,12 +72,26 @@ export function TurnkeyEmbeddedAuth({
   primaryColor = "#10b981",
   logoUrl,
   title = "Sign in or create your account",
+  backendAuth = false,
+  confirmEmail = null,
+  callbackUrl = "/onboarding",
 }: Readonly<{
   primaryColor?: string;
   /** Image URL shown inside the AuthComponent panel. */
   logoUrl?: string | null;
   title?: string;
+  backendAuth?: boolean;
+  confirmEmail?: string | null;
+  callbackUrl?: string;
 }>) {
+  if (backendAuth) {
+    return (
+      <WalletIssuerLogin
+        callbackUrl={callbackUrl}
+        confirmEmail={confirmEmail}
+      />
+    );
+  }
   if (!isTurnkeyWalletConfigured()) {
     return (
       <p className="text-xs text-zinc-500 leading-relaxed">

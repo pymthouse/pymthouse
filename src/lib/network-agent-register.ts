@@ -4,7 +4,7 @@ import {
   randomBytes,
   verify,
 } from "node:crypto";
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
@@ -14,6 +14,10 @@ import {
   networkAgentChallenges,
   networkAgentRateBuckets,
 } from "@/db/schema";
+import {
+  assertBucketRateLimit,
+  BucketRateLimitError,
+} from "@/lib/bucket-rate-limit";
 import { createAppUserApiKey } from "@/lib/app-api-keys";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
@@ -56,8 +60,6 @@ const CHALLENGE_LIMIT_PER_IP = 20;
 const CHALLENGE_LIMIT_PER_FINGERPRINT = 5;
 const REGISTER_LIMIT_PER_IP = 10;
 const REGISTER_LIMIT_PER_FINGERPRINT = 5;
-const RATE_BUCKET_PURGE_BATCH = 64;
-
 /** Test-only: clear shared challenge + rate-limit state. */
 export async function resetNetworkAgentRegisterStateForTests(): Promise<void> {
   await db.delete(networkAgentChallenges);
@@ -80,45 +82,18 @@ async function purgeExpiredChallenges(nowMs = Date.now()): Promise<void> {
     .where(lte(networkAgentChallenges.expiresAtMs, nowMs));
 }
 
-async function purgeExpiredRateBuckets(nowMs = Date.now()): Promise<void> {
-  await db.execute(sql`
-    DELETE FROM network_agent_rate_buckets
-    WHERE bucket_key IN (
-      SELECT bucket_key FROM network_agent_rate_buckets
-      WHERE reset_at_ms <= ${nowMs}
-      LIMIT ${RATE_BUCKET_PURGE_BATCH}
-    )
-  `);
-}
-
 async function assertRateLimit(key: string, limit: number): Promise<void> {
-  const nowMs = Date.now();
-  await purgeExpiredRateBuckets(nowMs);
-  const resetAtMs = nowMs + RATE_WINDOW_MS;
-
-  const rows = await db
-    .insert(networkAgentRateBuckets)
-    .values({
-      bucketKey: key,
-      count: 1,
-      resetAtMs,
-    })
-    .onConflictDoUpdate({
-      target: networkAgentRateBuckets.bucketKey,
-      set: {
-        count: sql`CASE WHEN ${networkAgentRateBuckets.resetAtMs} <= ${nowMs} THEN 1 ELSE ${networkAgentRateBuckets.count} + 1 END`,
-        resetAtMs: sql`CASE WHEN ${networkAgentRateBuckets.resetAtMs} <= ${nowMs} THEN ${resetAtMs} ELSE ${networkAgentRateBuckets.resetAtMs} END`,
-      },
-    })
-    .returning({ count: networkAgentRateBuckets.count });
-
-  const count = rows[0]?.count ?? 0;
-  if (count > limit) {
-    throw new NetworkAgentRegisterError(
-      "rate_limited",
-      "Too many requests. Try again shortly.",
-      429,
-    );
+  try {
+    await assertBucketRateLimit(key, limit, RATE_WINDOW_MS);
+  } catch (err) {
+    if (err instanceof BucketRateLimitError) {
+      throw new NetworkAgentRegisterError(
+        "rate_limited",
+        err.message,
+        429,
+      );
+    }
+    throw err;
   }
 }
 

@@ -155,20 +155,22 @@ function TurnkeyExpectedErrorGuard() {
 
 export default function TurnkeyProviderWrapper({
   children,
+  backendAuth = false,
 }: Readonly<{
   children: React.ReactNode;
+  backendAuth?: boolean;
 }>) {
   const organizationId = process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim();
-  const authProxyConfigId = getTurnkeyWalletConfigId();
+  const authProxyConfigId = backendAuth ? undefined : getTurnkeyWalletConfigId();
 
-  if (!organizationId || !authProxyConfigId) {
+  if (!organizationId || (!backendAuth && !authProxyConfigId)) {
     return <>{children}</>;
   }
 
   const turnkeyConfig: TurnkeyProviderConfig = {
     organizationId,
-    authProxyConfigId,
-    auth: buildTurnkeyWalletOauthAuthConfig(),
+    ...(authProxyConfigId ? { authProxyConfigId } : {}),
+    ...(backendAuth ? {} : { auth: buildTurnkeyWalletOauthAuthConfig() }),
     ui: {
       darkMode: true,
       logoDark: "/pymthouse-mark.svg",
@@ -203,7 +205,7 @@ export default function TurnkeyProviderWrapper({
     >
       <TurnkeyModalDismissGuard />
       <TurnkeyExpectedErrorGuard />
-      <TurnkeyOauthRedirectResume />
+      {backendAuth ? null : <TurnkeyOauthRedirectResume />}
       {children}
     </TurnkeyProviderBase>
   );

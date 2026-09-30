@@ -5,7 +5,8 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { validateBearerToken, hasScope } from "@/lib/auth";
 import {
-  findOrCreateDeveloperUser,
+  developerUserUpdates,
+  findDeveloperUserByTurnkeyUserId,
   resolveTurnkeyDeveloperIdentity,
   verifyTurnkeySessionJwt,
 } from "@/lib/turnkey";
@@ -65,13 +66,18 @@ export const authOptions: NextAuthOptions = {
         if (!claims) return null;
 
         const identity = await resolveTurnkeyDeveloperIdentity(claims);
-        const { id } = await findOrCreateDeveloperUser({
-          turnkeyUserId: claims.userId,
-          organizationId: claims.organizationId,
-          walletAddress: identity.walletAddress,
-          name: identity.name,
+        const existing = await findDeveloperUserByTurnkeyUserId(claims.userId);
+        if (!existing) return null;
+        const updates = developerUserUpdates({
+          existing,
           email: identity.email,
+          name: identity.name,
+          walletAddress: identity.walletAddress,
         });
+        if (updates) {
+          await db.update(users).set(updates).where(eq(users.id, existing.id));
+        }
+        const id = existing.id;
 
         const userRows = await db
           .select()

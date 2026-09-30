@@ -5,12 +5,16 @@ import {
   OAUTH_ERROR_NOTICE_COOKIE,
   openOauthErrorNotice,
 } from "@/lib/oauth-error-notice";
+import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
+import { openWalletConfirm, WALLET_CONFIRM_COOKIE } from "@/lib/turnkey-wallet-handoff";
+import { maskEmail } from "@/lib/turnkey-wallet-login";
 
 export default async function LoginPage() {
+  const cookieStore = await cookies();
   const noticeEmail =
-    openOauthErrorNotice(
-      (await cookies()).get(OAUTH_ERROR_NOTICE_COOKIE)?.value,
-    )?.email ?? null;
+    openOauthErrorNotice(cookieStore.get(OAUTH_ERROR_NOTICE_COOKIE)?.value)?.email ??
+    null;
+  const confirm = openWalletConfirm(cookieStore.get(WALLET_CONFIRM_COOKIE)?.value);
 
   return (
     <Suspense
@@ -20,7 +24,11 @@ export default async function LoginPage() {
         </div>
       }
     >
-      <LoginForm noticeEmail={noticeEmail} />
+      <LoginForm
+        noticeEmail={noticeEmail}
+        backendAuth={isTurnkeyBackendAuthEnabled()}
+        confirmEmail={confirm ? maskEmail(confirm.email) : null}
+      />
     </Suspense>
   );
 }

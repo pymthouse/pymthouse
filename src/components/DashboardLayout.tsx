@@ -210,6 +210,15 @@ export default function DashboardLayout({
     }
   }, [status, router]);
 
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const email =
+      typeof sessionUser?.email === "string" ? sessionUser.email.trim().toLowerCase() : "";
+    if (!email || email.endsWith("@turnkey.local")) {
+      router.replace("/login/verify-email");
+    }
+  }, [status, sessionUser, router]);
+
   const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
   const activeAppId = appDetailMatch?.[1] ?? null;
 

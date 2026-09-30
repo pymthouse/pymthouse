@@ -4,6 +4,7 @@ import "@turnkey/react-wallet-kit/styles.css";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import { authOptions } from "@/lib/next-auth-options";
+import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 
 const siteDescription =
   "Identity and payment infrastructure for Livepeer AI apps. OIDC authentication, usage metering, and managed payment signing.";
@@ -44,7 +45,9 @@ export default async function RootLayout({
   return (
     <html lang="en" className="dark scheme-dark">
       <body className="antialiased bg-zinc-950 text-zinc-100">
-        <Providers session={session}>{children}</Providers>
+        <Providers session={session} backendAuth={isTurnkeyBackendAuthEnabled()}>
+          {children}
+        </Providers>
       </body>
     </html>
   );

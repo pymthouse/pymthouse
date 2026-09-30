@@ -11,6 +11,7 @@ import {
   OAUTH_ERROR_NOTICE_COOKIE,
   openOauthErrorNotice,
 } from "@/lib/oauth-error-notice";
+import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 
 export default async function AccountPage() {
   const session = await getServerSession(authOptions);
@@ -37,7 +38,11 @@ export default async function AccountPage() {
             </div>
           }
         >
-          <AccountManagementPanels noticeEmail={noticeEmail} />
+          <AccountManagementPanels
+            noticeEmail={noticeEmail}
+            backendAuth={isTurnkeyBackendAuthEnabled()}
+            email={session.user?.email ?? null}
+          />
         </Suspense>
       </div>
     </DashboardLayout>

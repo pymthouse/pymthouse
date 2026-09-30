@@ -240,7 +240,13 @@ function LoginPageFooter({
 
 export function LoginForm({
   noticeEmail = null,
-}: Readonly<{ noticeEmail?: string | null }>) {
+  backendAuth = false,
+  confirmEmail = null,
+}: Readonly<{
+  noticeEmail?: string | null;
+  backendAuth?: boolean;
+  confirmEmail?: string | null;
+}>) {
   const { data: session, status } = useSession();
   const { clientState, authState } = useTurnkey();
   const router = useRouter();
@@ -342,6 +348,9 @@ export function LoginForm({
                   primaryColor={primaryColor}
                   logoUrl={null}
                   title="Sign in or create your account"
+                  backendAuth={backendAuth}
+                  confirmEmail={confirmEmail}
+                  callbackUrl={sanitizedCallbackUrl}
                 />
                 {oauthCallbackMessage ? (
                   <p className="mt-4 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300/90">

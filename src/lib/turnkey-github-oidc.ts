@@ -1,8 +1,10 @@
-import { createHash } from "node:crypto";
 import { SignJWT } from "jose";
 import { v4 as uuidv4 } from "uuid";
 import { ensureSigningKey, getPublicJWKS } from "@/lib/oidc/jwks";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
+
+export { turnkeyOauthNonceFromPublicKey };
 
 /** Dedicated issuer path for GitHub → Turnkey BYO OIDC (OAuth2 wrapper). */
 export const TURNKEY_GITHUB_OIDC_MOUNT = "/api/v1/turnkey-github-oidc";
@@ -31,16 +33,6 @@ export function getTurnkeyGithubOidcIssuer(): string {
 
 export function getTurnkeyGithubOidcJwksUrl(): string {
   return `${getTurnkeyGithubOidcIssuer()}/jwks`;
-}
-
-/**
- * Match Wallet Kit: `bytesToHex(sha256(utf8(publicKeyHex)))`.
- * This is Turnkey's OAuth nonce binding (session pubkey → nonce), not password hashing.
- */
-export function turnkeyOauthNonceFromPublicKey(publicKey: string): string {
-  // codeql[js/insufficient-password-hash]
-  // lgtm[js/insufficient-password-hash]
-  return createHash("sha256").update(publicKey, "utf8").digest("hex");
 }
 
 export function githubOidcSubject(githubUserId: string | number): string {

@@ -54,6 +54,20 @@ export function loginAuthErrorMessage(
     }
     return "An account already exists for this email. Sign in with Google or email, then add GitHub from your account settings.";
   }
+  if (authError.includes("GitHubEmailRequired") || authError.includes("blocked_no_email")) {
+    return "GitHub did not provide a verified email. Add one to your GitHub account, then try again.";
+  }
+  if (authError.includes("email_conflict")) {
+    return "That email is already on more than one account. Contact support before signing in.";
+  }
+  if (
+    authError.includes("GoogleLoginFailed") ||
+    authError.includes("DiscordLoginFailed") ||
+    authError.includes("WalletLoginFailed") ||
+    authError.includes("GoogleLoginNotConfigured")
+  ) {
+    return "Sign-in could not be completed. Please try again.";
+  }
   if (authError.includes("GitHubTurnkeyLoginFailed")) {
     return "GitHub sign-in could not create a wallet session. Please try again.";
   }

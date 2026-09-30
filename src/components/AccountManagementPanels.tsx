@@ -13,7 +13,21 @@ import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 export function AccountManagementPanels({
   noticeEmail,
-}: Readonly<{ noticeEmail: string | null }>) {
+  backendAuth = false,
+  email = null,
+}: Readonly<{
+  noticeEmail: string | null;
+  backendAuth?: boolean;
+  email?: string | null;
+}>) {
+  if (backendAuth) {
+    return (
+      <>
+        <WalletAccountPanel email={email} />
+        <DeleteAccountPanel />
+      </>
+    );
+  }
   if (!isTurnkeyWalletConfigured()) {
     return (
       <>
@@ -23,6 +37,60 @@ export function AccountManagementPanels({
     );
   }
   return <BoundAccountManagementPanels noticeEmail={noticeEmail} />;
+}
+
+function WalletAccountPanel({ email }: Readonly<{ email: string | null }>) {
+  const { handleAddPasskey, handleRemovePasskey, refreshUser, user } = useTurnkey();
+  const authenticators = user?.authenticators ?? [];
+  return (
+    <section className="space-y-4 rounded-md border border-zinc-800 bg-zinc-900/40 px-4 py-4">
+      <div>
+        <h2 className="text-sm font-medium text-zinc-100">Email</h2>
+        <p className="mt-2 text-sm text-zinc-300">{email || "No verified email"}</p>
+        <p className="mt-3 text-sm text-zinc-500">
+          Any Google, GitHub, or Discord account that uses this email signs in
+          to this wallet.
+        </p>
+      </div>
+      <div>
+        <h2 className="text-sm font-medium text-zinc-100">Passkeys</h2>
+        <ul className="mt-2 space-y-2">
+          {authenticators.length === 0 ? (
+            <li className="text-sm text-zinc-500">No passkeys on this wallet.</li>
+          ) : (
+            authenticators.map((authenticator) => (
+              <li
+                key={authenticator.authenticatorId}
+                className="flex items-center justify-between gap-3 text-sm text-zinc-300"
+              >
+                <span>{authenticator.authenticatorName || "Passkey"}</span>
+                <button
+                  type="button"
+                  className="text-xs text-zinc-400 hover:text-zinc-100"
+                  onClick={() => {
+                    void handleRemovePasskey({
+                      authenticatorId: authenticator.authenticatorId,
+                    }).then(() => refreshUser());
+                  }}
+                >
+                  Remove
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+        <button
+          type="button"
+          className="mt-3 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:border-zinc-500"
+          onClick={() => {
+            void handleAddPasskey({ name: "PymtHouse passkey" }).then(() => refreshUser());
+          }}
+        >
+          Add passkey
+        </button>
+      </div>
+    </section>
+  );
 }
 
 function BoundAccountManagementPanels({

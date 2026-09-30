@@ -25,6 +25,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("developer"), // admin | operator | developer
   walletAddress: text("wallet_address"),
   turnkeyUserId: text("turnkey_user_id").unique(),
+  /** Turnkey sub-org this login's wallet lives in. Set by wallet-issuer login. */
+  turnkeySubOrgId: text("turnkey_sub_org_id"),
+  /** ISO time when this row's sub-org accepted the PymtHouse wallet OIDC provider. */
+  walletLinkedAt: text("wallet_linked_at"),
   /** Onboarding persona: explorer | builder. Null until the user picks a path. */
   persona: text("persona"),
   /** ISO timestamp when onboarding finished (Explorer join or Builder app create). */

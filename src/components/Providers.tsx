@@ -7,9 +7,11 @@ import TurnkeyProviderWrapper from "./TurnkeyProvider";
 export default function Providers({
   children,
   session,
+  backendAuth = false,
 }: Readonly<{
   children: React.ReactNode;
   session: Session | null;
+  backendAuth?: boolean;
 }>) {
   return (
     // `null` must never reach SessionProvider: next-auth v4 pins it as the
@@ -20,7 +22,7 @@ export default function Providers({
     // makes the provider fetch /api/auth/session on mount. A real session is
     // still passed through so signed-in loads render without a loading pass.
     <SessionProvider session={session ?? undefined} refetchOnWindowFocus={false}>
-      <TurnkeyProviderWrapper>{children}</TurnkeyProviderWrapper>
+      <TurnkeyProviderWrapper backendAuth={backendAuth}>{children}</TurnkeyProviderWrapper>
     </SessionProvider>
   );
 }

@@ -259,8 +259,20 @@ export async function resolveTurnkeyDeveloperIdentity(
   }
 }
 
+/** Existing PymtHouse row for a Turnkey user. Does not create one. */
+export async function findDeveloperUserByTurnkeyUserId(turnkeyUserId: string) {
+  const rows = await db
+    .select()
+    .from(users)
+    .where(eq(users.turnkeyUserId, turnkeyUserId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 /**
  * Find or create a developer user in the users table by Turnkey user id.
+ * Creation requires a verified email. Callers that only resume a session
+ * should use {@link findDeveloperUserByTurnkeyUserId}.
  */
 export async function findOrCreateDeveloperUser(input: {
   turnkeyUserId: string;
@@ -310,13 +322,21 @@ export async function findOrCreateDeveloperUser(input: {
           newOrganizationId: input.organizationId,
         },
       );
+      throw new Error(
+        "This email already belongs to a PymtHouse account.",
+      );
     }
   }
 
+  if (!email) {
+    throw new Error(
+      "A verified email is required before a PymtHouse account can be created.",
+    );
+  }
   const id = uuidv4();
   await db.insert(users).values({
     id,
-    email: email ?? null,
+    email,
     name:
       input.name ||
       (input.walletAddress

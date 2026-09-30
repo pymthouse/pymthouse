@@ -241,6 +241,31 @@ async function fetchPrimaryGithubEmail(
   return primary?.email?.trim() || null;
 }
 
+/** Verified GitHub email only. Wallet-issuer login refuses unverified addresses. */
+export async function verifiedGithubEmail(
+  accessToken: string,
+): Promise<string | null> {
+  const res = await fetch("https://api.github.com/user/emails", {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+      "User-Agent": "pymthouse",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return null;
+  const emails = (await res.json()) as Array<{
+    email?: string;
+    primary?: boolean;
+    verified?: boolean;
+  }>;
+  if (!Array.isArray(emails)) return null;
+  const primary =
+    emails.find((e) => e.primary && e.verified && e.email) ||
+    emails.find((e) => e.verified && e.email);
+  return primary?.email?.trim() || null;
+}
+
 function parentOrganizationId(): string {
   return (
     trimEnv(process.env.TURNKEY_ORG_ID) ||

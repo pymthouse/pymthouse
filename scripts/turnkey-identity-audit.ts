@@ -56,9 +56,11 @@ async function listSubOrgIds(
     });
     const batch = result.organizationIds ?? [];
     if (batch.length === 0) break;
-    ids.push(...batch);
+    const fresh = batch.filter((id) => !ids.includes(id));
+    if (fresh.length === 0) break;
+    ids.push(...fresh);
     if (batch.length < 100) break;
-    after = batch.at(-1);
+    after = fresh.at(-1);
   }
   return ids;
 }
@@ -152,6 +154,55 @@ async function main(): Promise<void> {
       2,
     ),
   );
+
+  if (hasFlag("--sync") || hasFlag("--backfill")) {
+    const apply = hasFlag("--apply");
+    const rows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        turnkeyUserId: users.turnkeyUserId,
+        turnkeySubOrgId: users.turnkeySubOrgId,
+      })
+      .from(users);
+    const syncs: Array<{ id: string; turnkeySubOrgId: string }> = [];
+    for (const row of rows) {
+      if (!row.turnkeyUserId || row.turnkeySubOrgId) continue;
+      const match = records.find((record) => record.userId === row.turnkeyUserId);
+      if (!match) continue;
+      syncs.push({ id: row.id, turnkeySubOrgId: match.organizationId });
+      if (apply && hasFlag("--sync")) {
+        await db
+          .update(users)
+          .set({ turnkeySubOrgId: match.organizationId })
+          .where(eq(users.id, row.id));
+      }
+    }
+    const duplicateEmails = new Map<string, string[]>();
+    for (const row of rows) {
+      const email = normalizeTurnkeyEmail(row.email);
+      if (!email || isPlaceholderTurnkeyEmail(row.email, row.turnkeyUserId ?? "")) continue;
+      const list = duplicateEmails.get(email) ?? [];
+      list.push(row.id);
+      duplicateEmails.set(email, list);
+    }
+    console.log(
+      JSON.stringify(
+        {
+          apply: apply && hasFlag("--sync"),
+          subOrgSync: syncs,
+          duplicateEmails: [...duplicateEmails.entries()]
+            .filter(([, ids]) => ids.length > 1)
+            .map(([email, userIds]) => ({ email, userIds })),
+          walletIssuerCount: records.filter((record) =>
+            record.providerNames.some((name) => name.toLowerCase() === "pymthouse"),
+          ).length,
+        },
+        null,
+        2,
+      ),
+    );
+  }
 
   if (!hasFlag("--backfill")) return;
 

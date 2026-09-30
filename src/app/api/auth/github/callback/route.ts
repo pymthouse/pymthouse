@@ -17,6 +17,7 @@ import {
   isExistingAccountError,
   isGithubTurnkeyLoginConfigured,
   loginTurnkeyWithGithub,
+  verifiedGithubEmail,
 } from "@/lib/turnkey-github-auth";
 import { mintTurnkeyGithubOidcToken } from "@/lib/turnkey-github-oidc";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
@@ -25,6 +26,8 @@ import {
   oauthErrorNoticeAutoPostResponse,
 } from "@/lib/oauth-error-notice";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
+import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
+import { redirectForWalletLogin } from "@/lib/turnkey-wallet-route";
 
 export const dynamic = "force-dynamic";
 
@@ -108,6 +111,27 @@ export async function GET(request: NextRequest) {
     intent = state.intent;
     const { accessToken } = await exchangeGithubOAuthCode(code);
     const profile = await fetchGithubUserProfile(accessToken);
+
+    if (isTurnkeyBackendAuthEnabled() && state.intent !== "link") {
+      const verifiedEmail = (await verifiedGithubEmail(accessToken)) || null;
+      if (!verifiedEmail) {
+        return redirectWithOauthError("GitHubEmailRequired", intent);
+      }
+      const response = await redirectForWalletLogin({
+        publicKey: state.publicKey,
+        callbackUrl: state.callbackUrl,
+        login: {
+          verifiedEmail,
+          publicKey: state.publicKey,
+          method: "github",
+          name: profile.name,
+          githubUserId: profile.id,
+          githubLogin: profile.login,
+        },
+      });
+      response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+      return response;
+    }
 
     if (state.intent === "link") {
       const oidcToken = await mintTurnkeyGithubOidcToken({
