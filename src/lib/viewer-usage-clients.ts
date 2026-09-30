@@ -11,15 +11,32 @@ import {
 import { resolvePlatformDefaultClientId } from "@/lib/platform-default-app";
 
 /**
- * Public OIDC client_ids the signed-in platform user may include in
- * `scope=own` usage history: apps they own or administer, plus any app where
- * they have an `app_users` membership (including the platform default).
+ * Usage-history visibility for one platform user, split by how much of an app
+ * they may read.
  */
-export async function resolveViewerUsageClientIds(
+export type ViewerUsageClientScopes = {
+  /**
+   * Apps the viewer owns or administers. Every identity's request history on
+   * these apps is readable (same authorization as the app identity pages).
+   */
+  managed: string[];
+  /**
+   * Apps where the viewer only holds an `app_users` membership. Restricted to
+   * the viewer's own usage subjects.
+   */
+  member: string[];
+};
+
+/**
+ * Public OIDC client_ids the signed-in platform user may include in
+ * `scope=own` usage history, split into managed (own/administer) and
+ * membership-only apps (including the platform default).
+ */
+export async function resolveViewerUsageClientScopes(
   userId: string,
-): Promise<string[]> {
+): Promise<ViewerUsageClientScopes> {
   const trimmed = userId.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { managed: [], member: [] };
 
   const [ownedRows, adminRows, memberRows] = await Promise.all([
     db
@@ -47,12 +64,25 @@ export async function resolveViewerUsageClientIds(
       .where(and(eq(appUsers.externalUserId, trimmed), eq(appUsers.status, "active"))),
   ]);
 
-  const ids = new Set<string>();
-  for (const row of [...ownedRows, ...adminRows, ...memberRows]) {
+  const managed = new Set<string>();
+  for (const row of [...ownedRows, ...adminRows]) {
     const id = row.publicClientId?.trim() || row.appId?.trim();
-    if (id) ids.add(id);
+    if (id) managed.add(id);
   }
-  return [...ids];
+  const member = new Set<string>();
+  for (const row of memberRows) {
+    const id = row.publicClientId?.trim() || row.appId?.trim();
+    if (id && !managed.has(id)) member.add(id);
+  }
+  return { managed: [...managed], member: [...member] };
+}
+
+/** Every client_id the viewer may read usage for, managed and membership-only. */
+export async function resolveViewerUsageClientIds(
+  userId: string,
+): Promise<string[]> {
+  const scopes = await resolveViewerUsageClientScopes(userId);
+  return [...scopes.managed, ...scopes.member];
 }
 
 /** True when the viewer has an app_users row on the given public client_id / app id. */

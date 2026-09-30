@@ -20,10 +20,10 @@ function parseLimit(raw: string | null): number {
 /**
  * Signed-ticket request log for one identity on one app.
  *
- * Authorization is app ownership, deliberately not viewer-subject scope: an app
- * owner may read any identity under their own app, which is why this lives here
- * rather than on `/api/v1/me/usage/requests` (that route rejects
- * `externalUserId` outright so viewers cannot read other identities).
+ * Authorization is app ownership: an app owner may read any identity under their
+ * own app. `/api/v1/me/usage/requests` covers the same ground for the Usage page
+ * (owned/administered apps read app-wide, optionally filtered by identity);
+ * this route stays for the app-scoped identity detail page.
  */
 export async function GET(
   request: Request,

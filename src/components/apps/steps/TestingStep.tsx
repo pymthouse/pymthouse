@@ -1554,16 +1554,14 @@ function AuthCodeLiveTestPanel({
           </select>
         </div>
       ) : null}
-      <button
-        type="button"
-        onClick={() => {
-          const newWin = globalThis.window?.open(testUrl, "_blank", "noopener,noreferrer");
-          if (newWin) newWin.opener = null;
-        }}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
+      <a
+        href={testUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
       >
         Open Test Flow
-      </button>
+      </a>
       <p className="text-xs text-zinc-500">
         Requested scopes:{" "}
         <span className="text-zinc-400">{selectedScopes.join(", ")}</span>

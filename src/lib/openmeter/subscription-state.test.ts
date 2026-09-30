@@ -55,6 +55,9 @@ function sub(
 const isStarter = (s: OpenMeterSubscriptionView) =>
   s.planKey === "app_starter" || s.planKey === "pymthouse_owner_starter";
 
+/** Occupying canceled rows must have activeTo in the future. */
+const OCCUPYING_UNTIL = "2027-12-01T00:00:00.000Z";
+
 test("status predicates: live excludes scheduled", () => {
   assert.equal(isLiveSubscriptionStatus("active"), true);
   assert.equal(isLiveSubscriptionStatus("trialing"), true);
@@ -121,7 +124,7 @@ test("isOccupyingCanceledSubscription requires future activeTo", async () => {
       id: "starter_canceled",
       planKey: "app_starter",
       status: "canceled",
-      activeTo: "2026-09-07T17:35:18.109Z",
+      activeTo: OCCUPYING_UNTIL,
     }),
   ]);
   assert.equal(picked?.id, "starter_canceled");
@@ -303,7 +306,7 @@ test("resolveResumeTarget prefers canceled paid, else live + scheduled starter",
         id: "paid_canceled",
         planKey: "paid",
         status: "canceled",
-        activeTo: "2026-09-01T00:00:00.000Z",
+        activeTo: OCCUPYING_UNTIL,
       }),
     ],
     isStarter,
@@ -372,7 +375,7 @@ test("resolveResumeTarget skips ended predecessor ahead of occupying CAPE paid",
     id: "paid_b_cape",
     planKey: "paid_b",
     status: "canceled",
-    activeTo: "2026-09-08T00:00:00.000Z",
+    activeTo: OCCUPYING_UNTIL,
   });
   assert.equal(
     resolveResumeTarget(

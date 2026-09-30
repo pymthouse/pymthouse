@@ -14,16 +14,16 @@ import {
 import { test } from "@/test-utils/db-guard";
 import { createTestUser } from "@/test-utils/fixtures";
 
-test("platform owner starter default resolves env/fallback without a DB row", async () => {
+test("platform owner starter default falls back to 0 without a DB row", async () => {
   await db
     .delete(platformBillingSettings)
     .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
 
   const prior = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
-  delete process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+  process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = "1000000";
   try {
     const resolved = await resolvePlatformOwnerStarterDefault();
-    assert.equal(resolved.ownerStarterIncludedUsdMicros, "5000000");
+    assert.equal(resolved.ownerStarterIncludedUsdMicros, "0");
     assert.equal(resolved.ownerStarterPlanName, "Owner Sandbox Starter");
     assert.equal(resolved.source, "fallback");
   } finally {
@@ -78,6 +78,27 @@ test("platform owner starter default prefers DB over env", async (t) => {
   const resolvedAgain = await resolvePlatformOwnerStarterDefault();
   assert.equal(resolvedAgain.ownerStarterIncludedUsdMicros, "30000000");
   assert.equal(resolvedAgain.ownerStarterPlanName, "Developer Free Tier");
+});
+
+test("platform owner starter default treats stored 0 as db source", async (t) => {
+  const adminId = await createTestUser({ role: "admin" });
+  t.after(async () => {
+    await db
+      .delete(platformBillingSettings)
+      .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
+    await db.delete(users).where(eq(users.id, adminId));
+  });
+
+  const saved = await setPlatformOwnerStarterIncludedUsdMicros({
+    ownerStarterIncludedUsdMicros: "0",
+    updatedBy: adminId,
+  });
+  assert.equal(saved.source, "db");
+  assert.equal(saved.ownerStarterIncludedUsdMicros, "0");
+
+  const resolved = await resolvePlatformOwnerStarterDefault();
+  assert.equal(resolved.source, "db");
+  assert.equal(resolved.ownerStarterIncludedUsdMicros, "0");
 });
 
 nodeTest("normalizeOwnerStarterPlanName falls back and rejects overlong names", () => {

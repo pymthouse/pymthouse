@@ -108,7 +108,7 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
     "  - Starter plans sync with settlement_mode=credit_then_invoice and discounts.usage = included micros",
   );
   console.log(
-    "  - Included starter allowance is plan discounts.usage (OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS); no auto credit grants",
+    "  - App Starter included allowance is plan discounts.usage (OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS, default $0); Owner Starter is platform_billing_settings; no auto credit grants",
   );
   console.log(
     "  - Mint gate: remaining discount + prepaid credits (manual top-ups / overage)",
@@ -143,9 +143,9 @@ async function ensureSelfHostedMeters(
 
     const groupBy = existingMeter.groupBy ?? {};
     console.log(`[openmeter-bootstrap] meter exists: ${meter.slug}`);
-    if (!("pipeline" in groupBy && "model_id" in groupBy)) {
+    if (!("pipeline" in groupBy && "app" in groupBy)) {
       console.warn(
-        `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/model_id groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
+        `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/app groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
       );
     }
     if (

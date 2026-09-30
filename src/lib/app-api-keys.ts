@@ -32,7 +32,7 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
 
 /** Shown once at mint time for personal / network bare `pmth_*` keys. */
 export const PERSONAL_API_KEY_STORE_MESSAGE =
-  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/user/usage* (or /api/v1/apps/{clientId}/me/usage*), and as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/oidc/token or POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
+  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on the remote signer and /api/v1/user/usage* (or /api/v1/apps/{clientId}/me/usage*), as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/oidc/token or POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
 
 /**
  * Shown once at mint time for Builder-issued app-user keys (composite

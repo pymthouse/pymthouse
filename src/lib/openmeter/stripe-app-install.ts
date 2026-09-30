@@ -390,6 +390,12 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     stripeDetailsSubmitted: false,
     connectPaymentsOnly: false,
   });
+  // Disconnect drops the plane the operator was looking at. The other plane's
+  // parked onboarding survives, so switching to it still restores an account.
+  const { forgetMerchantConnectPlane } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  await forgetMerchantConnectPlane(clientId, row?.stripeLivemode !== false);
 }
 
 export async function purgeExpiredOAuthStates(): Promise<void> {
@@ -397,8 +403,38 @@ export async function purgeExpiredOAuthStates(): Promise<void> {
   await db.delete(appBillingOauthStates).where(lt(appBillingOauthStates.expiresAt, now));
 }
 
+export type ConnectPlaneSummary = {
+  stripeConnectedAccountId: string;
+  chargesEnabled: boolean;
+  detailsSubmitted: boolean;
+  connectedAt: string | null;
+  /** Can charge end users right now. */
+  ready: boolean;
+};
+
+function connectPlanePayload(
+  plane: {
+    stripeConnectedAccountId: string;
+    stripeChargesEnabled: boolean;
+    stripeDetailsSubmitted: boolean;
+    connectedAt: string | null;
+  } | null,
+): ConnectPlaneSummary | null {
+  if (!plane?.stripeConnectedAccountId?.trim()) {
+    return null;
+  }
+  return {
+    stripeConnectedAccountId: plane.stripeConnectedAccountId,
+    chargesEnabled: plane.stripeChargesEnabled,
+    detailsSubmitted: plane.stripeDetailsSubmitted,
+    connectedAt: plane.connectedAt,
+    ready: plane.stripeChargesEnabled && plane.stripeDetailsSubmitted,
+  };
+}
+
 export async function getStripeConnectStatus(clientId: string) {
   const {
+    getMerchantConnectPlane,
     merchantConnectOnboardingLivemode,
     syncMerchantConnectStatus,
   } = await import("@/lib/stripe/merchant-connect");
@@ -449,6 +485,13 @@ export async function getStripeConnectStatus(clientId: string) {
     "@/lib/openmeter/supplier-sync"
   );
 
+  // Per-plane onboarding, so Payments can say which plane a switch would land
+  // on without the operator having to switch to find out.
+  const [livePlane, sandboxPlane] = await Promise.all([
+    getMerchantConnectPlane(clientId, true),
+    getMerchantConnectPlane(clientId, false),
+  ]);
+
   return {
     status,
     billingReady,
@@ -470,6 +513,10 @@ export async function getStripeConnectStatus(clientId: string) {
     billingMode: config?.billingMode === "merchant" ? "merchant" : "owner_rollup",
     endUserCap: config?.endUserCap ?? platformDefaultEndUserCap(),
     activation,
+    connectPlanes: {
+      live: connectPlanePayload(livePlane),
+      sandbox: connectPlanePayload(sandboxPlane),
+    },
     ...supplierStatusPayload(config ?? {}),
   };
 }

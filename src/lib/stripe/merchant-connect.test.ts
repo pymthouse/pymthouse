@@ -8,10 +8,82 @@ import {
   hasOpenOrDraftInvoice,
   isMerchantConnectPaymentsReady,
   merchantConnectOnboardingLivemode,
+  resolveStartMerchantConnectLivemode,
+  shouldWriteActiveConnectFlags,
   stripePaymentMethodBrandLabel,
   sumPaidInvoiceCentsSince,
   sumSucceededStandalonePaymentCentsSince,
 } from "./merchant-connect";
+
+test("shouldWriteActiveConnectFlags refuses a parked plane after switch", () => {
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: {
+        stripeConnectedAccountId: "acct_sandbox",
+        stripeLivemode: false,
+      },
+      accountId: "acct_live",
+      livemode: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: {
+        stripeConnectedAccountId: "acct_live",
+        stripeLivemode: true,
+      },
+      accountId: "acct_sandbox",
+      livemode: false,
+    }),
+    false,
+  );
+});
+
+test("shouldWriteActiveConnectFlags allows the active matching plane", () => {
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: null,
+      accountId: "acct_new",
+      livemode: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: {
+        stripeConnectedAccountId: "acct_live",
+        stripeLivemode: true,
+      },
+      accountId: "acct_live",
+      livemode: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: {
+        stripeConnectedAccountId: "acct_sandbox",
+        stripeLivemode: false,
+      },
+      accountId: "acct_sandbox",
+      livemode: false,
+    }),
+    true,
+  );
+  // Same acct_ after a livemode flip must not rewrite active without a switch.
+  assert.equal(
+    shouldWriteActiveConnectFlags({
+      existing: {
+        stripeConnectedAccountId: "acct_shared",
+        stripeLivemode: false,
+      },
+      accountId: "acct_shared",
+      livemode: true,
+    }),
+    false,
+  );
+});
 
 test("merchantConnectOnboardingLivemode defaults owner_rollup first Connect to sandbox", () => {
   assert.equal(merchantConnectOnboardingLivemode(null), false);
@@ -31,6 +103,40 @@ test("merchantConnectOnboardingLivemode defaults owner_rollup first Connect to s
     merchantConnectOnboardingLivemode({
       billingMode: "owner_rollup",
       stripeLivemode: true,
+    }),
+    true,
+  );
+});
+
+test("resolveStartMerchantConnectLivemode prefers the Payments toggle until linked", () => {
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: true,
+      config: { billingMode: "owner_rollup", stripeLivemode: false },
+    }),
+    true,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: false,
+      config: { billingMode: "owner_rollup", stripeLivemode: true },
+    }),
+    false,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      config: { billingMode: "owner_rollup" },
+    }),
+    false,
+  );
+  assert.equal(
+    resolveStartMerchantConnectLivemode({
+      requestedLivemode: false,
+      config: {
+        billingMode: "owner_rollup",
+        stripeConnectedAccountId: "acct_live",
+        stripeLivemode: true,
+      },
     }),
     true,
   );

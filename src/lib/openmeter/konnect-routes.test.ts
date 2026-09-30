@@ -523,14 +523,14 @@ test("buildKonnectMeterQueryBody scopes by clientId without subject", () => {
   params.append("groupBy", "client_id");
   params.append("groupBy", "external_user_id");
   params.append("groupBy", "pipeline");
-  params.append("groupBy", "model_id");
+  params.append("groupBy", "app");
   params.set("windowSize", "DAY");
   params.set("from", "2026-07-01T00:00:00.000Z");
   params.set("to", "2026-07-31T23:59:59.999Z");
   params.set("clientId", "app_dashboard_1");
 
   assert.deepEqual(buildKonnectMeterQueryBody(params), {
-    group_by_dimensions: ["client_id", "external_user_id", "pipeline", "model_id"],
+    group_by_dimensions: ["client_id", "external_user_id", "pipeline", "app"],
     granularity: "P1D",
     from: "2026-07-01T00:00:00.000Z",
     to: "2026-07-31T23:59:59.999Z",

@@ -15,6 +15,7 @@ import {
   users,
   type Plan,
 } from "@/db/schema";
+import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
@@ -31,7 +32,6 @@ import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
   isOwnerStarterPlanKey,
   OWNER_STARTER_PLAN_KEY,
-  ownerStarterIncludedUsdMicros,
 } from "@/lib/openmeter/owner-starter-key";
 import { isOwnerPaidPlanKey, OWNER_PAID_PLAN_KEY } from "@/lib/openmeter/owner-paid-key";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
@@ -50,7 +50,7 @@ import {
   NETWORK_FEE_USD_MICROS_METER,
 } from "@/lib/openmeter/constants";
 import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { parseIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import {
   getKonnectCustomerBillingProfileId,
   getStripeCustomerAppDataId,
@@ -110,16 +110,6 @@ const FIX_MIGRATE_PLAN_SUBSCRIBERS =
 const FIX_OWNER_PAID_PLATFORM =
   "PATCH /api/v1/admin/billing/platform with the desired ownerStarterIncludedUsdMicros";
 
-function parsePositiveMicros(raw: string | null | undefined): bigint | null {
-  if (!raw?.trim()) return null;
-  try {
-    const value = BigInt(raw.trim());
-    return value > 0n ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Classify a local Starter row against its remote OpenMeter plan snapshot.
  * Pure — no I/O. Returns zero or more findings.
@@ -173,7 +163,7 @@ export function classifyStarterPlanRemoteConsistency(input: {
     });
   }
 
-  if (expected != null && remote.usageDiscountUsdMicros == null) {
+  if (expected != null && expected > 0n && remote.usageDiscountUsdMicros == null) {
     findings.push({
       code: "starter_missing_usage_discount",
       severity: "error",
@@ -299,6 +289,8 @@ export function classifyOwnerSubscriptionMapping(input: {
   /** Remote plan for subscription.planId (null if fetch failed). */
   remotePlan: RemotePlanSnapshot | null;
   ownedStarters: LocalStarterPlanRef[];
+  /** Resolved Owner Starter included allowance for this owner (DB / override). */
+  ownerStarterIncludedUsdMicros: string;
 }): BillingConsistencyFinding[] {
   const findings: BillingConsistencyFinding[] = [];
   const { ownerId, subscription, remotePlan, ownedStarters } = input;
@@ -318,9 +310,9 @@ export function classifyOwnerSubscriptionMapping(input: {
 
   // Canonical: platform Owner Starter plan.
   if (isOwnerStarterPlanKey(planKey)) {
-    const expected = parsePositiveMicros(ownerStarterIncludedUsdMicros());
+    const expected = parseIncludedUsdMicros(input.ownerStarterIncludedUsdMicros);
     const remoteMicros = remotePlan?.usageDiscountUsdMicros?.trim() || null;
-    if (remoteMicros == null || remoteMicros === "") {
+    if ((remoteMicros == null || remoteMicros === "") && expected != null && expected > 0n) {
       findings.push({
         code: "owner_starter_missing_usage_discount",
         severity: "error",
@@ -329,11 +321,11 @@ export function classifyOwnerSubscriptionMapping(input: {
         details: {
           subscriptionId: subscription.id,
           planKey: OWNER_STARTER_PLAN_KEY,
-          expectedIncludedUsdMicros: ownerStarterIncludedUsdMicros(),
+          expectedIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
         },
         remediation: FIX_MIGRATE,
       });
-    } else if (expected != null && BigInt(remoteMicros) !== expected) {
+    } else if (expected != null && remoteMicros && BigInt(remoteMicros) !== expected) {
       findings.push({
         code: "owner_starter_usage_discount_mismatch",
         severity: "warn",
@@ -896,6 +888,8 @@ async function auditOwnerSubscriptions(
     }
   }
 
+  const ownerStarterIncludedUsdMicros =
+    await resolveOwnerStarterIncludedUsdMicros(ownerId);
   const subs = await listOpenMeterSubscriptionsForCustomer(client, customerId);
   const active = subs.filter((s) => isOpenMeterSubscriptionActive(s.status));
 
@@ -931,6 +925,7 @@ async function auditOwnerSubscriptions(
         },
         remotePlan: remote,
         ownedStarters: starters,
+        ownerStarterIncludedUsdMicros,
       }),
     );
   }
@@ -973,12 +968,7 @@ async function auditOwnerSpendableGates(input: {
     if (!matchesClientFilter(probe, options.clientId)) continue;
 
     const expectedIncluded =
-      parsePositiveMicros(ownerStarterIncludedUsdMicros()) ??
-      includedDiscountUsdMicrosForPlan({
-        includedUsdMicros: probe.includedUsdMicros,
-        isStarterDefault: true,
-      }) ??
-      parsePositiveMicros(defaultStarterIncludedUsdMicros()) ??
+      parseIncludedUsdMicros(await resolveOwnerStarterIncludedUsdMicros(ownerId)) ??
       0n;
 
     const [credits, discountRemaining, spendable] = await Promise.all([

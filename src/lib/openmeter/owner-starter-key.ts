@@ -1,5 +1,3 @@
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-
 /** Platform-wide Owner Starter plan key (shared across all owner wallets). */
 export const OWNER_STARTER_PLAN_KEY =
   process.env.OPENMETER_OWNER_STARTER_PLAN_KEY?.trim() || "pymthouse_owner_starter";
@@ -15,15 +13,13 @@ export const OWNER_STARTER_PLAN_NAME = "Owner Sandbox Starter";
  * number of distinct allowances, not by the number of developers.
  *
  * Pass `platformDefaultMicros` from `resolvePlatformOwnerStarterIncludedUsdMicros`
- * so amount-keyed vs base-key classification matches the DB/env default, not a
- * stale sync env read. When omitted, falls back to the env/hardcoded M2M helper
- * (tests and sync-only call sites).
+ * so amount-keyed vs base-key classification matches the DB default.
  *
  * See docs/adr-owner-vs-app-billing.md.
  */
 export function ownerStarterPlanKeyForAmount(
   includedUsdMicros: string,
-  platformDefaultMicros: string = defaultStarterIncludedUsdMicros(),
+  platformDefaultMicros: string,
 ): string {
   const trimmed = includedUsdMicros.trim();
   const defaultMicros = platformDefaultMicros.trim();
@@ -56,12 +52,4 @@ export function isOwnerStarterPlanKey(planKey: string | null | undefined): boole
   if (!lower.startsWith(prefix)) return false;
   const suffix = lower.slice(prefix.length);
   return /^\d+$/.test(suffix);
-}
-
-/**
- * Sync env/hardcoded Owner Starter default — bootstrap only.
- * Prefer `resolvePlatformOwnerStarterIncludedUsdMicros()` on async Owner paths.
- */
-export function ownerStarterIncludedUsdMicros(): string {
-  return defaultStarterIncludedUsdMicros();
 }

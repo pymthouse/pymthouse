@@ -48,7 +48,6 @@ export {
   OWNER_STARTER_PLAN_KEY,
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
-  ownerStarterIncludedUsdMicros,
   ownerStarterPlanKeyForAmount,
   isBaseOwnerStarterPlanKey,
 } from "./owner-starter-key";

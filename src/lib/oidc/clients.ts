@@ -11,6 +11,7 @@ import {
   syncConfidentialWebGrantTypes,
 } from "@/lib/oidc/confidential-web";
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
+import { redirectUrisForOidcClient } from "@/lib/oidc/customer-service-id";
 import {
   DEFAULT_OIDC_SCOPES,
   ensureConfidentialWebIdentityScopes,
@@ -107,7 +108,10 @@ export async function getRegisteredRedirectOrigins(): Promise<Set<string>> {
   ];
 
   for (const row of rows) {
-    const uris = JSON.parse(row.redirectUris) as string[];
+    const uris = redirectUrisForOidcClient(
+      row.clientId,
+      JSON.parse(row.redirectUris) as string[],
+    );
     for (const uri of uris) {
       if (uri.includes("*")) {
         for (const port of commonPorts) {
@@ -160,6 +164,7 @@ export async function getClient(clientId: string): Promise<{
   grantTypes: string[];
   tokenEndpointAuthMethod: string;
   clientSecretHash: string | null;
+  logoUri: string | null;
   createdAt: string;
 } | null> {
   const rows = await db
@@ -180,6 +185,7 @@ export async function getClient(clientId: string): Promise<{
     grantTypes: client.grantTypes.split(",").filter(Boolean),
     tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
     clientSecretHash: client.clientSecretHash,
+    logoUri: client.logoUri,
     createdAt: client.createdAt,
   };
 }
@@ -329,7 +335,7 @@ function normalizeScopeListString(scopes: string): string {
   return scopes
     .split(/[,\s]+/)
     .filter(Boolean)
-    .sort()
+    .sort((a, b) => a.localeCompare(b, "en"))
     .join(" ");
 }
 

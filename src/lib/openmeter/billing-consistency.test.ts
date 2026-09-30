@@ -84,27 +84,44 @@ test("classifyOwnerPaidPlanRemoteConsistency warns when Paid plan is missing", (
 });
 
 test("includedDiscountUsdMicrosForPlan uses plan micros then starter default", () => {
-  assert.equal(
-    includedDiscountUsdMicrosForPlan({
-      includedUsdMicros: "5000000",
-      isStarterDefault: true,
-    }),
-    5_000_000n,
-  );
-  assert.equal(
-    includedDiscountUsdMicrosForPlan({
-      includedUsdMicros: null,
-      isStarterDefault: false,
-    }),
-    null,
-  );
-  assert.equal(
-    includedDiscountUsdMicrosForPlan({
-      includedUsdMicros: null,
-      isStarterDefault: true,
-    }),
-    5_000_000n,
-  );
+  const prior = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+  try {
+    process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = "5000000";
+    assert.equal(
+      includedDiscountUsdMicrosForPlan({
+        includedUsdMicros: "5000000",
+        isStarterDefault: true,
+      }),
+      5_000_000n,
+    );
+    assert.equal(
+      includedDiscountUsdMicrosForPlan({
+        includedUsdMicros: "0",
+        isStarterDefault: true,
+      }),
+      0n,
+    );
+    assert.equal(
+      includedDiscountUsdMicrosForPlan({
+        includedUsdMicros: null,
+        isStarterDefault: false,
+      }),
+      null,
+    );
+    assert.equal(
+      includedDiscountUsdMicrosForPlan({
+        includedUsdMicros: null,
+        isStarterDefault: true,
+      }),
+      5_000_000n,
+    );
+  } finally {
+    if (prior === undefined) {
+      delete process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+    } else {
+      process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = prior;
+    }
+  }
 });
 
 test("classifyStarterPlanRemoteConsistency flags missing remote discount", () => {
@@ -153,6 +170,7 @@ test("classifyOwnerSubscriptionMapping detects stale plan version", () => {
       usageDiscountUsdMicros: null,
     },
     ownedStarters: [local],
+    ownerStarterIncludedUsdMicros: "5000000",
   });
   assert.equal(findings[0]?.code, "starter_subscription_stale_plan_version");
 });
@@ -173,8 +191,29 @@ test("classifyOwnerSubscriptionMapping detects unmapped foreign plan", () => {
       usageDiscountUsdMicros: null,
     },
     ownedStarters: [local],
+    ownerStarterIncludedUsdMicros: "5000000",
   });
   assert.equal(findings[0]?.code, "owner_subscription_unmapped_plan");
+});
+
+test("classifyOwnerSubscriptionMapping is quiet when owner allowance is 0 and remote has no discount", () => {
+  const findings = classifyOwnerSubscriptionMapping({
+    ownerId: "owner-1",
+    subscription: {
+      id: "sub-1",
+      status: "active",
+      planId: "01OWNERSTARTERPLAN0000000001",
+      planKey: "pymthouse_owner_starter",
+    },
+    remotePlan: {
+      id: "01OWNERSTARTERPLAN0000000001",
+      key: "pymthouse_owner_starter",
+      usageDiscountUsdMicros: null,
+    },
+    ownedStarters: [starterLocal()],
+    ownerStarterIncludedUsdMicros: "0",
+  });
+  assert.deepEqual(findings, []);
 });
 
 test("classifyOwnerSubscriptionMapping accepts platform Owner Starter", () => {
@@ -192,6 +231,7 @@ test("classifyOwnerSubscriptionMapping accepts platform Owner Starter", () => {
       usageDiscountUsdMicros: "5000000",
     },
     ownedStarters: [starterLocal()],
+    ownerStarterIncludedUsdMicros: "5000000",
   });
   assert.deepEqual(findings, []);
 });
@@ -212,6 +252,7 @@ test("classifyOwnerSubscriptionMapping warns on legacy per-app Starter", () => {
       usageDiscountUsdMicros: "5000000",
     },
     ownedStarters: [local],
+    ownerStarterIncludedUsdMicros: "5000000",
   });
   assert.equal(findings[0]?.code, "owner_subscription_legacy_app_starter");
   assert.equal(findings[0]?.severity, "warn");

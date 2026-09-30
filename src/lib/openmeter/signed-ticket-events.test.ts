@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { CREATE_SIGNED_TICKET_EVENT_TYPE } from "./constants";
 import {
   aggregateManifestSessionEventStats,
+  buildSubjectMatchKeys,
   coerceIngestedEvent,
   coerceIngestedEvents,
   collectAdminSubjectsFromMeterRows,
@@ -11,11 +12,14 @@ import {
   eventClientId,
   eventMatchesAdminSignedTicket,
   eventMatchesClientIdFilter,
+  eventMatchesUsageSubjectKeys,
   eventMatchesViewerSubjects,
   eventUsageSubject,
   enrichSessionRowWithEventStats,
   isSignedTicketSessionEnded,
   listAdminSignedTicketSessions,
+  listDeveloperSignedTicketRequests,
+  listDeveloperSignedTicketSessions,
   listEndUserSignedTicketSessions,
   manifestMeterRowToSessionRow,
   normalizeSignedTicketEvent,
@@ -43,7 +47,7 @@ function sampleEvent(overrides?: {
         usage_subject: "user-123",
         gateway_request_id: "req-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
         fee_wei: "100",
         pixels: "64",
@@ -107,7 +111,7 @@ test("eventMatchesViewerSubjects matches owner wallet CE subjects", () => {
         usage_subject: `owner:${ownerId}`,
         gateway_request_id: "req-owner-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
       },
     },
@@ -227,6 +231,62 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.ethUsdPrice, "3456.78");
   assert.equal(row?.billableSecs, 12.5);
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
+});
+
+test("normalizeSignedTicketEvent uses signer app for model attribution", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live",
+        app: "livepeer-example/hello-world",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live");
+  assert.equal(row?.modelId, "livepeer-example/hello-world");
+});
+
+test("normalizeSignedTicketEvent uses live-video-to-video pipeline when app is empty", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        app: "",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video");
+});
+
+test("normalizeSignedTicketEvent prefers event app over unknown model_id", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        model_id: "unknown",
+        app: "live-video-to-video/scope",
+      },
+    }),
+  );
+  assert.ok(row);
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video/scope");
+});
+
+test("normalizeSignedTicketEvent keeps historical model_id when app is missing", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "text-to-image",
+        app: "",
+        model_id: "sdxl",
+      },
+    }),
+  );
+  assert.equal(row?.modelId, "sdxl");
 });
 
 test("coerceIngestedEvent accepts wrapped IngestedEvent", () => {
@@ -650,6 +710,161 @@ test("manifestMeterRowToSessionRow maps meter fields and defaults", () => {
   assert.equal(row.feeWei, "99");
 });
 
+test("buildSubjectMatchKeys expands owner and normalized forms", () => {
+  assert.equal(buildSubjectMatchKeys(null), null);
+  assert.equal(buildSubjectMatchKeys(undefined), null);
+  assert.equal(buildSubjectMatchKeys([])?.size, 0);
+  const keys = buildSubjectMatchKeys(["owner:abc", " eu_9 "]);
+  assert.ok(keys);
+  assert.equal(keys.has("abc"), true);
+  assert.equal(keys.has("owner:abc"), true);
+  assert.equal(keys.has("eu_9"), true);
+  assert.equal(keys.has("owner:eu_9"), true);
+});
+
+test("eventMatchesUsageSubjectKeys gates on the event actor", () => {
+  const ev = sampleEvent();
+  assert.equal(eventMatchesUsageSubjectKeys(ev, null), true);
+  assert.equal(eventMatchesUsageSubjectKeys(ev, new Set()), false);
+  assert.equal(
+    eventMatchesUsageSubjectKeys(ev, buildSubjectMatchKeys(["user-123"])),
+    true,
+  );
+  assert.equal(
+    eventMatchesUsageSubjectKeys(ev, buildSubjectMatchKeys(["eu_other"])),
+    false,
+  );
+});
+
+/** OpenMeter double: meter discovery plus per-subject event listing. */
+function fakeOpenMeterClient(
+  eventsBySubject: Record<string, ReturnType<typeof sampleEvent>[]>,
+  meterRows: { subject: string; value: number; groupBy: Record<string, string> }[],
+) {
+  return {
+    meters: {
+      query: async () => ({ data: meterRows }),
+    },
+    events: {
+      list: async ({ subject }: { subject?: string }) =>
+        eventsBySubject[subject ?? ""] ?? [],
+      listV2: async () => ({ items: [] }),
+    },
+  };
+}
+
+test("listDeveloperSignedTicketRequests shows every identity on managed apps", async (t) => {
+  const { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } =
+    await import("./client");
+  const tenantEvent = sampleEvent({
+    id: "evt-tenant",
+    subject: "app_abc:eu_tenant",
+    data: {
+      client_id: "app_abc",
+      external_user_id: "eu_tenant",
+      usage_subject: "eu_tenant",
+      gateway_request_id: "req-tenant",
+    },
+  });
+  const otherEvent = sampleEvent({
+    id: "evt-other",
+    subject: "app_abc:eu_other",
+    data: {
+      client_id: "app_abc",
+      external_user_id: "eu_other",
+      usage_subject: "eu_other",
+      gateway_request_id: "req-other",
+    },
+  });
+  __testSetHostedOpenMeterClient(
+    fakeOpenMeterClient(
+      {
+        "app_abc:eu_tenant": [tenantEvent],
+        "app_abc:eu_other": [otherEvent],
+      },
+      [
+        {
+          subject: "app_abc:eu_tenant",
+          value: 2,
+          groupBy: { client_id: "app_abc", external_user_id: "eu_tenant" },
+        },
+        {
+          subject: "app_abc:eu_other",
+          value: 1,
+          groupBy: { client_id: "app_abc", external_user_id: "eu_other" },
+        },
+      ],
+    ) as never,
+  );
+  t.after(() => resetHostedOpenMeterClientForTests());
+
+  const all = await listDeveloperSignedTicketRequests({
+    // The viewer owns app_abc but is neither of these identities.
+    userId: "00000000-0000-0000-0000-000000000000",
+    managedClientIds: ["app_abc"],
+    memberClientIds: [],
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.deepEqual(
+    all.items.map((row) => row.externalUserId).sort(),
+    ["eu_other", "eu_tenant"],
+  );
+
+  const filtered = await listDeveloperSignedTicketRequests({
+    userId: "00000000-0000-0000-0000-000000000000",
+    managedClientIds: ["app_abc"],
+    memberClientIds: [],
+    externalUserIds: ["eu_other"],
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.deepEqual(
+    filtered.items.map((row) => row.gatewayRequestId),
+    ["req-other"],
+  );
+});
+
+test("listDeveloperSignedTicketRequests stays empty without authorized apps", async () => {
+  const result = await listDeveloperSignedTicketRequests({
+    userId: "00000000-0000-0000-0000-000000000000",
+    managedClientIds: [],
+    memberClientIds: [],
+  });
+  assert.deepEqual(result.items, []);
+  assert.equal(result.nextCursor, null);
+});
+
+test("listDeveloperSignedTicketSessions reads managed apps app-wide", async (t) => {
+  const {
+    __testSetOpenMeterManifestRows,
+    __testClearOpenMeterManifestRows,
+  } = await import("./usage-read");
+  __testSetOpenMeterManifestRows("app_managed", [
+    {
+      manifestId: "managed-mid",
+      networkFeeUsdMicros: "200",
+      networkFeeUsdExact: "200",
+      feeWei: "20",
+      billableSecs: "4",
+      pipeline: "live-video-to-video",
+      modelId: "streamdiffusion",
+    },
+  ]);
+  t.after(() => __testClearOpenMeterManifestRows("app_managed"));
+
+  const result = await listDeveloperSignedTicketSessions({
+    userId: "00000000-0000-0000-0000-000000000000",
+    managedClientIds: ["app_managed"],
+    memberClientIds: [],
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.manifestId, "managed-mid");
+});
+
 test("enrichSessionRowWithEventStats attaches times and resolves duration", () => {
   const base = manifestMeterRowToSessionRow(
     {
@@ -677,4 +892,61 @@ test("enrichSessionRowWithEventStats attaches times and resolves duration", () =
   assert.equal(enriched.startedAt, "2026-07-20T15:00:00.000Z");
   assert.equal(enriched.endedAt, "2026-07-20T15:01:00.000Z");
   assert.equal(enriched.billableSecs, "12.5");
+});
+
+test("enrichSessionRowWithEventStats overlays app when meter model_id is unknown", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+        app: "live-video-to-video/scope",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video/scope");
+});
+
+test("enrichSessionRowWithEventStats uses live-video-to-video pipeline when app is empty", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video");
 });

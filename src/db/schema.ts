@@ -399,6 +399,8 @@ export const plans = pgTable(
     /**
      * draft | active | phase_out
      * phase_out: existing subscribers keep working; new subscribe/change-to blocked.
+     * Starter default (`is_starter_default`): `draft` disables auto-enrollment
+     * and new subscribe/change-to; existing Starter subscribers keep working.
      */
     status: text("status").notNull().default("draft"),
     /** ISO timestamp when forced migration should complete (typically next cycle). */
@@ -599,8 +601,9 @@ export const appBillingConfig = pgTable(
     /**
      * When true, Merchant Connect uses the live platform key.
      * When false (default for new rows), Connect uses STRIPE_SANDBOX_SECRET_KEY.
-     * Existing live merchant apps stay true. Locked once stripeConnectedAccountId
-     * is set — disconnect to switch.
+     * Existing live merchant apps stay true. Switching planes parks the
+     * Connected Account in `app_stripe_connect_accounts` and restores the
+     * target plane — disconnect only when deliberately dropping a plane.
      */
     stripeLivemode: boolean("stripe_livemode").notNull().default(false),
     /** How the merchant linked: account_link | oauth */
@@ -656,6 +659,57 @@ export const appBillingConfig = pgTable(
 );
 
 /**
+ * Merchant Connect state parked per Stripe plane, so an app can move between
+ * sandbox and live without losing either onboarding.
+ *
+ * `app_billing_config` still holds the *active* plane (`stripe_livemode` plus
+ * the `stripe_connected_account_id` / capability flags every consumer reads).
+ * This table is the durable copy for each plane the app has onboarded; a plane
+ * switch restores the target row into `app_billing_config` and re-syncs flags
+ * from Stripe. Supplier columns are deliberately not parked — they are
+ * re-derived from the connected account on the next flag sync.
+ */
+export const appStripeConnectAccounts = pgTable(
+  "app_stripe_connect_accounts",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    /** true = live Stripe platform, false = sandbox. */
+    livemode: boolean("livemode").notNull(),
+    stripeConnectedAccountId: text("stripe_connected_account_id").notNull(),
+    /** How the merchant linked: account_link | oauth */
+    stripeOnboardingMethod: text("stripe_onboarding_method"),
+    stripeChargesEnabled: boolean("stripe_charges_enabled")
+      .notNull()
+      .default(false),
+    stripePayoutsEnabled: boolean("stripe_payouts_enabled")
+      .notNull()
+      .default(false),
+    stripeDetailsSubmitted: boolean("stripe_details_submitted")
+      .notNull()
+      .default(false),
+    connectedAt: text("connected_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_app_stripe_connect_accounts_plane").on(
+      t.clientId,
+      t.livemode,
+    ),
+    index("idx_app_stripe_connect_accounts_account").on(
+      t.stripeConnectedAccountId,
+    ),
+  ],
+);
+
+/**
  * Per-owner cost-rail overrides, set by PymtHouse admins.
  *
  * The cost rail is account-level: a developer subscribes to PymtHouse once and
@@ -704,8 +758,8 @@ export const ownerBillingConfig = pgTable(
  *
  * Owner Starter included allowance is admin-editable here so changing the
  * default for new developers (and base-key re-sync) does not require a
- * redeploy. Env `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` is the
- * bootstrap fallback when this row is absent.
+ * redeploy. When this row is absent the allowance is `"0"`. App / M2M Starter
+ * seeding uses `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` separately.
  */
 export const platformBillingSettings = pgTable("platform_billing_settings", {
   id: text("id").primaryKey(),
@@ -872,7 +926,17 @@ export const appUserStripeCustomers = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [
+    /**
+     * Scoped by connected account so an app user keeps a distinct `cus_` per
+     * Stripe plane. Reads must filter on the account too — a bare
+     * (clientId, externalUserId) lookup can match the other plane's customer.
+     */
     uniqueIndex("idx_app_user_stripe_customers_unique").on(
+      t.clientId,
+      t.externalUserId,
+      t.stripeConnectedAccountId,
+    ),
+    index("idx_app_user_stripe_customers_client_user").on(
       t.clientId,
       t.externalUserId,
     ),

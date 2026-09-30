@@ -18,6 +18,7 @@ import {
 } from "@/lib/openmeter/usage-read";
 import {
   resolveViewerUsageClientIds,
+  resolveViewerUsageClientScopes,
   viewerHasAppUserMembership,
 } from "@/lib/viewer-usage-clients";
 
@@ -128,6 +129,37 @@ test("resolveViewerUsageClientIds includes owned apps and default membership", a
       true,
     );
   });
+});
+
+test("resolveViewerUsageClientScopes splits owned apps from memberships", async (t) => {
+  const ownerApp = await seedDeveloperAppWithClient({
+    name: `Owned ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(ownerApp);
+  });
+
+  const hostApp = await seedDeveloperAppWithClient({
+    name: `Host ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(hostApp);
+  });
+
+  await db.insert(appUsers).values({
+    id: randomUUID(),
+    clientId: hostApp.clientId,
+    externalUserId: ownerApp.userId,
+    status: "active",
+    role: "user",
+    createdAt: new Date().toISOString(),
+  });
+
+  const scopes = await resolveViewerUsageClientScopes(ownerApp.userId);
+  assert.equal(scopes.managed.includes(ownerApp.clientId), true);
+  assert.equal(scopes.member.includes(ownerApp.clientId), false);
+  assert.equal(scopes.member.includes(hostApp.clientId), true);
+  assert.equal(scopes.managed.includes(hostApp.clientId), false);
 });
 
 test("resolveViewerUsageClientIds excludes foreign apps without membership", async (t) => {

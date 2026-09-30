@@ -33,7 +33,7 @@ const ANALYTICS_DIMENSIONS = {
   client_id: "$.client_id",
   external_user_id: "$.external_user_id",
   pipeline: "$.pipeline",
-  model_id: "$.model_id",
+  app: "$.app",
   manifest_id: "$.manifest_id",
 } as const;
 
@@ -50,7 +50,7 @@ const KONNECT_METER_DEFINITIONS = [
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
       pipeline: "$.pipeline",
-      model_id: "$.model_id",
+      app: "$.app",
     },
   },
   {
@@ -63,7 +63,7 @@ const KONNECT_METER_DEFINITIONS = [
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
       pipeline: "$.pipeline",
-      model_id: "$.model_id",
+      app: "$.app",
     },
   },
   {

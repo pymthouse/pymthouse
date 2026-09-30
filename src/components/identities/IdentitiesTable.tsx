@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { formatBillableDuration, formatBillingUtcDate } from "@/lib/billing-format";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { truncateMiddle } from "@/lib/truncate-middle";
 import type { AppIdentityRow } from "@/lib/usage/identity-rollup";
 
 type SortKey = "fee" | "requests" | "duration" | "lastActive";
@@ -183,9 +184,7 @@ export default function IdentitiesTable({
                   className="font-mono text-xs text-zinc-200 hover:text-emerald-400 transition-colors"
                   title={row.externalUserId}
                 >
-                  {row.externalUserId.length > 28
-                    ? `${row.externalUserId.slice(0, 26)}…`
-                    : row.externalUserId}
+                  {truncateMiddle(row.externalUserId, 28)}
                 </Link>
                 {row.email ? (
                   <p className="mt-0.5 truncate text-[11px] text-zinc-600">{row.email}</p>

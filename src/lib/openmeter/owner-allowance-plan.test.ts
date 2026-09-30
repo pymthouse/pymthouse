@@ -15,12 +15,12 @@ import {
 } from "@/lib/openmeter/owner-allowance-plan";
 import { DEFAULT_TRIAL_FEATURE_KEY } from "@/lib/openmeter/constants";
 
-test("parseOwnerAllowanceIncludedMicros floors valid amounts and defaults invalid", () => {
+test("parseOwnerAllowanceIncludedMicros floors valid amounts and keeps explicit zero", () => {
   assert.equal(parseOwnerAllowanceIncludedMicros("5000000"), 5_000_000);
   assert.equal(parseOwnerAllowanceIncludedMicros("5000000.9"), 5_000_000);
-  assert.equal(parseOwnerAllowanceIncludedMicros("0"), 5_000_000);
-  assert.equal(parseOwnerAllowanceIncludedMicros("-1"), 5_000_000);
-  assert.equal(parseOwnerAllowanceIncludedMicros("nope"), 5_000_000);
+  assert.equal(parseOwnerAllowanceIncludedMicros("0"), 0);
+  assert.equal(parseOwnerAllowanceIncludedMicros("-1"), 0);
+  assert.equal(parseOwnerAllowanceIncludedMicros("nope"), 0);
 });
 
 test("openMeterPlanNeedsPublish only for draft/scheduled", () => {
@@ -28,6 +28,50 @@ test("openMeterPlanNeedsPublish only for draft/scheduled", () => {
   assert.equal(openMeterPlanNeedsPublish("scheduled"), true);
   assert.equal(openMeterPlanNeedsPublish("active"), false);
   assert.equal(openMeterPlanNeedsPublish(undefined), false);
+});
+
+test("buildOwnerAllowancePlanBody omits usage discounts when included amount is 0", () => {
+  const body = buildOwnerAllowancePlanBody({
+    planKey: "pymthouse_owner_starter",
+    planName: "Owner Starter",
+    planKind: "owner_starter",
+    featureId: "feat_1",
+    includedUsdMicros: 0,
+    unitAmount: "0.000001",
+  });
+  const phases = body.phases as Array<{
+    rate_cards: Array<{ discounts?: { usage?: string } }>;
+  }>;
+  assert.equal(phases[0]?.rate_cards[0]?.discounts, undefined);
+});
+
+test("createOwnerAllowancePlan publishes no usage discount for stored 0", async () => {
+  let createdBody: Record<string, unknown> | undefined;
+  const client = {
+    plans: {
+      create: async (body: Record<string, unknown>) => {
+        createdBody = body;
+        return { id: "created_zero" };
+      },
+      list: async () => ({ items: [] }),
+      get: async () => null,
+    },
+  } as unknown as OpenMeter;
+
+  const id = await createOwnerAllowancePlan({
+    client,
+    planKey: "pymthouse_owner_starter",
+    planName: "Owner Starter",
+    planKind: "owner_starter",
+    featureId: "feat_1",
+    includedUsdMicros: "0",
+    createFailedMessage: "Failed to create Owner Starter plan",
+  });
+  assert.equal(id, "created_zero");
+  const phases = createdBody?.phases as Array<{
+    rate_cards: Array<{ discounts?: { usage?: string } }>;
+  }>;
+  assert.equal(phases[0]?.rate_cards[0]?.discounts, undefined);
 });
 
 test("buildOwnerAllowancePlanBody sets kind metadata and rate card", () => {

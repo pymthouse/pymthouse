@@ -271,6 +271,34 @@ test("pinMerchantCustomInvoicingIfNeeded pins only merchant apps", async () => {
   );
   assert.deepEqual(prepareCalls, [{ clientId: "app_m", customerId: "cust_m" }]);
 });
+
+test("pinMerchantCustomInvoicingIfNeeded forwards the payment-plane livemode", async () => {
+  const { pinMerchantCustomInvoicingIfNeeded } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  const calls: Array<boolean | undefined> = [];
+  await pinMerchantCustomInvoicingIfNeeded(
+    {
+      client: {} as never,
+      clientId: "app_m",
+      customerId: "cust_parked",
+      customerKey: "sbx_eu_1",
+      stripeLivemode: false,
+    },
+    {
+      getConfig: async () =>
+        ({
+          billingMode: "merchant",
+          stripeLivemode: true,
+          stripeConnectedAccountId: "acct_live",
+        }) as never,
+      prepareMerchant: async (input) => {
+        calls.push(input.stripeLivemode);
+      },
+    },
+  );
+  assert.deepEqual(calls, [false]);
+});
 test("stripe billing 409 recovers via recoverProfile then creates", async () => {
   resetPlanKeyCacheForTests();
   const stripeErr = new Error(

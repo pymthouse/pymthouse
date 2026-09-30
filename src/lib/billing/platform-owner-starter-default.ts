@@ -3,14 +3,13 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { platformBillingSettings } from "@/db/schema";
 import { OWNER_STARTER_PLAN_NAME } from "@/lib/openmeter/owner-starter-key";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 
 /** Fixed primary key for the singleton platform billing settings row. */
 export const PLATFORM_BILLING_SETTINGS_ID = "default";
 
 export const OWNER_STARTER_PLAN_NAME_MAX_LEN = 80;
 
-export type PlatformOwnerStarterSource = "db" | "env" | "fallback";
+export type PlatformOwnerStarterSource = "db" | "fallback";
 
 export type ResolvedPlatformOwnerStarterDefault = {
   ownerStarterIncludedUsdMicros: string;
@@ -61,23 +60,12 @@ export function coerceOwnerStarterPlanName(
   return trimmed;
 }
 
-function envOrFallbackSource(): {
-  micros: string;
-  source: Exclude<PlatformOwnerStarterSource, "db">;
-} {
-  const fromEnv = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS?.trim();
-  if (fromEnv && /^\d+$/.test(fromEnv)) {
-    return { micros: fromEnv, source: "env" };
-  }
-  return { micros: defaultStarterIncludedUsdMicros(), source: "fallback" };
-}
-
 /**
  * Resolve the platform Owner Starter included allowance + display name.
  *
- * Precedence for micros: DB singleton → env → hardcoded `$5` (`5000000`).
+ * Precedence for micros: DB singleton → `"0"`.
  * Name: DB when set → `OWNER_STARTER_PLAN_NAME`.
- * App/M2M Starter seed continues to use `defaultStarterIncludedUsdMicros()` only.
+ * App/M2M Starter seed uses `defaultStarterIncludedUsdMicros()` only.
  */
 export async function resolvePlatformOwnerStarterDefault(): Promise<ResolvedPlatformOwnerStarterDefault> {
   const rows = await db
@@ -95,7 +83,7 @@ export async function resolvePlatformOwnerStarterDefault(): Promise<ResolvedPlat
   const row = rows[0];
   const planName = coerceOwnerStarterPlanName(row?.ownerStarterPlanName);
   const fromDb = normalizeMicros(row?.ownerStarterIncludedUsdMicros);
-  if (fromDb) {
+  if (fromDb != null) {
     return {
       ownerStarterIncludedUsdMicros: fromDb,
       ownerStarterPlanName: planName,
@@ -105,11 +93,10 @@ export async function resolvePlatformOwnerStarterDefault(): Promise<ResolvedPlat
     };
   }
 
-  const { micros, source } = envOrFallbackSource();
   return {
-    ownerStarterIncludedUsdMicros: micros,
+    ownerStarterIncludedUsdMicros: "0",
     ownerStarterPlanName: planName,
-    source,
+    source: "fallback",
     updatedBy: null,
     updatedAt: null,
   };

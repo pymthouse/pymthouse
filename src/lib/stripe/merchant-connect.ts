@@ -4,13 +4,18 @@
  */
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "@/db/index";
+import { db, type Db } from "@/db/index";
 import {
   appBillingConfig,
   appBillingOauthStates,
+  appStripeConnectAccounts,
   appUserStripeCustomers,
 } from "@/db/schema";
 import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
+import {
+  platformDefaultApplicationFeeBps,
+  platformDefaultEndUserCap,
+} from "@/lib/billing/platform-billing-defaults";
 import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
@@ -196,10 +201,12 @@ export function __setResolveAppLivemodeForWebhookForTests(
 }
 
 /**
- * True when the app's stored stripeLivemode matches the webhook ingress plane.
- * Sandbox deliveries must not mutate live apps (and vice versa).
+ * True only when `expectedLivemode` is the app's *active* stripeLivemode.
+ * Payment-method restore must use this. A parked-plane `pm_` belongs to the
+ * parked Connect customer; promoting it on the active plane applies the wrong
+ * card or fails Stripe default-PM promotion with HTTP 500 and retries.
  */
-export async function appLivemodeMatchesWebhookPlane(
+export async function appActiveLivemodeMatchesWebhookPlane(
   clientId: string,
   expectedLivemode: boolean,
 ): Promise<boolean> {
@@ -209,6 +216,75 @@ export async function appLivemodeMatchesWebhookPlane(
   }
   const config = await getAppBillingConfig(clientId);
   return appStripeLivemode(config) === expectedLivemode;
+}
+
+/**
+ * True when the webhook ingress plane is one this app owns — the *active*
+ * stripeLivemode, or a *parked* plane in `app_stripe_connect_accounts`.
+ *
+ * After a Live↔Sandbox switch (#480), in-flight Connect Checkout / auto-topup
+ * webhooks still arrive on the plane that collected the payment. Rejecting
+ * them with HTTP 200 `livemode_mismatch` prevents Stripe retries and silently
+ * drops prepaid credits. Settlement passes that webhook livemode into the
+ * grant so `eu_` / `sbx_eu_` follows the payment, not the active plane.
+ *
+ * Do not use this for payment-method restore. Use
+ * {@link appActiveLivemodeMatchesWebhookPlane}.
+ */
+export async function appLivemodeMatchesWebhookPlane(
+  clientId: string,
+  expectedLivemode: boolean,
+): Promise<boolean> {
+  if (await appActiveLivemodeMatchesWebhookPlane(clientId, expectedLivemode)) {
+    return true;
+  }
+  // The test seam stands in for the active plane only.
+  if (resolveAppLivemodeForWebhookForTests) {
+    return false;
+  }
+  const parked = await getMerchantConnectPlane(clientId, expectedLivemode);
+  return parked != null;
+}
+
+/**
+ * Which Stripe plane (active or parked) owns this Connected Account for the
+ * app, if any. Used so plane-switch does not drop in-flight Connect settlements.
+ */
+export async function resolveMerchantConnectAccountPlane(
+  clientId: string,
+  connectedAccountId: string,
+): Promise<{ livemode: boolean } | null> {
+  const accountId = connectedAccountId.trim();
+  if (!accountId) {
+    return null;
+  }
+  const appId = clientId.trim();
+  if (!appId) {
+    return null;
+  }
+
+  const config = await getAppBillingConfig(appId);
+  if (config?.stripeConnectedAccountId?.trim() === accountId) {
+    return { livemode: appStripeLivemode(config) };
+  }
+
+  const parkedRows = await db
+    .select({
+      livemode: appStripeConnectAccounts.livemode,
+    })
+    .from(appStripeConnectAccounts)
+    .where(
+      and(
+        eq(appStripeConnectAccounts.clientId, appId),
+        eq(appStripeConnectAccounts.stripeConnectedAccountId, accountId),
+      ),
+    )
+    .limit(1);
+  const parked = parkedRows[0];
+  if (!parked) {
+    return null;
+  }
+  return { livemode: parked.livemode };
 }
 
 /**
@@ -231,6 +307,25 @@ export function merchantConnectOnboardingLivemode(
     return appStripeLivemode(config);
   }
   return config?.stripeLivemode === true;
+}
+
+/**
+ * Live vs sandbox for `startMerchantConnect`.
+ * An explicit Payments-toggle value wins until a Connected Account is linked.
+ */
+export function resolveStartMerchantConnectLivemode(input: {
+  requestedLivemode?: boolean;
+  config: {
+    stripeLivemode?: boolean | null;
+    billingMode?: string | null;
+    stripeConnectedAccountId?: string | null;
+  } | null | undefined;
+}): boolean {
+  const linked = Boolean(input.config?.stripeConnectedAccountId?.trim());
+  if (typeof input.requestedLivemode === "boolean" && !linked) {
+    return input.requestedLivemode;
+  }
+  return merchantConnectOnboardingLivemode(input.config);
 }
 
 function stripeSecretKey(livemode = true): string {
@@ -395,33 +490,252 @@ export const __testMerchantConnectInvoices = {
 /** @internal Exported for unit tests. */
 export const __testMapMerchantInvoice = mapMerchantInvoice;
 
+export type MerchantConnectPlane =
+  typeof appStripeConnectAccounts.$inferSelect;
+
+/** Drizzle handle used inside plane-switch transactions (or the global `db`). */
+type ConnectDb = Pick<Db, "select" | "insert" | "update" | "delete">;
+
+function coerceOnboardingMethod(
+  value: string | null | undefined,
+): StripeOnboardingMethod | null {
+  if (value === "account_link" || value === "oauth") {
+    return value;
+  }
+  return null;
+}
+
+/** Parked Merchant Connect state for one Stripe plane, if the app onboarded it. */
+export async function getMerchantConnectPlane(
+  clientId: string,
+  livemode: boolean,
+  exec: ConnectDb = db,
+): Promise<MerchantConnectPlane | null> {
+  const rows = await exec
+    .select()
+    .from(appStripeConnectAccounts)
+    .where(
+      and(
+        eq(appStripeConnectAccounts.clientId, clientId),
+        eq(appStripeConnectAccounts.livemode, livemode),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Mirror the active plane's Connect state into its parked row, so switching
+ * away and back does not require re-onboarding.
+ */
+async function parkConnectedAccountPlane(
+  input: {
+    clientId: string;
+    livemode: boolean;
+    accountId: string;
+    onboardingMethod?: StripeOnboardingMethod | null;
+    chargesEnabled: boolean;
+    payoutsEnabled: boolean;
+    detailsSubmitted: boolean;
+    connectedAt: string | null;
+  },
+  exec: ConnectDb = db,
+): Promise<void> {
+  const existing = await getMerchantConnectPlane(
+    input.clientId,
+    input.livemode,
+    exec,
+  );
+  const now = new Date().toISOString();
+  const values = {
+    stripeConnectedAccountId: input.accountId,
+    stripeChargesEnabled: input.chargesEnabled,
+    stripePayoutsEnabled: input.payoutsEnabled,
+    stripeDetailsSubmitted: input.detailsSubmitted,
+    connectedAt: input.connectedAt,
+    // Keep a previously recorded method when the caller has nothing better.
+    stripeOnboardingMethod:
+      input.onboardingMethod ??
+      coerceOnboardingMethod(existing?.stripeOnboardingMethod) ??
+      null,
+    updatedAt: now,
+  };
+  if (existing) {
+    await exec
+      .update(appStripeConnectAccounts)
+      .set(values)
+      .where(eq(appStripeConnectAccounts.id, existing.id));
+    return;
+  }
+  await exec.insert(appStripeConnectAccounts).values({
+    id: uuidv4(),
+    clientId: input.clientId,
+    livemode: input.livemode,
+    createdAt: now,
+    ...values,
+  });
+}
+
+/** Forget one plane's onboarding (disconnect); the other plane is untouched. */
+export async function forgetMerchantConnectPlane(
+  clientId: string,
+  livemode: boolean,
+): Promise<void> {
+  await db
+    .delete(appStripeConnectAccounts)
+    .where(
+      and(
+        eq(appStripeConnectAccounts.clientId, clientId),
+        eq(appStripeConnectAccounts.livemode, livemode),
+      ),
+    );
+}
+
+/**
+ * Whether a Connect flag refresh may mutate the active `app_billing_config` row.
+ *
+ * After a Live↔Sandbox plane switch, `syncConnectedAccountFlags` / webhooks can
+ * still finish Stripe I/O for the plane that was just parked. Writing that
+ * `acct_` onto active without flipping `stripeLivemode` leaves a corrupted
+ * active plane (sandbox livemode + live account, or the reverse).
+ */
+export function shouldWriteActiveConnectFlags(input: {
+  existing:
+    | {
+        stripeConnectedAccountId?: string | null;
+        stripeLivemode?: boolean | null;
+      }
+    | null
+    | undefined;
+  accountId: string;
+  livemode: boolean;
+}): boolean {
+  if (!input.existing) {
+    // No active row yet — allow create/seed during first onboarding.
+    return true;
+  }
+  const activeAccountId = input.existing.stripeConnectedAccountId?.trim() || "";
+  return (
+    activeAccountId === input.accountId &&
+    appStripeLivemode(input.existing) === input.livemode
+  );
+}
+
 async function persistConnectedAccountFlags(input: {
   clientId: string;
   accountId: string;
+  livemode: boolean;
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   detailsSubmitted: boolean;
 }): Promise<void> {
   const ready = input.chargesEnabled && input.detailsSubmitted;
-  const existing = await getAppBillingConfig(input.clientId);
-  const merchantProfileId =
-    existing?.openmeterMerchantBillingProfileId?.trim() ||
-    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
-    null;
-  // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
-  // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
-  await upsertAppBillingConfig(input.clientId, {
-    stripeConnectedAccountId: input.accountId,
-    stripeChargesEnabled: input.chargesEnabled,
-    stripePayoutsEnabled: input.payoutsEnabled,
-    stripeDetailsSubmitted: input.detailsSubmitted,
-    connectedAt: ready
-      ? (existing?.connectedAt ?? new Date().toISOString())
-      : (existing?.connectedAt ?? null),
-    ...(existing?.billingMode === "merchant" && merchantProfileId
-      ? { openmeterMerchantBillingProfileId: merchantProfileId }
-      : {}),
+
+  // Serialize against switchMerchantConnectPlane's row lock so we re-check the
+  // active plane after Stripe I/O, not on a stale pre-switch snapshot.
+  await db.transaction(async (tx) => {
+    const locked = await tx
+      .select()
+      .from(appBillingConfig)
+      .where(eq(appBillingConfig.clientId, input.clientId))
+      .for("update")
+      .limit(1);
+    const existing = locked[0] ?? null;
+    const writeActive = shouldWriteActiveConnectFlags({
+      existing,
+      accountId: input.accountId,
+      livemode: input.livemode,
+    });
+    const parkedBefore = writeActive
+      ? null
+      : await getMerchantConnectPlane(input.clientId, input.livemode, tx);
+    const merchantProfileId =
+      existing?.openmeterMerchantBillingProfileId?.trim() ||
+      process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+      null;
+    const connectedAtSource = writeActive ? existing : parkedBefore;
+    const connectedAt = ready
+      ? (connectedAtSource?.connectedAt ?? new Date().toISOString())
+      : (connectedAtSource?.connectedAt ?? null);
+    const onboardingMethod = coerceOnboardingMethod(
+      writeActive
+        ? existing?.stripeOnboardingMethod
+        : (parkedBefore?.stripeOnboardingMethod ??
+            existing?.stripeOnboardingMethod),
+    );
+
+    // Always refresh the parked row for this plane so switching back still
+    // sees up-to-date charges/details flags — even when we must not touch active.
+    await parkConnectedAccountPlane(
+      {
+        clientId: input.clientId,
+        livemode: input.livemode,
+        accountId: input.accountId,
+        onboardingMethod,
+        chargesEnabled: input.chargesEnabled,
+        payoutsEnabled: input.payoutsEnabled,
+        detailsSubmitted: input.detailsSubmitted,
+        connectedAt,
+      },
+      tx,
+    );
+
+    if (!writeActive) {
+      return;
+    }
+
+    // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
+    // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
+    const now = new Date().toISOString();
+    const values = {
+      stripeConnectedAccountId: input.accountId,
+      stripeChargesEnabled: input.chargesEnabled,
+      stripePayoutsEnabled: input.payoutsEnabled,
+      stripeDetailsSubmitted: input.detailsSubmitted,
+      connectedAt,
+      ...(existing?.billingMode === "merchant" && merchantProfileId
+        ? { openmeterMerchantBillingProfileId: merchantProfileId }
+        : {}),
+      updatedAt: now,
+    };
+    if (existing) {
+      await tx
+        .update(appBillingConfig)
+        .set(values)
+        .where(eq(appBillingConfig.clientId, input.clientId));
+      return;
+    }
+    await tx.insert(appBillingConfig).values({
+      id: uuidv4(),
+      clientId: input.clientId,
+      stripeConnectStatus: "disconnected",
+      defaultCurrency: "USD",
+      endUserCap: platformDefaultEndUserCap(),
+      applicationFeeBps: platformDefaultApplicationFeeBps(),
+      createdAt: now,
+      ...values,
+    });
   });
+}
+
+/**
+ * Test-only entry to exercise Connect flag persistence after a plane switch.
+ * Always throws outside NODE_ENV=test.
+ */
+export async function __persistConnectedAccountFlagsForTests(input: {
+  clientId: string;
+  accountId: string;
+  livemode: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+}): Promise<void> {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__persistConnectedAccountFlagsForTests is only available in test",
+    );
+  }
+  await persistConnectedAccountFlags(input);
 }
 
 async function syncConnectedAccountFlags(
@@ -437,6 +751,7 @@ async function syncConnectedAccountFlags(
   await persistConnectedAccountFlags({
     clientId,
     accountId,
+    livemode,
     chargesEnabled: status.chargesEnabled,
     payoutsEnabled: status.payoutsEnabled,
     detailsSubmitted: status.detailsSubmitted,
@@ -477,8 +792,11 @@ async function syncSupplierBestEffort(
 
 /**
  * Apply Connect capability flags from a verified `account.updated` webhook.
- * No-ops when the acct_ is not linked, or when the app's stripeLivemode does
- * not match the webhook plane (`ignored: livemode_mismatch`).
+ * No-ops when the acct_ is not the app's active account, or when the app's
+ * stripeLivemode does not match the webhook plane (`ignored: livemode_mismatch`).
+ *
+ * Updates for a parked (non-active) plane are therefore dropped; switching back
+ * to that plane re-reads the account from Stripe, so nothing is lost.
  */
 export async function applyConnectedAccountWebhookUpdate(input: {
   accountId: string;
@@ -504,6 +822,7 @@ export async function applyConnectedAccountWebhookUpdate(input: {
   await persistConnectedAccountFlags({
     clientId,
     accountId: input.accountId,
+    livemode: input.expectedLivemode,
     chargesEnabled: input.chargesEnabled,
     payoutsEnabled: input.payoutsEnabled,
     detailsSubmitted: input.detailsSubmitted,
@@ -529,6 +848,7 @@ export async function startMerchantConnect({
   clientId,
   email,
   displayName,
+  stripeLivemode: requestedLivemode,
 }: {
   clientId: string;
   /** Reserved for audit / future session binding; Account Links do not persist OAuth state. */
@@ -536,12 +856,28 @@ export async function startMerchantConnect({
   mode?: MerchantConnectMode;
   email?: string;
   displayName?: string;
+  /** Selected Live/Sandbox mode from Payments. Ignored once an acct_ is linked. */
+  stripeLivemode?: boolean;
 }): Promise<{ method: "account_link"; url: string; accountId: string }> {
   await ensureOmStarterSideEffect(clientId);
 
-  const existing = await getAppBillingConfig(clientId);
-  const livemode = merchantConnectOnboardingLivemode(existing);
-  let accountId = existing?.stripeConnectedAccountId?.trim() || "";
+  let existing = await getAppBillingConfig(clientId);
+  const linkedAccountId = existing?.stripeConnectedAccountId?.trim() || "";
+  // Persist the Payments toggle on this request. Complete-onboarding used to
+  // ignore the selected mode and fall through to the owner_rollup sandbox default.
+  if (typeof requestedLivemode === "boolean" && !linkedAccountId) {
+    await upsertAppBillingConfig(clientId, { stripeLivemode: requestedLivemode });
+    existing = await getAppBillingConfig(clientId);
+  }
+  const livemode = resolveStartMerchantConnectLivemode({
+    requestedLivemode,
+    config: existing,
+  });
+  // Resume this plane's own onboarding. After a plane switch the active config
+  // has no account, but the plane may already have a parked acct_ to finish.
+  const parked = await getMerchantConnectPlane(clientId, livemode);
+  let accountId =
+    linkedAccountId || (parked?.stripeConnectedAccountId?.trim() ?? "");
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
       clientId,
@@ -549,12 +885,15 @@ export async function startMerchantConnect({
       displayName,
       livemode,
     });
+  }
+  if (accountId !== linkedAccountId) {
     await upsertAppBillingConfig(clientId, {
       stripeConnectedAccountId: accountId,
       stripeOnboardingMethod: "account_link" satisfies StripeOnboardingMethod,
-      stripeChargesEnabled: false,
-      stripePayoutsEnabled: false,
-      stripeDetailsSubmitted: false,
+      stripeChargesEnabled: parked?.stripeChargesEnabled ?? false,
+      stripePayoutsEnabled: parked?.stripePayoutsEnabled ?? false,
+      stripeDetailsSubmitted: parked?.stripeDetailsSubmitted ?? false,
+      connectedAt: parked?.connectedAt ?? null,
       stripeLivemode: livemode,
     });
   }
@@ -626,6 +965,169 @@ export async function completeMerchantConnectOAuth(input: {
   });
   await syncConnectedAccountFlags(input.clientId, accountId, livemode);
   await ensureOmStarterSideEffect(input.clientId);
+}
+
+export type MerchantConnectPlaneSwitch = {
+  changed: boolean;
+  livemode: boolean;
+  /** Account restored for the target plane, or null when it needs onboarding. */
+  accountId: string | null;
+  /** True when the target plane can already charge end users. */
+  ready: boolean;
+};
+
+/** Stripe-derived supplier identity, cleared when leaving a plane. */
+const CONNECT_SUPPLIER_RESET = {
+  supplierCountry: null,
+  supplierName: null,
+  supplierBusinessType: null,
+  supplierAddressLine1: null,
+  supplierAddressLine2: null,
+  supplierAddressCity: null,
+  supplierAddressState: null,
+  supplierAddressPostalCode: null,
+  supplierTaxIdOnFileAtStripe: false,
+  supplierSyncedAt: null,
+} as const;
+
+/**
+ * Move the app between the sandbox and live Stripe planes.
+ *
+ * The plane being left is parked first, so its Connected Account survives; the
+ * target plane's parked row (if any) is restored into `app_billing_config`,
+ * which is what every consumer reads. Developer-supplied `supplierTaxId` is
+ * kept — the rest of the supplier identity is re-derived from the target
+ * account by the flag sync below.
+ *
+ * Park + restore run in one transaction with a row lock on `app_billing_config`
+ * so overlapping switches serialize. Stripe flag refresh stays outside the
+ * transaction (network I/O must not hold the lock).
+ *
+ * Callers own the caveat that `billingMode: "merchant"` on a plane that has not
+ * finished onboarding cannot sell paid plans until it does.
+ */
+export async function switchMerchantConnectPlane(input: {
+  clientId: string;
+  livemode: boolean;
+}): Promise<MerchantConnectPlaneSwitch> {
+  const { clientId, livemode } = input;
+
+  type SwitchDbResult =
+    | {
+        changed: false;
+        livemode: boolean;
+        accountId: string | null;
+        ready: boolean;
+      }
+    | {
+        changed: true;
+        livemode: boolean;
+        accountId: string | null;
+      };
+
+  const dbResult: SwitchDbResult = await db.transaction(async (tx) => {
+    // Serialize overlapping plane switches for this app.
+    const locked = await tx
+      .select()
+      .from(appBillingConfig)
+      .where(eq(appBillingConfig.clientId, clientId))
+      .for("update")
+      .limit(1);
+    const config = locked[0] ?? null;
+    const activeAccountId = config?.stripeConnectedAccountId?.trim() || "";
+
+    if (config && appStripeLivemode(config) === livemode) {
+      return {
+        changed: false as const,
+        livemode,
+        accountId: activeAccountId || null,
+        ready: isMerchantConnectPaymentsReady(config),
+      };
+    }
+
+    if (activeAccountId && config) {
+      await parkConnectedAccountPlane(
+        {
+          clientId,
+          livemode: appStripeLivemode(config),
+          accountId: activeAccountId,
+          onboardingMethod: coerceOnboardingMethod(config.stripeOnboardingMethod),
+          chargesEnabled: config.stripeChargesEnabled ?? false,
+          payoutsEnabled: config.stripePayoutsEnabled ?? false,
+          detailsSubmitted: config.stripeDetailsSubmitted ?? false,
+          connectedAt: config.connectedAt ?? null,
+        },
+        tx,
+      );
+    }
+
+    const target = await getMerchantConnectPlane(clientId, livemode, tx);
+    const now = new Date().toISOString();
+    const restored = {
+      stripeLivemode: livemode,
+      stripeConnectedAccountId: target?.stripeConnectedAccountId ?? null,
+      stripeOnboardingMethod: target?.stripeOnboardingMethod ?? null,
+      stripeChargesEnabled: target?.stripeChargesEnabled ?? false,
+      stripePayoutsEnabled: target?.stripePayoutsEnabled ?? false,
+      stripeDetailsSubmitted: target?.stripeDetailsSubmitted ?? false,
+      connectedAt: target?.connectedAt ?? null,
+      ...CONNECT_SUPPLIER_RESET,
+      updatedAt: now,
+    };
+
+    if (config) {
+      await tx
+        .update(appBillingConfig)
+        .set(restored)
+        .where(eq(appBillingConfig.clientId, clientId));
+    } else {
+      await tx.insert(appBillingConfig).values({
+        id: uuidv4(),
+        clientId,
+        stripeConnectStatus: "disconnected",
+        defaultCurrency: "USD",
+        endUserCap: platformDefaultEndUserCap(),
+        applicationFeeBps: platformDefaultApplicationFeeBps(),
+        createdAt: now,
+        ...restored,
+      });
+    }
+
+    const targetAccountId = target?.stripeConnectedAccountId?.trim() || "";
+    return {
+      changed: true as const,
+      livemode,
+      accountId: targetAccountId || null,
+    };
+  });
+
+  if (!dbResult.changed) {
+    return dbResult;
+  }
+
+  const targetAccountId = dbResult.accountId;
+  if (!targetAccountId) {
+    return { changed: true, livemode, accountId: null, ready: false };
+  }
+
+  // Flags parked on the way out can be stale; re-read Stripe (and re-derive
+  // supplier) so the restored plane reports what it can actually do now.
+  try {
+    await syncConnectedAccountFlags(clientId, targetAccountId, livemode);
+  } catch (err) {
+    console.warn(
+      "Connect flag refresh after plane switch failed",
+      sanitizeForLog(clientId),
+      sanitizeForLog(err),
+    );
+  }
+  const refreshed = await getAppBillingConfig(clientId);
+  return {
+    changed: true,
+    livemode,
+    accountId: targetAccountId,
+    ready: isMerchantConnectPaymentsReady(refreshed),
+  };
 }
 
 export async function syncMerchantConnectStatus(clientId: string): Promise<void> {
@@ -722,6 +1224,10 @@ export async function upsertAppUserStripeCustomer(input: {
       and(
         eq(appUserStripeCustomers.clientId, input.clientId),
         eq(appUserStripeCustomers.externalUserId, input.externalUserId),
+        eq(
+          appUserStripeCustomers.stripeConnectedAccountId,
+          input.stripeConnectedAccountId,
+        ),
       ),
     )
     .limit(1);
@@ -738,7 +1244,6 @@ export async function upsertAppUserStripeCustomer(input: {
     await db
       .update(appUserStripeCustomers)
       .set({
-        stripeConnectedAccountId: input.stripeConnectedAccountId,
         stripeCustomerId: input.stripeCustomerId,
         openmeterCustomerId: canonical.openmeterCustomerId,
         openmeterCustomerKey: canonical.openmeterCustomerKey,
@@ -760,9 +1265,15 @@ export async function upsertAppUserStripeCustomer(input: {
   });
 }
 
+/**
+ * An app user holds one Stripe customer per connected account, so the account
+ * is part of the lookup — without it a live-plane read can return the sandbox
+ * `cus_` (or the reverse).
+ */
 export async function getAppUserStripeCustomer(input: {
   clientId: string;
   externalUserId: string;
+  stripeConnectedAccountId: string;
 }): Promise<typeof appUserStripeCustomers.$inferSelect | null> {
   const rows = await db
     .select()
@@ -771,6 +1282,10 @@ export async function getAppUserStripeCustomer(input: {
       and(
         eq(appUserStripeCustomers.clientId, input.clientId),
         eq(appUserStripeCustomers.externalUserId, input.externalUserId),
+        eq(
+          appUserStripeCustomers.stripeConnectedAccountId,
+          input.stripeConnectedAccountId,
+        ),
       ),
     )
     .limit(1);
@@ -911,12 +1426,15 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim()
-  ) {
+  if (!accountId) {
+    return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
+  }
+  const customer = await getAppUserStripeCustomer({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeConnectedAccountId: accountId,
+  });
+  if (!customer?.stripeCustomerId?.trim()) {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const offset = (input.page - 1) * input.pageSize;
@@ -1090,12 +1608,15 @@ export async function getMerchantPaidDebtThisCycleUsdMicros(input: {
     return 0n;
   }
   const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim()
-  ) {
+  if (!accountId) {
+    return 0n;
+  }
+  const customer = await getAppUserStripeCustomer({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeConnectedAccountId: accountId,
+  });
+  if (!customer?.stripeCustomerId?.trim()) {
     return 0n;
   }
 
@@ -1128,14 +1649,16 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
     return null;
   }
   const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
   const invoiceId = input.invoiceId.trim();
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim() ||
-    !invoiceId
-  ) {
+  if (!accountId || !invoiceId) {
+    return null;
+  }
+  const customer = await getAppUserStripeCustomer({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeConnectedAccountId: accountId,
+  });
+  if (!customer?.stripeCustomerId?.trim()) {
     return null;
   }
 
@@ -1185,6 +1708,7 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
   const existing = await getAppUserStripeCustomer({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
+    stripeConnectedAccountId: input.accountId,
   });
   const canonical = await resolveCanonicalOpenMeterCustomerLink({
     clientId: input.clientId,
@@ -1194,10 +1718,7 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     storedCustomerId: existing?.openmeterCustomerId,
     storedCustomerKey: existing?.openmeterCustomerKey,
   });
-  if (
-    existing?.stripeCustomerId &&
-    existing.stripeConnectedAccountId === input.accountId
-  ) {
+  if (existing?.stripeCustomerId) {
     const keyStale =
       existing.openmeterCustomerKey !== canonical.openmeterCustomerKey;
     const idStale =

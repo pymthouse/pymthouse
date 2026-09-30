@@ -126,6 +126,72 @@ export function buildInitiateLoginRedirectUrl(
 }
 
 /**
+ * Verification URIs for an RFC 8628 device authorization response.
+ *
+ * `verification_uri` stays on this authorization server because RFC 8628 3.2
+ * expects end users to type it by hand. `verification_uri_complete` is
+ * "designed for non-textual transmission" and has no AS-origin constraint, so
+ * when the app federates device approval it targets the RP's registered
+ * `initiate_login_uri` directly (OIDC Core third-party initiated login). The
+ * browser never transits `/oidc/device/initiate-login`. Return trips to
+ * `target_link_uri` must not re-federate once the DeviceCode is bound — see
+ * `/oidc/device` which gates on `isDeviceCodeBound`. Falls back to the
+ * authorization-server URL whenever the RP target cannot be built.
+ */
+export function deviceAuthVerificationUris(args: {
+  userCode?: string | null;
+  clientId?: string | null;
+  issuer: string;
+  externalOrigin: string;
+  initiateLoginUri?: string | null;
+  loginHint?: string | null;
+}): { verification_uri: string; verification_uri_complete?: string } {
+  const verification_uri = `${args.externalOrigin}/oidc/device`;
+  if (!args.userCode) {
+    return { verification_uri };
+  }
+
+  const qs = new URLSearchParams();
+  qs.set("user_code", args.userCode);
+  if (args.clientId) {
+    qs.set("client_id", args.clientId);
+  }
+  qs.set("iss", args.issuer);
+  const onAuthorizationServer = `${verification_uri}?${qs.toString()}`;
+
+  if (!args.initiateLoginUri || !args.clientId) {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+
+  try {
+    return {
+      verification_uri,
+      verification_uri_complete: buildInitiateLoginRedirectUrl(
+        args.initiateLoginUri,
+        {
+          iss: args.issuer,
+          target_link_uri: buildDeviceFlowTargetLinkUri({
+            user_code: args.userCode,
+            client_id: args.clientId,
+            iss: args.issuer,
+            login_hint: args.loginHint,
+          }),
+          login_hint: args.loginHint,
+        },
+      ),
+    };
+  } catch {
+    return {
+      verification_uri,
+      verification_uri_complete: onAuthorizationServer,
+    };
+  }
+}
+
+/**
  * Extract `user_code` from a device `target_link_uri` (same shape as
  * `buildDeviceFlowTargetLinkUri`).
  */

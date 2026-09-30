@@ -21,31 +21,24 @@ import {
   findOpenMeterPlanByKey,
   readUsageDiscountUsdMicrosFromPlanBody,
 } from "@/lib/openmeter/owner-allowance-plan";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import {
+  defaultStarterIncludedUsdMicros,
+  parseIncludedUsdMicros,
+} from "@/lib/starter-default-plan-display";
 import { getPrimaryOpenMeterSubscriptionForAppUser } from "@/lib/openmeter/subscription-read";
 import {
   ceilExactUsdMicrosSum,
   meterRowValueToNumber,
 } from "@/lib/openmeter/usage-read";
 
-function parsePositiveMicros(raw: string | null | undefined): bigint | null {
-  if (!raw?.trim()) return null;
-  try {
-    const value = BigInt(raw.trim());
-    return value > 0n ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Included usage discount for a local plan row (starter falls back to env default). */
 export function includedDiscountUsdMicrosForPlan(
   plan: Pick<typeof plans.$inferSelect, "includedUsdMicros" | "isStarterDefault">,
 ): bigint | null {
-  const fromPlan = parsePositiveMicros(plan.includedUsdMicros);
+  const fromPlan = parseIncludedUsdMicros(plan.includedUsdMicros);
   if (fromPlan != null) return fromPlan;
   if (plan.isStarterDefault) {
-    return parsePositiveMicros(defaultStarterIncludedUsdMicros());
+    return parseIncludedUsdMicros(defaultStarterIncludedUsdMicros());
   }
   return null;
 }
@@ -107,7 +100,7 @@ export async function includedDiscountFromOpenMeterSubscription(subscription: {
   }
   try {
     const omPlan = await client.plans.get(planId);
-    return parsePositiveMicros(readUsageDiscountUsdMicrosFromPlanBody(omPlan));
+    return parseIncludedUsdMicros(readUsageDiscountUsdMicrosFromPlanBody(omPlan));
   } catch {
     return null;
   }
