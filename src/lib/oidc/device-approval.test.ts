@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 
+import { PostgresOidcAdapter } from "./adapter";
 import {
+  approveDeviceCodeForAccount,
   isDeviceCodeBound,
   isDeviceCodeDenied,
   isDeviceCodeSettled,
 } from "./device-approval";
+
+const skipDb = !(
+  process.env.DATABASE_URL && process.env.PYMTHOUSE_TEST_DATABASE_URL_UNSET !== "1"
+);
 
 test("isDeviceCodeBound is true when accountId is set", () => {
   assert.equal(isDeviceCodeBound({ accountId: "acct_1" }), true);
@@ -45,3 +52,141 @@ test("denied DeviceCodes stay unbound but settled (cannot re-approve)", () => {
   assert.equal(isDeviceCodeDenied(denied), true);
   assert.equal(isDeviceCodeSettled(denied), true);
 });
+
+async function insertPendingDeviceCode(
+  adapter: PostgresOidcAdapter,
+  id: string,
+  userCode: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  await adapter.upsert(
+    id,
+    {
+      jti: id,
+      userCode,
+      clientId: "test-client",
+      exp,
+      ...extra,
+    },
+    600,
+  );
+}
+
+test(
+  "approveDeviceCodeForAccount rejects a DeviceCode that is already denied",
+  { skip: skipDb },
+  async () => {
+    const adapter = new PostgresOidcAdapter("DeviceCode");
+    const id = `device-code-approve-denied-${crypto.randomUUID()}`;
+    const userCode = `DNY${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    try {
+      await insertPendingDeviceCode(adapter, id, userCode, {
+        error: "access_denied",
+        errorDescription: "The user denied the authorization request",
+      });
+
+      const result = await approveDeviceCodeForAccount(
+        userCode,
+        "test-client",
+        "acct_after_deny",
+      );
+
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error, "access_denied");
+        assert.equal(result.status, 400);
+      }
+      const after = await adapter.find(id);
+      assert.equal(after?.accountId, undefined);
+      assert.equal(after?.error, "access_denied");
+    } finally {
+      await adapter.destroy(id);
+    }
+  },
+);
+
+test(
+  "approveDeviceCodeForAccount rejects when denial lands before bind",
+  { skip: skipDb },
+  async () => {
+    const adapter = new PostgresOidcAdapter("DeviceCode");
+    const id = `device-code-approve-race-deny-${crypto.randomUUID()}`;
+    const userCode = `RCE${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const originalFind = PostgresOidcAdapter.prototype.find;
+    PostgresOidcAdapter.prototype.find = async function findDenied(
+      findId: string,
+    ) {
+      if (findId === id) {
+        return {
+          jti: id,
+          userCode,
+          clientId: "test-client",
+          error: "access_denied",
+        };
+      }
+      return originalFind.call(this, findId);
+    };
+    try {
+      await insertPendingDeviceCode(adapter, id, userCode);
+
+      const result = await approveDeviceCodeForAccount(
+        userCode,
+        "test-client",
+        "acct_race",
+      );
+
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error, "access_denied");
+        assert.equal(result.status, 400);
+      }
+    } finally {
+      PostgresOidcAdapter.prototype.find = originalFind;
+      await adapter.destroy(id);
+    }
+  },
+);
+
+test(
+  "approveDeviceCodeForAccount is idempotent when the DeviceCode is already bound",
+  { skip: skipDb },
+  async () => {
+    const adapter = new PostgresOidcAdapter("DeviceCode");
+    const id = `device-code-approve-bound-${crypto.randomUUID()}`;
+    const userCode = `BND${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const originalFind = PostgresOidcAdapter.prototype.find;
+    PostgresOidcAdapter.prototype.find = async function findBound(
+      findId: string,
+    ) {
+      if (findId === id) {
+        return {
+          jti: id,
+          userCode,
+          clientId: "test-client",
+          accountId: "acct_existing",
+          grantId: "grant_existing",
+        };
+      }
+      return originalFind.call(this, findId);
+    };
+    try {
+      await insertPendingDeviceCode(adapter, id, userCode);
+
+      const result = await approveDeviceCodeForAccount(
+        userCode,
+        "test-client",
+        "acct_new",
+      );
+
+      assert.deepEqual(result, { ok: true });
+      PostgresOidcAdapter.prototype.find = originalFind;
+      const after = await adapter.find(id);
+      assert.equal(after?.accountId, undefined);
+      assert.equal(after?.grantId, undefined);
+    } finally {
+      PostgresOidcAdapter.prototype.find = originalFind;
+      await adapter.destroy(id);
+    }
+  },
+);
