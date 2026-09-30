@@ -32,7 +32,7 @@ export default function MarketplaceAppDetailPage() {
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/v1/marketplace/${id}`)
+    void fetch(`/api/v1/marketplace/${id}`)
       .then((r) => {
         if (!r.ok) {
           setNotFound(true);
@@ -47,7 +47,7 @@ export default function MarketplaceAppDetailPage() {
   }, [id]);
 
   const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+    void navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
   };

@@ -29,7 +29,7 @@ export default function MarketplacePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/v1/marketplace")
+    void fetch("/api/v1/marketplace")
       .then((r) => r.json())
       .then((data) => setApps(data.apps || []))
       .finally(() => setLoading(false));
@@ -40,7 +40,7 @@ export default function MarketplacePage() {
     for (const app of apps) {
       if (app.category) cats.add(app.category);
     }
-    return Array.from(cats).sort();
+    return Array.from(cats).sort((a, b) => a.localeCompare(b, "en"));
   }, [apps]);
 
   const filtered = useMemo(() => {

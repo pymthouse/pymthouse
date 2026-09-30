@@ -335,7 +335,7 @@ function normalizeScopeListString(scopes: string): string {
   return scopes
     .split(/[,\s]+/)
     .filter(Boolean)
-    .sort()
+    .sort((a, b) => a.localeCompare(b, "en"))
     .join(" ");
 }
 
