@@ -31,6 +31,11 @@ export type GrantAllowanceUsdMicros = (input: {
    * app's active stripeLivemode may already have switched.
    */
   stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }) => Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -67,6 +72,11 @@ export async function grantAllowanceUsdMicros(input: {
    * app's active stripeLivemode may already have switched.
    */
   stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -88,6 +98,7 @@ export async function grantAllowanceUsdMicros(input: {
     clientId: input.clientId,
     externalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
   const provisionExternalUserId = identity.isOwner
     ? identity.payerPlatformUserId || externalUserId
@@ -101,11 +112,13 @@ export async function grantAllowanceUsdMicros(input: {
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
   await ensureTrialAllowanceForAppUser({
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
     stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
 
   const featureKey =

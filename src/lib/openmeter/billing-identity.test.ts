@@ -473,6 +473,49 @@ test("starter provisioning keeps the payment-plane wallet after a switch", async
   assert.notEqual(probe.payerCustomerKey, live.payerCustomerKey);
 });
 
+test("billingMode override keeps merchant eu_ after switch to owner_rollup", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const whileMerchant = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(whileMerchant.sharesOwnerCostRail, false);
+  assert.ok(isEndUserCustomerKey(whileMerchant.payerCustomerKey));
+
+  // Operator flips to owner_rollup while a Connect top-up is in flight.
+  // Settlement must still credit the eu_ wallet the card paid for.
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "owner_rollup",
+  });
+  const withoutPin = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(withoutPin.sharesOwnerCostRail, true);
+  assert.equal(
+    withoutPin.payerCustomerKey,
+    buildOwnerCustomerKey(seeded.userId),
+  );
+
+  const pinned = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    billingMode: "merchant",
+  });
+  assert.equal(pinned.sharesOwnerCostRail, false);
+  assert.equal(pinned.payerKind, "end_user");
+  assert.equal(pinned.payerCustomerKey, whileMerchant.payerCustomerKey);
+  assert.equal(pinned.actorEndUserId, whileMerchant.actorEndUserId);
+});
+
 test("normal app owner bills shared owner wallet", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
