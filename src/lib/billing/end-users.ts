@@ -1,6 +1,9 @@
 import { db } from "@/db/index";
 import { endUsers, transactions } from "@/db/schema";
-import { parseEndUserCustomerKey } from "@/lib/openmeter/customer-key";
+import {
+  isEndUserRowId,
+  parseEndUserCustomerKey,
+} from "@/lib/openmeter/customer-key";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
@@ -65,13 +68,17 @@ export async function findOrCreateAppEndUser(
  * `sbx_eu_{end_users.id}`) back to the integrator `external_user_id` used
  * by `app_users` prefs and Connect customers. Other values pass through
  * unchanged.
+ *
+ * The UUID check runs before the primary-key read. Integrator ids that only
+ * start with `eu_` or `sbx_eu_` never touch the database. This lookup is not
+ * scoped to an app — billing identity uses its own app-scoped remap.
  */
 export async function resolveAppUserExternalIdFromCustomerKey(
   externalUserId: string,
 ): Promise<string> {
   const trimmed = externalUserId.trim();
   const endUserRowId = parseEndUserCustomerKey(trimmed);
-  if (!endUserRowId) {
+  if (!endUserRowId || !isEndUserRowId(endUserRowId)) {
     return trimmed;
   }
   try {
@@ -80,7 +87,7 @@ export async function resolveAppUserExternalIdFromCustomerKey(
         externalUserId: endUsers.externalUserId,
       })
       .from(endUsers)
-      .where(eq(endUsers.id, endUserRowId))
+      .where(eq(endUsers.id, endUserRowId.toLowerCase()))
       .limit(1);
     const resolved = rows[0]?.externalUserId?.trim();
     return resolved || trimmed;

@@ -84,6 +84,7 @@ test("owner customer key helpers use bare user id", async () => {
     isSandboxEndUserCustomerKey,
     parseOwnerCustomerKey,
     parseEndUserCustomerKey,
+    isEndUserRowId,
     parseCustomerKey,
     normalizePlatformUserId,
     buildOwnerMeterSubjects,
@@ -122,6 +123,17 @@ test("owner customer key helpers use bare user id", async () => {
   assert.equal(parseOwnerCustomerKey("uuid-1"), "uuid-1");
   assert.equal(parseOwnerCustomerKey("eu_eu-id-1"), null);
   assert.equal(parseEndUserCustomerKey("eu_eu-id-1"), "eu-id-1");
+  assert.equal(isEndUserRowId("eu-id-1"), false);
+  assert.equal(isEndUserRowId("billing_1"), false);
+  assert.equal(isEndUserRowId("tenant"), false);
+  assert.equal(
+    isEndUserRowId("550e8400-e29b-41d4-a716-446655440000"),
+    true,
+  );
+  assert.equal(
+    isEndUserRowId("550E8400-E29B-41D4-A716-446655440000"),
+    true,
+  );
   assert.deepEqual(parseCustomerKey("uuid-1"), {
     kind: "platform_user",
     userId: "uuid-1",

@@ -145,7 +145,7 @@ export default function UserMenu({
               className="mb-2 block text-xs font-medium text-zinc-300 hover:text-zinc-100"
               onClick={() => setOpen(false)}
             >
-              Sign-in methods
+              Account
             </Link>
             <SidebarCreditPreview />
           </div>
