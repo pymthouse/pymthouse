@@ -225,6 +225,8 @@ export async function recoverStarterBillingProfile(
     client: OpenMeter;
     customerId: string;
     clientId?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     getConfig?: typeof getAppBillingConfig;
@@ -244,6 +246,7 @@ export async function recoverStarterBillingProfile(
         client: input.client,
         clientId: input.clientId,
         customerId: input.customerId,
+        stripeLivemode: input.stripeLivemode,
       });
       return "merchant";
     }
@@ -266,6 +269,8 @@ export async function pinMerchantCustomInvoicingIfNeeded(
     clientId: string;
     customerId: string;
     customerKey?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     getConfig?: typeof getAppBillingConfig;
@@ -284,6 +289,7 @@ export async function pinMerchantCustomInvoicingIfNeeded(
     clientId: input.clientId,
     customerId: input.customerId,
     customerKey: input.customerKey,
+    stripeLivemode: input.stripeLivemode,
   });
   return true;
 }
@@ -303,6 +309,8 @@ export async function createStarterSubscriptionWithBillingRecovery(
     planKey: string;
     /** When set, merchant-mode apps recover onto Custom Invoicing instead of Sandbox. */
     clientId?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     recoverProfile?: typeof recoverStarterBillingProfile;
@@ -362,6 +370,7 @@ export async function createStarterSubscriptionWithBillingRecovery(
       client: input.client,
       customerId: input.customerId,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     try {
       const createdSub = await createStarterOpenMeterSubscription(input);
@@ -401,6 +410,7 @@ async function createStarterSubscriptionWithRecovery(input: {
   clientId: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
+  stripeLivemode?: boolean;
 }): Promise<{
   subscription: OpenMeterSubscriptionView | null;
   starter: typeof plans.$inferSelect;
@@ -414,6 +424,7 @@ async function createStarterSubscriptionWithRecovery(input: {
       starter: activeStarter,
       planKey: input.planKey,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     return {
       subscription: provisioned.subscription,
@@ -440,6 +451,7 @@ async function createStarterSubscriptionWithRecovery(input: {
       starter: activeStarter,
       planKey: input.planKey,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     return {
       subscription: provisioned.subscription,
@@ -528,6 +540,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     clientId: identity.developerAppId,
     customerId: customer.id,
     customerKey: identity.payerCustomerKey,
+    stripeLivemode: input.stripeLivemode,
   });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
@@ -564,6 +577,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       clientId: identity.developerAppId,
       starter: activeStarter,
       planKey,
+      stripeLivemode: input.stripeLivemode,
     });
     omSubscription = provisioned.subscription;
     activeStarter = provisioned.starter;

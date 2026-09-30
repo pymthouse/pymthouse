@@ -358,7 +358,51 @@ export async function ensureOwnersBillingProfile(
 }
 
 /**
+ * Replace livemode and Connected Account with the payment plane.
+ * A missing parked account becomes null so the active plane's `acct_` is not
+ * copied onto the other wallet.
+ */
+export function connectPlaneOverride<
+  T extends {
+    stripeLivemode?: boolean | null;
+    stripeConnectedAccountId?: string | null;
+  },
+>(
+  config: T,
+  plane: { livemode: boolean; connectedAccountId: string | null },
+): T {
+  return {
+    ...config,
+    stripeLivemode: plane.livemode,
+    stripeConnectedAccountId: plane.connectedAccountId,
+  };
+}
+
+async function billingConfigForStripePlane(
+  clientId: string,
+  stripeLivemode: boolean | undefined,
+) {
+  const config = await getAppBillingConfig(clientId);
+  if (!config || typeof stripeLivemode !== "boolean") {
+    return config;
+  }
+  if ((config.stripeLivemode !== false) === stripeLivemode) {
+    return config;
+  }
+  const { getMerchantConnectPlane } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  const parked = await getMerchantConnectPlane(clientId, stripeLivemode);
+  return connectPlaneOverride(config, {
+    livemode: stripeLivemode,
+    connectedAccountId: parked?.stripeConnectedAccountId?.trim() || null,
+  });
+}
+
+/**
  * Provision Stripe customer app data + pin customer to the app Stripe billing profile.
+ * Pass `stripeLivemode` when the customer belongs to a parked Connect plane so
+ * the pin follows that plane instead of the active `app_billing_config` row.
  */
 export async function prepareAppCustomerStripeBilling(input: {
   client: OpenMeter;
@@ -366,8 +410,12 @@ export async function prepareAppCustomerStripeBilling(input: {
   customerId: string;
   customerKey?: string;
   name?: string;
+  stripeLivemode?: boolean;
 }): Promise<void> {
-  const config = await getAppBillingConfig(input.clientId);
+  const config = await billingConfigForStripePlane(
+    input.clientId,
+    input.stripeLivemode,
+  );
   const merchantProfileId =
     config?.openmeterMerchantBillingProfileId?.trim() ||
     process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
