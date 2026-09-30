@@ -384,19 +384,22 @@ async function billingConfigForStripePlane(
 ) {
   const config = await getAppBillingConfig(clientId);
   if (!config || typeof stripeLivemode !== "boolean") {
-    return config;
+    return { config, parked: false };
   }
   if ((config.stripeLivemode !== false) === stripeLivemode) {
-    return config;
+    return { config, parked: false };
   }
   const { getMerchantConnectPlane } = await import(
     "@/lib/stripe/merchant-connect"
   );
   const parked = await getMerchantConnectPlane(clientId, stripeLivemode);
-  return connectPlaneOverride(config, {
-    livemode: stripeLivemode,
-    connectedAccountId: parked?.stripeConnectedAccountId?.trim() || null,
-  });
+  return {
+    config: connectPlaneOverride(config, {
+      livemode: stripeLivemode,
+      connectedAccountId: parked?.stripeConnectedAccountId?.trim() || null,
+    }),
+    parked: true,
+  };
 }
 
 /**
@@ -412,7 +415,7 @@ export async function prepareAppCustomerStripeBilling(input: {
   name?: string;
   stripeLivemode?: boolean;
 }): Promise<void> {
-  const config = await billingConfigForStripePlane(
+  const { config, parked } = await billingConfigForStripePlane(
     input.clientId,
     input.stripeLivemode,
   );
@@ -452,12 +455,36 @@ export async function prepareAppCustomerStripeBilling(input: {
     });
     const accountId = config.stripeConnectedAccountId?.trim();
     if (accountId) {
-      const { resolveMerchantChargeModel } = await import("./supplier-sync");
+      const { chargeModelForConnectPlane } = await import("./supplier-sync");
       const { merchantSettlementMetadata } = await import(
         "./settlement-metadata"
       );
       const { ensureCustomerMetadata } = await import("./customers");
-      const chargeModel = resolveMerchantChargeModel(config);
+      const { fetchConnectedAccountIdentity } = await import(
+        "@/lib/stripe/connect-accounts"
+      );
+      let accountIdentity: Awaited<
+        ReturnType<typeof fetchConnectedAccountIdentity>
+      > | null | undefined;
+      if (parked) {
+        try {
+          accountIdentity = await fetchConnectedAccountIdentity(
+            accountId,
+            config.stripeLivemode !== false,
+          );
+        } catch (err) {
+          console.warn(
+            "merchant customer settlement metadata: parked account identity unavailable; using destination",
+            sanitizeForLog(input.clientId),
+            err instanceof Error ? sanitizeForLog(err.message) : "",
+          );
+          accountIdentity = null;
+        }
+      }
+      const chargeModel = chargeModelForConnectPlane({
+        config,
+        accountIdentity,
+      });
       if (chargeModel !== "direct") {
         console.warn(
           "merchant customer settlement metadata: supplier incomplete; using destination",
