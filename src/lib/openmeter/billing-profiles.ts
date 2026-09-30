@@ -470,7 +470,7 @@ async function pinMerchantCustomerBilling(input: {
   config: AppBillingConfigRow | null;
   parked: boolean;
 }): Promise<boolean> {
-  if (!input.config || input.config.billingMode !== "merchant") {
+  if (input.config?.billingMode !== "merchant") {
     return false;
   }
   if (input.config.stripeLivemode === false) {
