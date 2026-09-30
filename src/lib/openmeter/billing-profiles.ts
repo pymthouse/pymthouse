@@ -402,6 +402,118 @@ async function billingConfigForStripePlane(
   };
 }
 
+type AppBillingConfigRow = NonNullable<
+  Awaited<ReturnType<typeof getAppBillingConfig>>
+>;
+
+async function stampMerchantSettlementMetadata(input: {
+  client: OpenMeter;
+  clientId: string;
+  customerId: string;
+  accountId: string;
+  config: AppBillingConfigRow;
+  parked: boolean;
+}): Promise<void> {
+  const { chargeModelForConnectPlane } = await import("./supplier-sync");
+  const { merchantSettlementMetadata } = await import("./settlement-metadata");
+  const { ensureCustomerMetadata } = await import("./customers");
+  const { fetchConnectedAccountIdentity } = await import(
+    "@/lib/stripe/connect-accounts"
+  );
+  let accountIdentity: Awaited<
+    ReturnType<typeof fetchConnectedAccountIdentity>
+  > | null | undefined;
+  if (input.parked) {
+    try {
+      accountIdentity = await fetchConnectedAccountIdentity(
+        input.accountId,
+        input.config.stripeLivemode !== false,
+      );
+    } catch (err) {
+      console.warn(
+        "merchant customer settlement metadata: parked account identity unavailable; using destination",
+        sanitizeForLog(input.clientId),
+        err instanceof Error ? sanitizeForLog(err.message) : "",
+      );
+      accountIdentity = null;
+    }
+  }
+  const chargeModel = chargeModelForConnectPlane({
+    config: input.config,
+    accountIdentity,
+  });
+  if (chargeModel !== "direct") {
+    console.warn(
+      "merchant customer settlement metadata: supplier incomplete; using destination",
+      sanitizeForLog(input.clientId),
+    );
+  }
+  await ensureCustomerMetadata(
+    input.client,
+    input.customerId,
+    merchantSettlementMetadata({
+      connectedAccountId: input.accountId,
+      chargeModel,
+      livemode: input.config.stripeLivemode !== false,
+    }),
+  );
+}
+
+/**
+ * Merchant sandbox payers stay on the free profile. Live merchants pin Custom
+ * Invoicing and settlement metadata. Returns false when the app is not merchant.
+ */
+async function pinMerchantCustomerBilling(input: {
+  client: OpenMeter;
+  clientId: string;
+  customerId: string;
+  config: AppBillingConfigRow | null;
+  parked: boolean;
+}): Promise<boolean> {
+  if (!input.config || input.config.billingMode !== "merchant") {
+    return false;
+  }
+  if (input.config.stripeLivemode === false) {
+    await applyFreeBillingProfileToCustomer({
+      client: input.client,
+      customerId: input.customerId,
+    });
+    return true;
+  }
+
+  const merchantProfileId =
+    input.config.openmeterMerchantBillingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+    null;
+  if (!merchantProfileId) {
+    throw new Error(
+      "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
+    );
+  }
+  await persistMerchantBillingProfileIdIfMissing(
+    input.clientId,
+    input.config.openmeterMerchantBillingProfileId,
+    merchantProfileId,
+  );
+  await assignMerchantCustomInvoicingProfile({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: merchantProfileId,
+  });
+  const accountId = input.config.stripeConnectedAccountId?.trim();
+  if (accountId) {
+    await stampMerchantSettlementMetadata({
+      client: input.client,
+      clientId: input.clientId,
+      customerId: input.customerId,
+      accountId,
+      config: input.config,
+      parked: input.parked,
+    });
+  }
+  return true;
+}
+
 /**
  * Provision Stripe customer app data + pin customer to the app Stripe billing profile.
  * Pass `stripeLivemode` when the customer belongs to a parked Connect plane so
@@ -419,88 +531,14 @@ export async function prepareAppCustomerStripeBilling(input: {
     input.clientId,
     input.stripeLivemode,
   );
-  const merchantProfileId =
-    config?.openmeterMerchantBillingProfileId?.trim() ||
-    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
-    null;
-
-  // Merchant sandbox payers (`sbx_eu_…`) stay on the namespace sandbox
-  // profile — Custom Invoicing + settlement metadata belong on live `eu_…`.
-  if (config?.billingMode === "merchant" && config.stripeLivemode === false) {
-    await applyFreeBillingProfileToCustomer({
-      client: input.client,
-      customerId: input.customerId,
-    });
-    return;
-  }
-
-  // Live merchant plane: pin to Custom Invoicing (no platform Stripe charge).
-  // Credits-first Starter users stay on this profile too — Sandbox is wrong
-  // because it fake-pays invoices and bypasses settlement / Connect.
-  if (config?.billingMode === "merchant") {
-    if (!merchantProfileId) {
-      throw new Error(
-        "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
-      );
-    }
-    await persistMerchantBillingProfileIdIfMissing(
-      input.clientId,
-      config.openmeterMerchantBillingProfileId,
-      merchantProfileId,
-    );
-    await assignMerchantCustomInvoicingProfile({
-      client: input.client,
-      customerId: input.customerId,
-      billingProfileId: merchantProfileId,
-    });
-    const accountId = config.stripeConnectedAccountId?.trim();
-    if (accountId) {
-      const { chargeModelForConnectPlane } = await import("./supplier-sync");
-      const { merchantSettlementMetadata } = await import(
-        "./settlement-metadata"
-      );
-      const { ensureCustomerMetadata } = await import("./customers");
-      const { fetchConnectedAccountIdentity } = await import(
-        "@/lib/stripe/connect-accounts"
-      );
-      let accountIdentity: Awaited<
-        ReturnType<typeof fetchConnectedAccountIdentity>
-      > | null | undefined;
-      if (parked) {
-        try {
-          accountIdentity = await fetchConnectedAccountIdentity(
-            accountId,
-            config.stripeLivemode !== false,
-          );
-        } catch (err) {
-          console.warn(
-            "merchant customer settlement metadata: parked account identity unavailable; using destination",
-            sanitizeForLog(input.clientId),
-            err instanceof Error ? sanitizeForLog(err.message) : "",
-          );
-          accountIdentity = null;
-        }
-      }
-      const chargeModel = chargeModelForConnectPlane({
-        config,
-        accountIdentity,
-      });
-      if (chargeModel !== "direct") {
-        console.warn(
-          "merchant customer settlement metadata: supplier incomplete; using destination",
-          sanitizeForLog(input.clientId),
-        );
-      }
-      await ensureCustomerMetadata(
-        input.client,
-        input.customerId,
-        merchantSettlementMetadata({
-          connectedAccountId: accountId,
-          chargeModel,
-          livemode: config.stripeLivemode !== false,
-        }),
-      );
-    }
+  const pinned = await pinMerchantCustomerBilling({
+    client: input.client,
+    clientId: input.clientId,
+    customerId: input.customerId,
+    config,
+    parked,
+  });
+  if (pinned) {
     return;
   }
 
