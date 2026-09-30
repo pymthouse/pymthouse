@@ -28,6 +28,7 @@ import {
 } from "@/lib/openmeter/usage-capability";
 import { millisToSecsString } from "@/lib/openmeter/usage-read";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+import { resolveSignedTicketAppAttribution } from "@/lib/openmeter/signed-ticket-attribution";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
@@ -398,8 +399,9 @@ export function normalizeSignedTicketEvent(
     externalUserId,
     gatewayRequestId,
     pipeline: stringField(data, "pipeline") || "unknown",
-    modelId: capabilityFromUsageFields({
+    modelId: resolveSignedTicketAppAttribution({
       app: stringField(data, "app"),
+      pipeline: stringField(data, "pipeline"),
       modelId: stringField(data, "model_id"),
     }),
     networkFeeUsdMicros,
@@ -1031,6 +1033,7 @@ export function enrichSessionRowWithEventStats(
   const modelId = capabilityFromUsageFields({
     app: stats?.app,
     modelId: row.modelId,
+    pipeline,
   });
   return {
     ...row,
@@ -1112,6 +1115,7 @@ export function aggregateManifestSessionEventStats(
       capabilityFromUsageFields({
         app: stringField(data, "app"),
         modelId: stringField(data, "model_id"),
+        pipeline: stringField(data, "pipeline"),
       }),
     );
   }

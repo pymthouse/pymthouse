@@ -13,7 +13,10 @@ import {
   SETTLEMENT_CHARGE_MODEL_KEY,
   SETTLEMENT_CONNECT_ACCOUNT_KEY,
 } from "./settlement-metadata";
-import { resolveMerchantChargeModel } from "./supplier-sync";
+import {
+  chargeModelForConnectPlane,
+  resolveMerchantChargeModel,
+} from "./supplier-sync";
 import { __testMapAccountIdentity } from "@/lib/stripe/connect-accounts";
 
 test("supplierGaps: US company needs no tax id", () => {
@@ -155,6 +158,55 @@ test("resolveMerchantChargeModel gates direct on supplier completeness", () => {
       supplierTaxIdOnFileAtStripe: true,
     }),
     "direct",
+  );
+});
+
+test("chargeModelForConnectPlane ignores the active supplier when the plane is parked", () => {
+  const activeSandboxSupplier = {
+    supplierCountry: "US",
+    supplierName: "Sandbox Co",
+    supplierTaxId: null,
+    supplierTaxIdOnFileAtStripe: false,
+  };
+  assert.equal(
+    chargeModelForConnectPlane({ config: activeSandboxSupplier }),
+    "direct",
+  );
+  assert.equal(
+    chargeModelForConnectPlane({
+      config: activeSandboxSupplier,
+      accountIdentity: {
+        country: "DE",
+        legalName: "Live GmbH",
+        taxIdProvided: false,
+        detailsSubmitted: true,
+      },
+    }),
+    "destination",
+  );
+  assert.equal(
+    chargeModelForConnectPlane({
+      config: {
+        supplierCountry: null,
+        supplierName: null,
+        supplierTaxId: null,
+        supplierTaxIdOnFileAtStripe: false,
+      },
+      accountIdentity: {
+        country: "US",
+        legalName: "Live LLC",
+        taxIdProvided: false,
+        detailsSubmitted: true,
+      },
+    }),
+    "direct",
+  );
+  assert.equal(
+    chargeModelForConnectPlane({
+      config: activeSandboxSupplier,
+      accountIdentity: null,
+    }),
+    "destination",
   );
 });
 

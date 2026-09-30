@@ -4,6 +4,7 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { isStarterPlanEnabled } from "@/lib/starter-default-plan-display";
 import {
   applyFreeBillingProfileToCustomer,
   getAppBillingConfig,
@@ -28,6 +29,47 @@ import {
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
 import { pickSlotOccupyingSubscription } from "./subscription-state";
+
+type StarterPlaneIdentityProbe = {
+  payerCustomerKey: string;
+  stripeLivemode?: boolean;
+};
+
+let starterPlaneIdentityProbe: StarterPlaneIdentityProbe | null = null;
+
+/** Test-only: last wallet `ensureStarterSubscriptionForAppUser` resolved. */
+export function __readStarterPlaneIdentityProbeForTests(): StarterPlaneIdentityProbe | null {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__readStarterPlaneIdentityProbeForTests is only available in test",
+    );
+  }
+  return starterPlaneIdentityProbe;
+}
+
+async function resolveStarterPlaneIdentity(input: {
+  clientId: string;
+  externalUserId: string;
+  stripeLivemode?: boolean;
+  billingMode?: "owner_rollup" | "merchant";
+}) {
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
+  });
+  if (process.env.NODE_ENV === "test") {
+    starterPlaneIdentityProbe = {
+      payerCustomerKey: identity.payerCustomerKey,
+      stripeLivemode: input.stripeLivemode,
+    };
+  }
+  return identity;
+}
 
 async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSelect> {
   const refreshed = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
@@ -55,6 +97,10 @@ function getStarterPlanSyncedCache() {
 
 export function resetStarterPlanSyncedCacheForTests(): void {
   starterPlanSyncedCache = null;
+}
+
+export function invalidateStarterPlanSyncedCache(clientId: string): void {
+  getStarterPlanSyncedCache().delete(clientId);
 }
 
 export async function ensureStarterPlanSynced(clientId: string): Promise<typeof plans.$inferSelect> {
@@ -181,6 +227,8 @@ export async function recoverStarterBillingProfile(
     client: OpenMeter;
     customerId: string;
     clientId?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     getConfig?: typeof getAppBillingConfig;
@@ -200,6 +248,7 @@ export async function recoverStarterBillingProfile(
         client: input.client,
         clientId: input.clientId,
         customerId: input.customerId,
+        stripeLivemode: input.stripeLivemode,
       });
       return "merchant";
     }
@@ -222,6 +271,8 @@ export async function pinMerchantCustomInvoicingIfNeeded(
     clientId: string;
     customerId: string;
     customerKey?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     getConfig?: typeof getAppBillingConfig;
@@ -240,6 +291,7 @@ export async function pinMerchantCustomInvoicingIfNeeded(
     clientId: input.clientId,
     customerId: input.customerId,
     customerKey: input.customerKey,
+    stripeLivemode: input.stripeLivemode,
   });
   return true;
 }
@@ -259,6 +311,8 @@ export async function createStarterSubscriptionWithBillingRecovery(
     planKey: string;
     /** When set, merchant-mode apps recover onto Custom Invoicing instead of Sandbox. */
     clientId?: string;
+    /** Payment-plane livemode when it may differ from the active config. */
+    stripeLivemode?: boolean;
   },
   deps?: {
     recoverProfile?: typeof recoverStarterBillingProfile;
@@ -318,6 +372,7 @@ export async function createStarterSubscriptionWithBillingRecovery(
       client: input.client,
       customerId: input.customerId,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     try {
       const createdSub = await createStarterOpenMeterSubscription(input);
@@ -357,6 +412,7 @@ async function createStarterSubscriptionWithRecovery(input: {
   clientId: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
+  stripeLivemode?: boolean;
 }): Promise<{
   subscription: OpenMeterSubscriptionView | null;
   starter: typeof plans.$inferSelect;
@@ -370,6 +426,7 @@ async function createStarterSubscriptionWithRecovery(input: {
       starter: activeStarter,
       planKey: input.planKey,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     return {
       subscription: provisioned.subscription,
@@ -396,6 +453,7 @@ async function createStarterSubscriptionWithRecovery(input: {
       starter: activeStarter,
       planKey: input.planKey,
       clientId: input.clientId,
+      stripeLivemode: input.stripeLivemode,
     });
     return {
       subscription: provisioned.subscription,
@@ -409,34 +467,40 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
   hintOpenMeterSubscriptionId?: string | null;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<{
   openmeterSubscriptionId: string | null;
   planId: string;
   created: boolean;
+  skipped: boolean;
 }> {
+  if (process.env.NODE_ENV === "test") {
+    starterPlaneIdentityProbe = null;
+  }
   if (!isHostedAdminClientAvailable()) {
-    const { resolveOpenMeterBillingIdentity } = await import(
-      "@/lib/openmeter/billing-identity"
-    );
-    const identity = await resolveOpenMeterBillingIdentity({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
-    });
+    const identity = await resolveStarterPlaneIdentity(input);
     const starter = await getOrCreateStarterPlan(identity.developerAppId);
     return {
       openmeterSubscriptionId: null,
       planId: starter.id,
       created: false,
+      skipped: !isStarterPlanEnabled(starter.status),
     };
   }
 
-  const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
+  const { ownerCostRailUserId } = await import(
     "@/lib/openmeter/billing-identity"
   );
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity = await resolveStarterPlaneIdentity(input);
 
   // Owners and owner_rollup end-users share one platform Owner Starter.
   // Return the requesting app's local Starter id for callers that cache planId.
@@ -459,6 +523,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       openmeterSubscriptionId: ensured.openmeterSubscriptionId,
       planId: starter.id,
       created: ensured.created,
+      skipped: false,
     };
   }
 
@@ -482,6 +547,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     clientId: identity.developerAppId,
     customerId: customer.id,
     customerKey: identity.payerCustomerKey,
+    stripeLivemode: input.stripeLivemode,
   });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
@@ -501,6 +567,14 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   let created = false;
   let activeStarter = starter;
   if (!omSubscription) {
+    if (!isStarterPlanEnabled(starter.status)) {
+      return {
+        openmeterSubscriptionId: null,
+        planId: starter.id,
+        created: false,
+        skipped: true,
+      };
+    }
     // Profile recovery on Stripe-setup 409 lives in
     // createStarterSubscriptionWithBillingRecovery (Custom Invoicing for
     // merchant apps; sandbox free profile otherwise).
@@ -510,6 +584,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       clientId: identity.developerAppId,
       starter: activeStarter,
       planKey,
+      stripeLivemode: input.stripeLivemode,
     });
     omSubscription = provisioned.subscription;
     activeStarter = provisioned.starter;
@@ -526,5 +601,6 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     openmeterSubscriptionId: omSubscription.id,
     planId: activeStarter.id,
     created,
+    skipped: false,
   };
 }

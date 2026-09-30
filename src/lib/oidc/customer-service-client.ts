@@ -15,6 +15,7 @@ import {
   CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
   customerServiceCallbackUri,
   getCustomerServiceOidcClientId,
+  redirectUrisForOidcClient,
 } from "@/lib/oidc/customer-service-id";
 import { resetProvider } from "@/lib/oidc/provider";
 import { ensureConfidentialWebIdentityScopes } from "@/lib/oidc/scopes";
@@ -119,7 +120,11 @@ export async function ensureCustomerServiceOidcClient(opts?: {
       desiredRedirects.length > 0
         ? desiredRedirects
         : resolveCustomerServiceRedirectUris();
-    if (redirectsForCreate.length === 0) {
+    const redirectsWithBuiltins = redirectUrisForOidcClient(
+      clientId,
+      redirectsForCreate,
+    );
+    if (redirectsWithBuiltins.length === 0) {
       throw new Error(
         "Customer-service OIDC client requires at least one redirect URI.",
       );
@@ -127,14 +132,14 @@ export async function ensureCustomerServiceOidcClient(opts?: {
     const secret = generateClientSecret();
     const grantTypes = syncConfidentialWebGrantTypes(
       [...DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES],
-      redirectsForCreate,
+      redirectsWithBuiltins,
     );
     await db.insert(oidcClients).values({
       id: uuidv4(),
       clientId,
       clientSecretHash: hashClientSecret(secret),
       displayName: CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
-      redirectUris: JSON.stringify(redirectsForCreate),
+      redirectUris: JSON.stringify(redirectsWithBuiltins),
       allowedScopes: CUSTOMER_SERVICE_OIDC_SCOPES,
       grantTypes: grantTypes.join(","),
       tokenEndpointAuthMethod: "client_secret_post",
@@ -145,15 +150,17 @@ export async function ensureCustomerServiceOidcClient(opts?: {
       created: true,
       secretRotated: true,
       clientSecret: secret,
-      redirectUris: redirectsForCreate,
+      redirectUris: redirectsWithBuiltins,
     };
   }
 
   const existingRedirects = JSON.parse(existing.redirectUris) as string[];
-  const redirectUris =
+  const redirectUris = redirectUrisForOidcClient(
+    clientId,
     desiredRedirects.length > 0
       ? mergeRedirectUris(existingRedirects, desiredRedirects)
-      : existingRedirects;
+      : existingRedirects,
+  );
   if (redirectUris.length === 0) {
     throw new Error(
       "Customer-service OIDC client requires at least one redirect URI.",

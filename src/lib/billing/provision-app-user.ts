@@ -95,9 +95,10 @@ async function provisionAppUserBillingUncached(input: {
     endUserId: endUser.id,
     externalUserId,
     starterSubscriptionCreated: sub.created,
-    starterSubscriptionReady: isHostedAdminClientAvailable()
-      ? Boolean(sub.openmeterSubscriptionId)
-      : true,
+    starterSubscriptionReady:
+      sub.skipped ||
+      !isHostedAdminClientAvailable() ||
+      Boolean(sub.openmeterSubscriptionId),
   };
 }
 

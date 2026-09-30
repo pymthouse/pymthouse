@@ -26,7 +26,7 @@ import type {
   SignedTicketRequestRow,
   SignedTicketSessionRow,
 } from "@/lib/openmeter/signed-ticket-events";
-import { formatUsageCapabilityLabel } from "@/lib/openmeter/usage-capability";
+import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
 
 type RequestsResponse = {
   items: SignedTicketRequestRow[];
@@ -129,7 +129,7 @@ function historyCopy(
 }
 
 function pipelineModelLabel(pipeline: string, modelId: string): string {
-  return formatUsageCapabilityLabel(pipeline, modelId);
+  return formatModelAttributionLabel(pipeline, modelId);
 }
 
 function requestFeeLabel(row: SignedTicketRequestRow): string {

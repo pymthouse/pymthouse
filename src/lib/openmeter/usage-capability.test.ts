@@ -30,6 +30,20 @@ test("capabilityFromUsageFields prefers app over empty or unknown model_id", () 
     "sdxl",
   );
   assert.equal(capabilityFromUsageFields({}), "unknown");
+  assert.equal(
+    capabilityFromUsageFields({
+      app: "",
+      pipeline: "live-video-to-video",
+    }),
+    "live-video-to-video",
+  );
+  assert.equal(
+    capabilityFromUsageFields({
+      app: "unknown",
+      pipeline: "live",
+    }),
+    "unknown",
+  );
 });
 
 test("isUnknownUsageCapability treats blank and unknown as missing", () => {
@@ -48,5 +62,9 @@ test("formatUsageCapabilityLabel hides unknown model and keeps pipeline", () => 
   assert.equal(
     formatUsageCapabilityLabel("live-video-to-video", "live-video-to-video/scope"),
     "live-video-to-video / live-video-to-video/scope",
+  );
+  assert.equal(
+    formatUsageCapabilityLabel("live-video-to-video", "live-video-to-video"),
+    "live-video-to-video",
   );
 });

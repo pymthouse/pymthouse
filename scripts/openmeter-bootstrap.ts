@@ -143,9 +143,9 @@ async function ensureSelfHostedMeters(
 
     const groupBy = existingMeter.groupBy ?? {};
     console.log(`[openmeter-bootstrap] meter exists: ${meter.slug}`);
-    if (!("pipeline" in groupBy && "model_id" in groupBy)) {
+    if (!("pipeline" in groupBy && "app" in groupBy)) {
       console.warn(
-        `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/model_id groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
+        `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/app groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
       );
     }
     if (
