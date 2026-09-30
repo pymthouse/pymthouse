@@ -2,7 +2,14 @@
 
 import { SessionProvider } from "next-auth/react";
 import type { Session } from "next-auth";
+import { createContext, useContext } from "react";
 import TurnkeyProviderWrapper from "./TurnkeyProvider";
+
+const TurnkeyBackendAuthContext = createContext(false);
+
+export function useTurnkeyBackendAuth(): boolean {
+  return useContext(TurnkeyBackendAuthContext);
+}
 
 export default function Providers({
   children,
@@ -22,7 +29,9 @@ export default function Providers({
     // makes the provider fetch /api/auth/session on mount. A real session is
     // still passed through so signed-in loads render without a loading pass.
     <SessionProvider session={session ?? undefined} refetchOnWindowFocus={false}>
-      <TurnkeyProviderWrapper backendAuth={backendAuth}>{children}</TurnkeyProviderWrapper>
+      <TurnkeyBackendAuthContext.Provider value={backendAuth}>
+        <TurnkeyProviderWrapper backendAuth={backendAuth}>{children}</TurnkeyProviderWrapper>
+      </TurnkeyBackendAuthContext.Provider>
     </SessionProvider>
   );
 }

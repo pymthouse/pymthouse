@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import UserMenu from "@/components/UserMenu";
+import { useTurnkeyBackendAuth } from "@/components/Providers";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 interface NavItem {
@@ -175,6 +176,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, status } = useSession();
+  const backendAuth = useTurnkeyBackendAuth();
   const [mobileNavState, setMobileNavState] = useState({
     open: false,
     pathname,
@@ -211,13 +213,13 @@ export default function DashboardLayout({
   }, [status, router]);
 
   useEffect(() => {
-    if (status !== "authenticated") return;
+    if (!backendAuth || status !== "authenticated") return;
     const email =
       typeof sessionUser?.email === "string" ? sessionUser.email.trim().toLowerCase() : "";
     if (!email || email.endsWith("@turnkey.local")) {
       router.replace("/login/verify-email");
     }
-  }, [status, sessionUser, router]);
+  }, [backendAuth, status, sessionUser, router]);
 
   const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
   const activeAppId = appDetailMatch?.[1] ?? null;
