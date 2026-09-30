@@ -10,10 +10,7 @@ import {
   normalizeTurnkeyEmail,
   verifyTurnkeySessionJwt,
 } from "@/lib/turnkey";
-import {
-  mintTurnkeyWalletOidcToken,
-  turnkeyOauthNonceFromPublicKey,
-} from "@/lib/turnkey-wallet-oidc";
+import { mintTurnkeyWalletOidcToken } from "@/lib/turnkey-wallet-oidc";
 import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
 import type { OtpClientSignature } from "@/lib/turnkey-otp";
 
@@ -38,8 +35,8 @@ export type WalletLoginInput = {
   discordIdToken?: string;
   githubUserId?: string | number;
   githubLogin?: string | null;
-  /** Precomputed sha256 nonce from the sealed OAuth state. Skips rehashing that public key. */
-  nonce?: string;
+  /** sha256 of the session public key, computed before the OAuth state is sealed. */
+  nonce: string;
   otp?: {
     verificationToken: string;
     clientSignature: OtpClientSignature;
@@ -309,7 +306,13 @@ export async function completeWalletLogin(
   if (!publicKey) {
     throw new WalletLoginError("invalid_public_key", "A session public key is required.");
   }
-  const nonce = input.nonce ?? turnkeyOauthNonceFromPublicKey(publicKey);
+  const nonce = input.nonce.trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(nonce)) {
+    throw new WalletLoginError(
+      "invalid_nonce",
+      "The sign-in nonce does not match this session.",
+    );
+  }
   const parent = deps.parentOrganizationId();
   if (!parent) {
     throw new WalletLoginError(
@@ -653,6 +656,7 @@ export async function claimVerifiedEmailForUser(
     userId: string;
     verifiedEmail: string;
     publicKey: string;
+    nonce: string;
     otp?: {
       verificationToken: string;
       clientSignature: OtpClientSignature;
@@ -698,6 +702,7 @@ export async function claimVerifiedEmailForUser(
       {
         verifiedEmail: email,
         publicKey: input.publicKey,
+        nonce: input.nonce,
         method: "email",
         otp: input.otp,
         name: row.name,

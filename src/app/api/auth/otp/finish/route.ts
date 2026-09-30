@@ -10,6 +10,7 @@ import {
   otpLoginSignatureMessage,
   type OtpClientSignature,
 } from "@/lib/turnkey-otp";
+import { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
 import { openWalletOtp, WALLET_OTP_COOKIE } from "@/lib/turnkey-wallet-handoff";
 import {
   jsonForWalletResult,
@@ -57,6 +58,7 @@ export async function POST(request: NextRequest) {
         userId: sessionUser.id,
         verifiedEmail: pending.email,
         publicKey: pending.publicKey,
+        nonce: turnkeyOauthNonceFromPublicKey(pending.publicKey),
         otp: { verificationToken: pending.verificationToken, clientSignature },
       });
       if (claimed.kind === "updated") {
@@ -67,6 +69,7 @@ export async function POST(request: NextRequest) {
     const result = await completeWalletLogin({
       verifiedEmail: pending.email,
       publicKey: pending.publicKey,
+      nonce: turnkeyOauthNonceFromPublicKey(pending.publicKey),
       method: "email",
       otp: { verificationToken: pending.verificationToken, clientSignature },
     });

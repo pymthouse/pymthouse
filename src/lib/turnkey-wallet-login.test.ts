@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   completeWalletLogin,
   maskEmail,
@@ -64,6 +65,7 @@ function input(partial: Partial<WalletLoginInput> = {}): WalletLoginInput {
   return {
     verifiedEmail: "dev@example.com",
     publicKey: PUBLIC_KEY,
+    nonce: createHash("sha256").update(PUBLIC_KEY, "utf8").digest("hex"),
     method: "google",
     googleIdToken: "google-token",
     ...partial,
