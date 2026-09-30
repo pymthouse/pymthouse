@@ -71,6 +71,7 @@ describe("GitHub OAuth state cookies", () => {
     assert.equal(opened.csrf, csrf);
     assert.equal(opened.callbackUrl, "/onboarding");
     assert.equal(opened.nonce, "abc");
+    assert.equal(opened.intent, "login");
 
     assert.equal(openGithubOauthState(sealed.slice(0, -2) + "xx"), null);
     assert.equal(openGithubOauthState("not-valid"), null);
@@ -87,6 +88,21 @@ describe("GitHub OAuth state cookies", () => {
     const opened = openGithubOauthState(sealed);
     assert.ok(opened);
     assert.equal(opened.callbackUrl, "/onboarding");
+    assert.equal(opened.intent, "login");
+  });
+
+  it("round-trips link intent and defaults its callback to /account", () => {
+    const sealed = sealGithubOauthState({
+      publicKey: "02".padEnd(66, "11"),
+      nonce: "n",
+      callbackUrl: "https://evil.example",
+      csrf: createGithubOauthCsrf(),
+      intent: "link",
+    });
+    const opened = openGithubOauthState(sealed);
+    assert.ok(opened);
+    assert.equal(opened.intent, "link");
+    assert.equal(opened.callbackUrl, "/account");
   });
 
   it("rejects expired sealed state", () => {

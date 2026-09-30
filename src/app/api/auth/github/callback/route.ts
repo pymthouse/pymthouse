@@ -3,24 +3,55 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   clearCookieOptions,
   GITHUB_OAUTH_STATE_COOKIE,
+  GITHUB_OIDC_HANDOFF_COOKIE,
   GITHUB_SESSION_HANDOFF_COOKIE,
+  type GithubOauthIntent,
+  githubOidcHandoffCookieOptions,
   githubSessionHandoffCookieOptions,
   openGithubOauthState,
 } from "@/lib/turnkey-github-cookies";
 import {
   exchangeGithubOAuthCode,
   fetchGithubUserProfile,
+  GITHUB_ACCOUNT_EXISTS_ERROR,
+  isExistingAccountError,
   isGithubTurnkeyLoginConfigured,
   loginTurnkeyWithGithub,
 } from "@/lib/turnkey-github-auth";
+import { mintTurnkeyGithubOidcToken } from "@/lib/turnkey-github-oidc";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import {
+  normalizeNoticeEmail,
+  oauthErrorNoticeAutoPostResponse,
+} from "@/lib/oauth-error-notice";
+import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 
 export const dynamic = "force-dynamic";
 
-function redirectToLogin(error: string): NextResponse {
-  const url = new URL("/login", getPublicOrigin());
+function redirectWithOauthError(
+  error: string,
+  intent: GithubOauthIntent = "login",
+): NextResponse {
+  const url = new URL(intent === "link" ? "/account" : "/login", getPublicOrigin());
   url.searchParams.set("error", error);
   const response = NextResponse.redirect(url);
+  response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+  return response;
+}
+
+function existingAccountResponse(
+  intent: GithubOauthIntent,
+  email: string,
+): NextResponse {
+  const noticeEmail = normalizeNoticeEmail(email);
+  if (!noticeEmail) {
+    return redirectWithOauthError(GITHUB_ACCOUNT_EXISTS_ERROR, intent);
+  }
+  const response = oauthErrorNoticeAutoPostResponse({
+    error: GITHUB_ACCOUNT_EXISTS_ERROR,
+    email: noticeEmail,
+    intent,
+  });
   response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
   return response;
 }
@@ -64,17 +95,43 @@ function parseGithubCallbackOrThrow(request: NextRequest): {
   };
 }
 
-/** GitHub OAuth callback → Turnkey oauthLogin → handoff cookie → complete page. */
+/** GitHub OAuth callback → Turnkey oauthLogin or link-token handoff. */
 export async function GET(request: NextRequest) {
   if (!isGithubTurnkeyLoginConfigured()) {
-    return redirectToLogin("GitHubLoginNotConfigured");
+    return redirectWithOauthError("GitHubLoginNotConfigured");
   }
 
+  let intent: GithubOauthIntent = "login";
   try {
     // Validate state/CSRF + code before any OAuth exchange side effects.
     const { state, code } = parseGithubCallbackOrThrow(request);
+    intent = state.intent;
     const { accessToken } = await exchangeGithubOAuthCode(code);
     const profile = await fetchGithubUserProfile(accessToken);
+
+    if (state.intent === "link") {
+      const oidcToken = await mintTurnkeyGithubOidcToken({
+        githubUserId: profile.id,
+        nonce: state.nonce,
+        email: profile.email,
+        name: profile.name,
+        login: profile.login,
+      });
+      const accountUrl = new URL(
+        safeCallbackUrl(state.callbackUrl, "/account"),
+        getPublicOrigin(),
+      );
+      accountUrl.searchParams.set("link", "github");
+      const response = NextResponse.redirect(accountUrl);
+      response.cookies.set(GITHUB_OAUTH_STATE_COOKIE, "", clearCookieOptions());
+      response.cookies.set(
+        GITHUB_OIDC_HANDOFF_COOKIE,
+        oidcToken,
+        githubOidcHandoffCookieOptions(),
+      );
+      return response;
+    }
+
     const { sessionToken } = await loginTurnkeyWithGithub({
       publicKey: state.publicKey,
       nonce: state.nonce,
@@ -93,7 +150,10 @@ export async function GET(request: NextRequest) {
     );
     return response;
   } catch (err) {
+    if (isExistingAccountError(err)) {
+      return existingAccountResponse(intent, err.email);
+    }
     console.error("GitHub Turnkey login failed:", err);
-    return redirectToLogin("GitHubTurnkeyLoginFailed");
+    return redirectWithOauthError("GitHubTurnkeyLoginFailed", intent);
   }
 }

@@ -14,6 +14,7 @@ import { TurnkeyEmbeddedAuth } from "@/components/TurnkeyEmbeddedAuth";
 import { toSafeLogoUrl } from "@/lib/safe-logo-url";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
+import { loginAuthErrorMessage } from "@/lib/login-auth-error";
 import { isCustomerServiceOidcClient, resumeAfterOidcLogin } from "@/lib/oidc/customer-service-id";
 
 interface AppBranding {
@@ -21,27 +22,6 @@ interface AppBranding {
   displayName: string;
   logoUrl: string | null;
   primaryColor: string;
-}
-
-function authErrorMessage(authError: string | null): string | null {
-  if (!authError) return null;
-  if (authError.includes("AccessDenied")) {
-    return "Sign-in was denied. You can try again or use a different sign-in method.";
-  }
-  if (authError.includes("GitHubLoginNotConfigured")) {
-    return "GitHub sign-in is not configured for this environment.";
-  }
-  if (authError.includes("GitHubTurnkeyLoginFailed")) {
-    return "GitHub sign-in could not create a wallet session. Please try again.";
-  }
-  if (
-    authError.includes("InvalidOauthState") ||
-    authError.includes("InvalidGithubCallback") ||
-    authError.includes("InvalidPublicKey")
-  ) {
-    return "GitHub sign-in expired or was invalid. Please try again.";
-  }
-  return "Sign-in failed. Please try again.";
 }
 
 /** Full-screen placeholder text while redirecting or resolving the session. */
@@ -258,7 +238,9 @@ function LoginPageFooter({
   );
 }
 
-export function LoginForm() {
+export function LoginForm({
+  noticeEmail = null,
+}: Readonly<{ noticeEmail?: string | null }>) {
   const { data: session, status } = useSession();
   const { clientState, authState } = useTurnkey();
   const router = useRouter();
@@ -273,7 +255,10 @@ export function LoginForm() {
   const { branding, brandingResolved } = useAppBranding(clientId, needsBranding);
   /** Resume path from public /start (Explorer | Builder). Plain /login has none. */
   const resumePersona = personaFromCallback(sanitizedCallbackUrl);
-  const oauthCallbackMessage = authErrorMessage(searchParams.get("error"));
+  const oauthCallbackMessage = loginAuthErrorMessage(
+    searchParams.get("error"),
+    noticeEmail,
+  );
 
   // Preserve legacy ?admin=1 links, and send the CS RP to token login.
   useEffect(() => {

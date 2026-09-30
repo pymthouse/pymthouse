@@ -232,6 +232,23 @@ curl -sS \
 - Requested scope must be a subset of the **public app client’s** allowed scopes (see product-specific validation in code).
 - `admin` is explicitly rejected.
 - Default scope when omitted: `sign:job`.
+- Lifetimes are **not** the interactive OIDC TTLs: access is 15 minutes, refresh is 30 days. `OIDC_ACCESS_TOKEN_TTL_SECONDS` / `OIDC_REFRESH_TOKEN_TTL_SECONDS` do not apply here.
+
+---
+
+## OIDC access and refresh TTLs
+
+Interactive OIDC tokens (authorization code, device flow, DCR — e.g. Claude Desktop after MCP connect) use node-oidc-provider TTLs:
+
+| Token | Env | Default |
+| --- | --- | --- |
+| Access JWT | `OIDC_ACCESS_TOKEN_TTL_SECONDS` | `3600` (1 hour) |
+| Refresh (rotated on use) | `OIDC_REFRESH_TOKEN_TTL_SECONDS` | `7776000` (90 days) |
+| Grant / Session | follow refresh | same as refresh |
+
+Keep access at 1 hour unless you have a reason to shorten it. Lengthening access only grows the stolen-token window; clients should refresh. Grant and Session must stay at least as long as refresh or a rotated refresh dies when the grant expires.
+
+Signer session JWTs from RFC 8693 exchange stay **5 minutes** and are not env-driven.
 
 ---
 
@@ -454,7 +471,7 @@ End users can read **their own** usage with the credential they already hold (no
 | --- | --- |
 | `GET /api/v1/user/usage` | Aggregates for the authenticated subject; app resolved from the Bearer credential |
 | `GET /api/v1/user/usage/balance` | Plan included-usage allowance for that subject |
-| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
+| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `gatewayRequestId`, `cursor`, `limit`) |
 | `GET /api/v1/apps/{clientId}/me/usage` | Same aggregates with path-scoped app (`{clientId}` must match the credential) |
 | `GET /api/v1/apps/{clientId}/me/usage/balance` | Same balance, path-scoped |
 | `GET /api/v1/apps/{clientId}/me/usage/requests` | Same request history, path-scoped |
@@ -524,12 +541,13 @@ Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `rema
 
 **Endpoint:** `GET /api/v1/user/usage/requests` (or `GET /api/v1/apps/{clientId}/me/usage/requests`)
 
-Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
+Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request`, `manifestId`, and `gatewayRequestId` (same session/request semantics as `/api/v1/me/usage/requests`).
 
 | Query | Description |
 | --- | --- |
 | `groupBy` | `session` or `request` (default `request`) |
 | `manifestId` | When `groupBy=request`, filter to one session mid |
+| `gatewayRequestId` | Repeatable. When `groupBy=request`, return only rows whose `gateway_request_id` matches (max 50) |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
 
