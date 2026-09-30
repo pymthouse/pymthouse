@@ -90,7 +90,7 @@ Create a `fly.toml` file (separate from this Next.js app):
 app = "pymthouse-signer"
 
 [build]
-  image = "livepeer/go-livepeer:sha-e60d2bcaea498b73b1f203ef2fa34ba71daf9d23"
+  image = "livepeer/go-livepeer:0.9.3"
 
 [env]
   SIGNER_NETWORK = "arbitrum-one-mainnet"
