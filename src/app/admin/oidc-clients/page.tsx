@@ -33,7 +33,7 @@ export default function AdminOidcClientsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadClients();
+    void loadClients();
   }, []);
 
   async function loadClients() {

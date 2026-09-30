@@ -359,6 +359,8 @@ test("POST merchant Connect top-up credits bare externalUserId", async (t) => {
     amountUsdMicros: "25000000",
     source: "topup",
     idempotencyKey: topUpGrantIdempotencyKey("cs_test_merchant_1"),
+    stripeLivemode: true,
+    billingMode: "merchant",
   });
 });
 
@@ -490,6 +492,8 @@ test("POST auto-topup credits when Connect account matches", async (t) => {
     amountUsdMicros: "10000000",
     source: "topup",
     idempotencyKey: legacyAutoTopUpGrantIdempotencyKey("pi_auto_topup_1"),
+    stripeLivemode: true,
+    billingMode: "merchant",
   });
 });
 
@@ -850,6 +854,8 @@ test("POST sandbox merchant Connect top-up grants sandbox-plane credits", async 
   assert.equal(json.ignored, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.externalUserId, "eu_route_1");
+  assert.equal(calls[0]?.stripeLivemode, false);
+  assert.equal(calls[0]?.billingMode, "merchant");
 });
 
 test("POST sandbox merchant Connect top-up ignores live app livemode mismatch", async (t) => {

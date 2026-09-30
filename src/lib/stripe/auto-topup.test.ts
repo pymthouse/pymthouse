@@ -367,6 +367,7 @@ test("tryAutoTopUpIfEnabled charges, grants, and uses the parsed amount", async 
     (granted as { idempotencyKey: string }).idempotencyKey,
     "autotopup:pi_25",
   );
+  assert.equal((granted as { billingMode?: string }).billingMode, "merchant");
 });
 
 test("tryAutoTopUpIfEnabled falls back to $10 when prefs amount is invalid", async (t) => {
