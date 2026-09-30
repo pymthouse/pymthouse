@@ -17,7 +17,7 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: pymthouse_test
         ports:
           - 5432:5432
@@ -28,7 +28,7 @@ jobs:
           --health-retries 15
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/pymthouse_test
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/pymthouse_test
       AUTH_TOKEN_PEPPER: ci-test-auth-token-pepper-value-please-change
       NEXTAUTH_SECRET: ci-test-nextauth-secret-please-change
 
