@@ -102,6 +102,18 @@ export async function isProviderAdmin(userId: string, appId: string): Promise<bo
   return rows.length > 0;
 }
 
+export async function removeProviderAdminMembership(
+  userId: string,
+  appId: string,
+): Promise<void> {
+  await db.delete(providerAdmins).where(
+    and(
+      eq(providerAdmins.userId, userId),
+      eq(providerAdmins.clientId, appId),
+    ),
+  );
+}
+
 export async function ensureProviderAdminMembership(userId: string, appId: string) {
   const membership = {
     id: crypto.randomUUID(),

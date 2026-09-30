@@ -1,10 +1,12 @@
 "use client";
 
+import { useTurnkey } from "@turnkey/react-wallet-kit";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import UserMenu from "@/components/UserMenu";
+import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 interface NavItem {
   label: string;
@@ -37,6 +39,11 @@ const allNavItems: NavItem[] = [
     label: "My Apps",
     href: "/apps",
     icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
+  },
+  {
+    label: "Account",
+    href: "/account",
+    icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
   },
   {
     label: "API Keys",
@@ -108,6 +115,57 @@ const allNavItems: NavItem[] = [
 
 const SKELETON_NAV_KEYS = ["nav-a", "nav-b", "nav-c", "nav-d", "nav-e"] as const;
 const SKELETON_CARD_KEYS = ["card-a", "card-b", "card-c"] as const;
+
+function SignOutButton({
+  onSignOut,
+}: Readonly<{ onSignOut: () => void }>) {
+  return (
+    <button
+      type="button"
+      onClick={onSignOut}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-400 transition-all duration-150 hover:bg-white/4 hover:text-zinc-100"
+    >
+      <svg
+        className="h-5 w-5 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.5}
+          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+        />
+      </svg>
+      Sign out
+    </button>
+  );
+}
+
+function TurnkeySignOutButton() {
+  const { logout } = useTurnkey();
+  const handleSignOut = () => {
+    void logout()
+      .catch(() => undefined)
+      .then(() => signOut({ callbackUrl: "/" }));
+  };
+  return <SignOutButton onSignOut={handleSignOut} />;
+}
+
+function DashboardSignOutButton() {
+  if (isTurnkeyWalletConfigured()) {
+    return <TurnkeySignOutButton />;
+  }
+  return (
+    <SignOutButton
+      onSignOut={() => {
+        void signOut({ callbackUrl: "/" });
+      }}
+    />
+  );
+}
 
 export default function DashboardLayout({
   children,
@@ -412,27 +470,7 @@ export default function DashboardLayout({
               role={userRole}
             />
           )}
-          <button
-            type="button"
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-400 transition-all duration-150 hover:bg-white/[0.04] hover:text-zinc-100"
-          >
-            <svg
-              className="h-5 w-5 shrink-0"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-              />
-            </svg>
-            Sign out
-          </button>
+          <DashboardSignOutButton />
         </div>
       </aside>
     </div>
