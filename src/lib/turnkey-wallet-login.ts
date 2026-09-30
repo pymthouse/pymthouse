@@ -237,13 +237,32 @@ function requireEmail(raw: string): string {
   return email;
 }
 
+function issuerParts(issuer: string | null | undefined): {
+  host: string;
+  path: string;
+} {
+  try {
+    const url = new URL(issuer ?? "");
+    return {
+      host: url.hostname.toLowerCase(),
+      path: url.pathname.toLowerCase(),
+    };
+  } catch {
+    return { host: "", path: "" };
+  }
+}
+
 function providerKind(provider: OauthProviderLike): string {
   const name = (provider.providerName ?? "").toLowerCase();
-  const issuer = (provider.issuer ?? "").toLowerCase();
-  if (issuer.includes("accounts.google.com") || name === "google") return "google";
-  if (issuer.includes("turnkey-github-oidc") || name.includes("github")) return "github";
-  if (name.includes("discord") || issuer.includes("discord")) return "discord";
-  if (issuer.includes("turnkey-wallet-oidc") || name === "pymthouse") return "wallet";
+  const { host, path } = issuerParts(provider.issuer);
+  if (host === "accounts.google.com" || name === "google") return "google";
+  if (path.startsWith("/api/v1/turnkey-github-oidc") || name.includes("github")) {
+    return "github";
+  }
+  if (host === "discord.com" || name.includes("discord")) return "discord";
+  if (path.startsWith("/api/v1/turnkey-wallet-oidc") || name === "pymthouse") {
+    return "wallet";
+  }
   return "other";
 }
 

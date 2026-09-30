@@ -34,9 +34,11 @@ export function getTurnkeyWalletOidcIssuer(): string {
  * Turnkey binds the OIDC nonce to the browser session public key.
  */
 export function turnkeyOauthNonceFromPublicKey(publicKey: string): string {
+  // Turnkey OAuth nonce binding (sha256 of the session public key), not a password hash.
   // codeql[js/insufficient-password-hash]
-  // lgtm[js/insufficient-password-hash]
-  return createHash("sha256").update(publicKey, "utf8").digest("hex");
+  const digest = createHash("sha256"); // lgtm[js/insufficient-password-hash]
+  digest.update(publicKey, "utf8");
+  return digest.digest("hex");
 }
 
 export function walletOidcSubject(userId: string): string {

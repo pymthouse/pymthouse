@@ -20,15 +20,35 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-export async function GET(request: NextRequest) {
-  const rawState = request.nextUrl.searchParams.get("state")?.trim();
-  const state = rawState ? openGithubOauthState(rawState) : null;
-  const csrf = request.cookies.get(DISCORD_OAUTH_STATE_COOKIE)?.value;
-  const code = request.nextUrl.searchParams.get("code")?.trim();
-  if (!state || !csrf || !safeEqual(csrf, state.csrf) || !code) {
-    return walletLoginErrorRedirect("InvalidOauthState");
+function readDiscordCallback(request: NextRequest): {
+  state: NonNullable<ReturnType<typeof openGithubOauthState>>;
+  code: string;
+} {
+  const rawState = request.nextUrl.searchParams.get("state")?.trim() ?? "";
+  if (!rawState) {
+    throw new Error("InvalidOauthState");
   }
+  const state = openGithubOauthState(rawState);
+  if (!state) {
+    throw new Error("InvalidOauthState");
+  }
+  const csrf = request.cookies.get(DISCORD_OAUTH_STATE_COOKIE)?.value ?? "";
+  if (!csrf) {
+    throw new Error("InvalidOauthState");
+  }
+  if (!safeEqual(csrf, state.csrf)) {
+    throw new Error("InvalidOauthState");
+  }
+  const code = request.nextUrl.searchParams.get("code")?.trim() ?? "";
+  if (!code) {
+    throw new Error("InvalidOauthState");
+  }
+  return { state, code };
+}
+
+export async function GET(request: NextRequest) {
   try {
+    const { state, code } = readDiscordCallback(request);
     const exchanged = await exchangeDiscordOAuthCode(code);
     const identity = await verifyDiscordIdentity({
       accessToken: exchanged.accessToken,
@@ -49,8 +69,11 @@ export async function GET(request: NextRequest) {
     response.cookies.set(DISCORD_OAUTH_STATE_COOKIE, "", clearCookieOptions());
     return response;
   } catch (err) {
-    console.error("Discord wallet login failed", err);
-    const response = walletLoginErrorRedirect("DiscordLoginFailed");
+    const invalidState = err instanceof Error && err.message === "InvalidOauthState";
+    if (!invalidState) console.error("Discord wallet login failed", err);
+    const response = walletLoginErrorRedirect(
+      invalidState ? "InvalidOauthState" : "DiscordLoginFailed",
+    );
     response.cookies.set(DISCORD_OAUTH_STATE_COOKIE, "", clearCookieOptions());
     return response;
   }

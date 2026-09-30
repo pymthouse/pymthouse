@@ -115,6 +115,45 @@ test("google against an email-only sub-org asks for a one-time code", async () =
   assert.ok(!client.calls.includes("createSubOrganization"));
 });
 
+test("a lookalike Google issuer does not open the Google wallet", async () => {
+  let oauthCalls = 0;
+  const client = deps({
+    findByEmail: async () => [
+      {
+        id: "user-1",
+        email: "dev@example.com",
+        name: null,
+        turnkeyUserId: "tk-1",
+        turnkeySubOrgId: "sub-email",
+        walletLinkedAt: null,
+      },
+    ],
+    getClient: () => ({
+      getSubOrgIds: async () => ({ organizationIds: [] }),
+      getVerifiedSubOrgIds: async () => ({ organizationIds: [] }),
+      getUsers: async () => ({
+        users: [
+          {
+            userId: "tk-1",
+            oauthProviders: [
+              { providerName: "custom", issuer: "https://evil.example/accounts.google.com" },
+            ],
+          },
+        ],
+      }),
+      createSubOrganization: async () => ({ subOrganizationId: "unused" }),
+      oauthLogin: async () => {
+        oauthCalls += 1;
+        return { session: "sess" };
+      },
+      otpLogin: async () => ({ session: "no" }),
+    }),
+  });
+  const result = await completeWalletLogin(input(), client);
+  assert.equal(result.kind, "confirm-email");
+  assert.equal(oauthCalls, 0);
+});
+
 test("direct login when the wallet issuer is already on the sub-org", async () => {
   const client = deps({
     findByEmail: async () => [
