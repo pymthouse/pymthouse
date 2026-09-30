@@ -249,13 +249,21 @@ async function ensurePlatformDefaultOwnedByAdmin(
   const row = rows[0];
   if (!row || row.ownerId === adminId) return;
 
+  // Lookup and update are separate statements. A concurrent delete of this
+  // admin (common while tests tear down user-test-* rows) must not fail the
+  // owner foreign key. Skip the write when the user is already gone.
   await db
     .update(developerApps)
     .set({
       ownerId: adminId,
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(developerApps.id, appId));
+    .where(
+      and(
+        eq(developerApps.id, appId),
+        sql`exists (select 1 from ${users} where ${users.id} = ${adminId})`,
+      ),
+    );
 }
 
 function isUniqueViolation(err: unknown): boolean {

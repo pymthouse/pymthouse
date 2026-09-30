@@ -107,12 +107,19 @@ test("plans API: network default plan rules", async (t) => {
     );
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
-      plans: Array<{ isStarterDefault?: boolean; includedUsdMicros?: string | null }>;
+      plans: Array<{
+        isStarterDefault?: boolean;
+        includedUsdMicros?: string | null;
+        name?: string;
+        status?: string;
+      }>;
     };
     const starters = body.plans.filter((p) => p.isStarterDefault);
     assert.equal(starters.length, 1);
     const starter = starters[0];
     assert.ok(starter?.includedUsdMicros);
+    assert.equal(starter?.name, "Starter");
+    assert.equal(starter?.status, "active");
   });
 
   await t.test("DELETE starter default plan returns 409", async (t) => {

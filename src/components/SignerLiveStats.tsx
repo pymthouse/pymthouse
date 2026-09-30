@@ -89,8 +89,10 @@ export default function SignerLiveStats() {
   }
 
   useEffect(() => {
-    fetchStats();
-    const poll = setInterval(fetchStats, 15000);
+    void fetchStats();
+    const poll = setInterval(() => {
+      void fetchStats();
+    }, 15000);
     const tick = setInterval(() => setTick((t) => t + 1), 5000);
     return () => {
       clearInterval(poll);

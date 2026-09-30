@@ -43,7 +43,7 @@ export default function SignerLogs({
 
   useEffect(() => {
     if (managedRemote) return;
-    fetchLogs();
+    void fetchLogs();
   }, [fetchLogs, managedRemote]);
 
   useEffect(() => {
