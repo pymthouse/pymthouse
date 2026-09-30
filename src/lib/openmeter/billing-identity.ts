@@ -11,6 +11,7 @@ import {
   buildOwnerWireSubject,
   buildSandboxEndUserCustomerKey,
   isEndUserCustomerKey,
+  isEndUserRowId,
   isOwnerWireSubject,
   normalizePlatformUserId,
   parseCustomerKey,
@@ -540,20 +541,17 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
   const externalUserId = input.externalUserId;
   const app = input.app;
 
-  // Canonical `eu_{id}` / `sbx_eu_{id}` must resolve by primary key. Treating
-  // the key string as an integrator external_user_id creates a shadow
-  // end_users row and bills / measures debt against the wrong OpenMeter
-  // customer (and can cross live ↔ sandbox planes).
-  if (!input.resolvedFromEndUserKey) {
-    const endUserRowId = parseEndUserCustomerKey(externalUserId);
-    if (endUserRowId) {
-      const mapped = await mapEndUserCustomerKeyToIntegratorId({
-        endUserRowId,
-        developerAppId: app?.developerAppId ?? null,
-      });
-      if (!mapped) {
-        throw new Error(`Unknown end-user customer key ${externalUserId}`);
-      }
+  // Canonical `eu_{end_users.id}` / `sbx_eu_{id}` remaps to the integrator
+  // id so findOrCreate does not provision a shadow wallet. The prefix is not
+  // the source of truth: only a UUID suffix can be a primary key, the row
+  // must belong to this app, and the plane comes from `app.stripeLivemode`
+  // (already loaded, including a settlement override) on the resolve below.
+  if (!input.resolvedFromEndUserKey && app) {
+    const mapped = await remapEndUserCustomerKeyToIntegratorId({
+      subject: externalUserId,
+      developerAppId: app.developerAppId,
+    });
+    if (mapped) {
       return resolveOpenMeterBillingIdentityUncached({
         clientId: input.clientId,
         externalUserId: mapped,
@@ -689,39 +687,40 @@ export async function resolveAppUserOpenMeterLookupKeys(input: {
 }
 
 /**
- * Map `eu_{end_users.id}` / `sbx_eu_{id}` → integrator `external_user_id`.
- * Returns null when the row is missing, has no external id, or belongs to a
- * different app.
+ * Map `eu_{end_users.id}` / `sbx_eu_{id}` → integrator `external_user_id`
+ * for this app. One primary-key read.
+ *
+ * Returns null without a query when {@link parseEndUserCustomerKey} does not
+ * yield a UUID (`eu_billing_1`, `eu_tenant`). Returns null when the row is
+ * missing, has no external id, or belongs to another app — the caller keeps
+ * the original subject. A database error propagates: swallowing it and
+ * provisioning that subject creates a shadow `end_users` row.
+ *
+ * Does not read OpenMeter customer metadata or `billing_customers`, and does
+ * not infer live vs sandbox from the prefix.
  */
-async function mapEndUserCustomerKeyToIntegratorId(input: {
-  endUserRowId: string;
-  developerAppId: string | null;
+async function remapEndUserCustomerKeyToIntegratorId(input: {
+  subject: string;
+  developerAppId: string;
 }): Promise<string | null> {
-  try {
-    const rows = await db
-      .select({
-        appId: endUsers.appId,
-        externalUserId: endUsers.externalUserId,
-      })
-      .from(endUsers)
-      .where(eq(endUsers.id, input.endUserRowId))
-      .limit(1);
-    const row = rows[0];
-    const externalUserId = row?.externalUserId?.trim() || "";
-    if (!row || !externalUserId) {
-      return null;
-    }
-    if (
-      input.developerAppId &&
-      row.appId &&
-      row.appId !== input.developerAppId
-    ) {
-      return null;
-    }
-    return externalUserId;
-  } catch {
+  const endUserRowId = parseEndUserCustomerKey(input.subject);
+  if (!endUserRowId || !isEndUserRowId(endUserRowId)) {
     return null;
   }
+  const rows = await db
+    .select({
+      appId: endUsers.appId,
+      externalUserId: endUsers.externalUserId,
+    })
+    .from(endUsers)
+    .where(eq(endUsers.id, endUserRowId.toLowerCase()))
+    .limit(1);
+  const row = rows[0];
+  const externalUserId = row?.externalUserId?.trim() || "";
+  if (!row || row.appId !== input.developerAppId || !externalUserId) {
+    return null;
+  }
+  return externalUserId;
 }
 
 /** True when this external user id is the owner of the given app. */
