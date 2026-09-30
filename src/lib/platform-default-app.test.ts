@@ -17,9 +17,22 @@ import { db } from "@/db/index";
 import { developerApps, users } from "@/db/schema";
 import {
   ensurePlatformDefaultApp,
+  findAdminOwnerId,
   notPlatformDefaultApp,
   resolvePlatformDefaultClientId,
 } from "@/lib/platform-default-app";
+
+test("findAdminOwnerId does not select a disposable test admin", async (t) => {
+  const adminId = await createTestUser({ role: "admin" });
+  t.after(async () => {
+    await db.delete(users).where(eq(users.id, adminId));
+  });
+
+  const ownerId = await findAdminOwnerId();
+  assert.ok(ownerId);
+  assert.notEqual(ownerId, adminId);
+  assert.equal(ownerId.startsWith("user-test-"), false);
+});
 
 test("catalog filters exclude the flagged platform default app", async (t) => {
   const app = await seedDeveloperAppWithClient({
