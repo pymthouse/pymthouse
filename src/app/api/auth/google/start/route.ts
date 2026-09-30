@@ -8,6 +8,7 @@ import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import {
   getGoogleOAuthClientId,
+  GOOGLE_OAUTH_STATE_COOKIE,
   googleAuthorizeUrl,
   isGoogleWalletLoginConfigured,
 } from "@/lib/turnkey-google-auth";
@@ -15,8 +16,6 @@ import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 import { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
 
 export const dynamic = "force-dynamic";
-
-export const GOOGLE_OAUTH_STATE_COOKIE = "pmth_google_oauth_state";
 
 function fail(code: string): NextResponse {
   const url = new URL("/login", getPublicOrigin());

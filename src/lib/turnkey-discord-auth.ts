@@ -10,6 +10,8 @@ function trimEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+export const DISCORD_OAUTH_STATE_COOKIE = "pmth_discord_oauth_state";
+
 export function getDiscordOAuthClientId(): string | undefined {
   return (
     trimEnv(process.env.DISCORD_CLIENT_ID) ||

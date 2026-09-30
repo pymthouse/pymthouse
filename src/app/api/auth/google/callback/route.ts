@@ -3,9 +3,9 @@ import { NextRequest } from "next/server";
 import { clearCookieOptions, openGithubOauthState } from "@/lib/turnkey-github-cookies";
 import {
   exchangeGoogleOAuthCode,
+  GOOGLE_OAUTH_STATE_COOKIE,
   verifyGoogleIdToken,
 } from "@/lib/turnkey-google-auth";
-import { GOOGLE_OAUTH_STATE_COOKIE } from "@/app/api/auth/google/start/route";
 import {
   redirectForWalletLogin,
   walletLoginErrorRedirect,

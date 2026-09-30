@@ -7,6 +7,7 @@ import {
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import {
+  DISCORD_OAUTH_STATE_COOKIE,
   discordAuthorizeUrl,
   getDiscordOAuthClientId,
   isDiscordWalletLoginConfigured,
@@ -15,8 +16,6 @@ import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 import { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
 
 export const dynamic = "force-dynamic";
-
-export const DISCORD_OAUTH_STATE_COOKIE = "pmth_discord_oauth_state";
 
 function fail(code: string): NextResponse {
   const url = new URL("/login", getPublicOrigin());

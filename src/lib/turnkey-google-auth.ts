@@ -10,6 +10,8 @@ function trimEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+export const GOOGLE_OAUTH_STATE_COOKIE = "pmth_google_oauth_state";
+
 export function getGoogleOAuthClientId(): string | undefined {
   return trimEnv(process.env.GOOGLE_CLIENT_ID);
 }

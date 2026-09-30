@@ -2,10 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 import { clearCookieOptions, openGithubOauthState } from "@/lib/turnkey-github-cookies";
 import {
+  DISCORD_OAUTH_STATE_COOKIE,
   exchangeDiscordOAuthCode,
   verifyDiscordIdentity,
 } from "@/lib/turnkey-discord-auth";
-import { DISCORD_OAUTH_STATE_COOKIE } from "@/app/api/auth/discord/start/route";
 import {
   redirectForWalletLogin,
   walletLoginErrorRedirect,
