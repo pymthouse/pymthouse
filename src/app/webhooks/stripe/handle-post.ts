@@ -7,11 +7,13 @@ import {
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
+  appActiveLivemodeMatchesWebhookPlane,
   appLivemodeMatchesWebhookPlane,
   applyConnectedAccountWebhookUpdate,
   findAppUserStripeCustomerByStripeId,
 } from "@/lib/stripe/merchant-connect";
 import {
+  merchantActiveConnectedAccountMatches,
   merchantTopUpAccountMatches,
   normalizeStripeCurrency,
   resolveAppBillingCurrency,
@@ -108,8 +110,9 @@ function stripeEventAccount(rawBody: string): string | null {
 /**
  * Metadata alone is not a restore authority. Prefer a server-issued Checkout
  * session mapping; otherwise require the emitting Connect `account` to match
- * the target app's Connected Account (same binding as merchant top-up).
- * Webhook plane livemode must also match the app's stripeLivemode.
+ * the target app's *active* Connected Account. Webhook livemode must match
+ * the active stripeLivemode. A parked plane is not a restore target: its
+ * `pm_` belongs to the parked Connect customer.
  */
 async function restoreFromMetadataTarget(
   restoreTarget: StripePaymentMethodAttachedPayload,
@@ -142,7 +145,10 @@ async function restoreFromMetadataTarget(
 
   let matches: boolean;
   try {
-    matches = await merchantTopUpAccountMatches(restoreTarget.clientId, account);
+    matches = await merchantActiveConnectedAccountMatches(
+      restoreTarget.clientId,
+      account,
+    );
   } catch (err) {
     logHandlerError("payment method restore account match", err);
     return NextResponse.json({ error: "handler_failed" }, { status: 500 });
@@ -162,7 +168,7 @@ async function restoreFromMetadataTarget(
 
   let livemodeMatches: boolean;
   try {
-    livemodeMatches = await appLivemodeMatchesWebhookPlane(
+    livemodeMatches = await appActiveLivemodeMatchesWebhookPlane(
       restoreTarget.clientId,
       livemode,
     );
@@ -224,7 +230,7 @@ async function restoreFromStripeCustomer(
 
   let livemodeMatches: boolean;
   try {
-    livemodeMatches = await appLivemodeMatchesWebhookPlane(
+    livemodeMatches = await appActiveLivemodeMatchesWebhookPlane(
       row.clientId,
       livemode,
     );
@@ -747,17 +753,18 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  * Owner top-up grants require the live webhook plane, the platform webhook
  * secret, and a platform (non-Connect) event. Sandbox ingress never credits
  * the owner's live prepaid wallet. Merchant end-user top-ups and Connect
- * auto top-ups grant when the webhook plane matches the app's stripeLivemode
- * and the Connect `account` matches the app's Connected Account — sandbox
- * grants land on `sbx_eu_{end_users.id}`, not production `eu_{id}`.
+ * auto top-ups grant when the webhook plane is the active stripeLivemode or
+ * a parked Connect plane, and the Connect `account` matches that plane.
+ * Grants pass the webhook livemode so sandbox credits land on
+ * `sbx_eu_{end_users.id}`, not production `eu_{id}`.
  * `account.updated` is bound to the webhook plane's livemode so sandbox
  * ingress cannot flip live Connect flags.
  * Platform auto top-ups require the platform secret plus `owner:{userId}`
  * ownership of `client_id`. Auto-topup settlement also requires PI currency
- * to match `app_billing_config.default_currency`. Payment-method restore from
- * Connect metadata also requires that account match (or a server-issued
- * Checkout session mapping) and that the app's stripeLivemode matches the
- * webhook plane so sandbox ingress cannot restore live billing profiles.
+ * to match `app_billing_config.default_currency`. Payment-method restore
+ * matches only the active Connected Account and active stripeLivemode (or a
+ * server-issued Checkout session mapping). A parked-plane `pm_` is ignored
+ * so it is not promoted onto the active Connect customer.
  */
 export async function handleStripeWebhookPost(
   request: Request,

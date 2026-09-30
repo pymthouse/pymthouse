@@ -100,10 +100,12 @@ export async function grantAllowanceUsdMicros(input: {
   await ensureStarterSubscriptionForAppUser({
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
+    stripeLivemode: input.stripeLivemode,
   });
   await ensureTrialAllowanceForAppUser({
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
+    stripeLivemode: input.stripeLivemode,
   });
 
   const featureKey =

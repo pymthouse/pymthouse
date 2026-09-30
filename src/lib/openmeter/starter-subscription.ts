@@ -30,6 +30,45 @@ import {
 } from "./subscription-read";
 import { pickSlotOccupyingSubscription } from "./subscription-state";
 
+type StarterPlaneIdentityProbe = {
+  payerCustomerKey: string;
+  stripeLivemode?: boolean;
+};
+
+let starterPlaneIdentityProbe: StarterPlaneIdentityProbe | null = null;
+
+/** Test-only: last wallet `ensureStarterSubscriptionForAppUser` resolved. */
+export function __readStarterPlaneIdentityProbeForTests(): StarterPlaneIdentityProbe | null {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__readStarterPlaneIdentityProbeForTests is only available in test",
+    );
+  }
+  return starterPlaneIdentityProbe;
+}
+
+async function resolveStarterPlaneIdentity(input: {
+  clientId: string;
+  externalUserId: string;
+  stripeLivemode?: boolean;
+}) {
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeLivemode: input.stripeLivemode,
+  });
+  if (process.env.NODE_ENV === "test") {
+    starterPlaneIdentityProbe = {
+      payerCustomerKey: identity.payerCustomerKey,
+      stripeLivemode: input.stripeLivemode,
+    };
+  }
+  return identity;
+}
+
 async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSelect> {
   const refreshed = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
   if (!refreshed[0]) {
@@ -414,20 +453,22 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
   hintOpenMeterSubscriptionId?: string | null;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
 }): Promise<{
   openmeterSubscriptionId: string | null;
   planId: string;
   created: boolean;
   skipped: boolean;
 }> {
+  if (process.env.NODE_ENV === "test") {
+    starterPlaneIdentityProbe = null;
+  }
   if (!isHostedAdminClientAvailable()) {
-    const { resolveOpenMeterBillingIdentity } = await import(
-      "@/lib/openmeter/billing-identity"
-    );
-    const identity = await resolveOpenMeterBillingIdentity({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
-    });
+    const identity = await resolveStarterPlaneIdentity(input);
     const starter = await getOrCreateStarterPlan(identity.developerAppId);
     return {
       openmeterSubscriptionId: null,
@@ -437,13 +478,10 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     };
   }
 
-  const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
+  const { ownerCostRailUserId } = await import(
     "@/lib/openmeter/billing-identity"
   );
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity = await resolveStarterPlaneIdentity(input);
 
   // Owners and owner_rollup end-users share one platform Owner Starter.
   // Return the requesting app's local Starter id for callers that cache planId.

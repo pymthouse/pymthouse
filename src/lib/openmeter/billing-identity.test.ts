@@ -30,6 +30,10 @@ import {
   isSandboxEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import {
+  __readStarterPlaneIdentityProbeForTests,
+  ensureStarterSubscriptionForAppUser,
+} from "@/lib/openmeter/starter-subscription";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -438,6 +442,35 @@ test("stripeLivemode override credits the payment plane after a switch", async (
   );
   assert.equal(sandboxSettle.actorEndUserId, live.actorEndUserId);
   assert.notEqual(sandboxSettle.payerCustomerKey, live.payerCustomerKey);
+});
+
+test("starter provisioning keeps the payment-plane wallet after a switch", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  await ensureStarterSubscriptionForAppUser({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+    stripeLivemode: false,
+  });
+  const probe = __readStarterPlaneIdentityProbeForTests();
+  assert.ok(probe);
+  assert.equal(probe.stripeLivemode, false);
+  assert.equal(
+    probe.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(live.actorEndUserId),
+  );
+  assert.notEqual(probe.payerCustomerKey, live.payerCustomerKey);
 });
 
 test("normal app owner bills shared owner wallet", async (t) => {

@@ -464,12 +464,14 @@ test("parked Connect plane still matches in-flight settlement webhooks", async (
   });
 
   const {
+    appActiveLivemodeMatchesWebhookPlane,
     appLivemodeMatchesWebhookPlane,
     resolveMerchantConnectAccountPlane,
   } = await import("@/lib/stripe/merchant-connect");
-  const { merchantTopUpAccountMatches } = await import(
-    "@/lib/stripe/topup-ownership"
-  );
+  const {
+    merchantActiveConnectedAccountMatches,
+    merchantTopUpAccountMatches,
+  } = await import("@/lib/stripe/topup-ownership");
   const { db: database } = await import("@/db/index");
   const { appStripeConnectAccounts } = await import("@/db/schema");
 
@@ -524,6 +526,25 @@ test("parked Connect plane still matches in-flight settlement webhooks", async (
     true,
   );
   assert.equal(await appLivemodeMatchesWebhookPlane(app.clientId, true), true);
+
+  // Payment-method restore stays on the active plane. A parked pm_ must not
+  // match, or restore would promote it onto the live Connect customer.
+  assert.equal(
+    await merchantActiveConnectedAccountMatches(app.clientId, "acct_park_sandbox"),
+    false,
+  );
+  assert.equal(
+    await appActiveLivemodeMatchesWebhookPlane(app.clientId, false),
+    false,
+  );
+  assert.equal(
+    await merchantActiveConnectedAccountMatches(app.clientId, "acct_park_live"),
+    true,
+  );
+  assert.equal(
+    await appActiveLivemodeMatchesWebhookPlane(app.clientId, true),
+    true,
+  );
 });
 
 test("an app user keeps a separate Stripe customer per plane", async (t) => {

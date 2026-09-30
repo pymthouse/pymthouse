@@ -17,6 +17,11 @@ import {
 export async function ensureTrialAllowanceForAppUser(input: {
   clientId: string;
   externalUserId: string;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
 }): Promise<void> {
   if (!isHostedAdminClientAvailable()) {
     return;
@@ -25,11 +30,13 @@ export async function ensureTrialAllowanceForAppUser(input: {
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
+    stripeLivemode: input.stripeLivemode,
   });
 
   await ensureStarterPlanSynced(identity.developerAppId);
   await ensureStarterSubscriptionForAppUser({
     clientId: identity.developerAppId,
     externalUserId: input.externalUserId,
+    stripeLivemode: input.stripeLivemode,
   });
 }
