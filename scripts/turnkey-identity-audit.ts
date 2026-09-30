@@ -41,28 +41,34 @@ function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
-async function listSubOrgIds(
-  client: ReturnType<typeof getTurnkeyServerApiClient>,
+type TurnkeyAuditClient = ReturnType<typeof getTurnkeyServerApiClient>;
+
+async function listSubOrgPage(
+  client: TurnkeyAuditClient,
+  ids: string[],
+  after: string | undefined,
+  pagesLeft: number,
 ): Promise<string[]> {
-  const ids: string[] = [];
-  let after: string | undefined;
-  for (let page = 0; page < 100; page += 1) {
-    const result = await client.getSubOrgIds({
-      organizationId: PARENT_ORG_ID,
-      paginationOptions: {
-        limit: "100",
-        ...(after ? { after } : {}),
-      },
-    });
-    const batch = result.organizationIds ?? [];
-    if (batch.length === 0) break;
-    const fresh = batch.filter((id) => !ids.includes(id));
-    if (fresh.length === 0) break;
+  if (pagesLeft <= 0) return ids;
+  const result = await client.getSubOrgIds({
+    organizationId: PARENT_ORG_ID,
+    paginationOptions: {
+      limit: "100",
+      ...(after ? { after } : {}),
+    },
+  });
+  const batch = result.organizationIds ?? [];
+  const fresh = batch.filter((id) => !ids.includes(id));
+  if (batch.length === 0 || fresh.length === 0 || batch.length < 100) {
     ids.push(...fresh);
-    if (batch.length < 100) break;
-    after = fresh.at(-1);
+    return ids;
   }
-  return ids;
+  ids.push(...fresh);
+  return listSubOrgPage(client, ids, fresh.at(-1), pagesLeft - 1);
+}
+
+function listSubOrgIds(client: TurnkeyAuditClient): Promise<string[]> {
+  return listSubOrgPage(client, [], undefined, 100);
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -71,27 +77,29 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
-async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("Resource exhausted") && !message.includes("error 8")) {
-        throw err;
-      }
-      const waitMs = 1500 * (attempt + 1);
-      console.warn(`${label}: rate-limited, retrying in ${waitMs}ms`);
-      await sleep(waitMs);
-    }
+function isRateLimit(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("Resource exhausted") || message.includes("error 8");
+}
+
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempt = 0,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (attempt >= 4 || !isRateLimit(err)) throw err;
+    const waitMs = 1500 * (attempt + 1);
+    console.warn(`${label}: rate-limited, retrying in ${waitMs}ms`);
+    await sleep(waitMs);
+    return withRetry(label, fn, attempt + 1);
   }
-  throw lastError;
 }
 
 async function inspectSubOrg(
-  client: ReturnType<typeof getTurnkeyServerApiClient>,
+  client: TurnkeyAuditClient,
   organizationId: string,
 ): Promise<SubOrgRecord> {
   const usersResult = await withRetry(`getUsers ${organizationId}`, () =>
@@ -112,39 +120,21 @@ async function inspectSubOrg(
   };
 }
 
-async function main(): Promise<void> {
-  if (!PARENT_ORG_ID) {
-    throw new Error("Missing TURNKEY_ORG_ID / NEXT_PUBLIC_ORGANIZATION_ID");
-  }
+function isAppRootEmail(email: string | null): boolean {
+  return !!email?.includes("@example.com") || !!email?.startsWith("turnkey-root+");
+}
 
-  const client = getTurnkeyServerApiClient();
-  const subOrgIds = await listSubOrgIds(client);
-  const records: SubOrgRecord[] = [];
-  for (const organizationId of subOrgIds) {
-    records.push(await inspectSubOrg(client, organizationId));
-  }
-
+function printInventory(records: SubOrgRecord[]): void {
   const emailOnly = records.filter((r) => r.email && r.oauthCount === 0);
-  const humanEmailOnly = emailOnly.filter(
-    (r) =>
-      !r.email?.includes("@example.com") &&
-      !r.email?.startsWith("turnkey-root+"),
-  );
-  const appRootEmailOnly = emailOnly.filter(
-    (r) =>
-      !!r.email?.includes("@example.com") ||
-      !!r.email?.startsWith("turnkey-root+"),
-  );
-  const withOauth = records.filter((r) => r.oauthCount > 0);
-  const withWallets = records.filter((r) => r.walletCount > 0);
-
+  const humanEmailOnly = emailOnly.filter((r) => !isAppRootEmail(r.email));
+  const appRootEmailOnly = emailOnly.filter((r) => isAppRootEmail(r.email));
   console.log(
     JSON.stringify(
       {
         parentOrganizationId: PARENT_ORG_ID,
         subOrgCount: records.length,
-        withOauth: withOauth.length,
-        withWallets: withWallets.length,
+        withOauth: records.filter((r) => r.oauthCount > 0).length,
+        withWallets: records.filter((r) => r.walletCount > 0).length,
         verifiedEmailNoOauth: emailOnly.length,
         humanVerifiedEmailNoOauth: humanEmailOnly.length,
         appRootVerifiedEmailNoOauth: appRootEmailOnly.length,
@@ -154,58 +144,73 @@ async function main(): Promise<void> {
       2,
     ),
   );
+}
 
-  if (hasFlag("--sync") || hasFlag("--backfill")) {
-    const apply = hasFlag("--apply");
-    const rows = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        turnkeyUserId: users.turnkeyUserId,
-        turnkeySubOrgId: users.turnkeySubOrgId,
-      })
-      .from(users);
-    const syncs: Array<{ id: string; turnkeySubOrgId: string }> = [];
-    for (const row of rows) {
-      if (!row.turnkeyUserId || row.turnkeySubOrgId) continue;
-      const match = records.find((record) => record.userId === row.turnkeyUserId);
-      if (!match) continue;
-      syncs.push({ id: row.id, turnkeySubOrgId: match.organizationId });
-      if (apply && hasFlag("--sync")) {
-        await db
+async function collectRecords(
+  client: TurnkeyAuditClient,
+  organizationIds: string[],
+  index = 0,
+  records: SubOrgRecord[] = [],
+): Promise<SubOrgRecord[]> {
+  const organizationId = organizationIds[index];
+  if (!organizationId) return records;
+  records.push(await inspectSubOrg(client, organizationId));
+  return collectRecords(client, organizationIds, index + 1, records);
+}
+
+async function printSyncReport(records: SubOrgRecord[]): Promise<void> {
+  const apply = hasFlag("--apply") && hasFlag("--sync");
+  const rows = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      turnkeyUserId: users.turnkeyUserId,
+      turnkeySubOrgId: users.turnkeySubOrgId,
+    })
+    .from(users);
+  const syncs = rows.flatMap((row) => {
+    if (!row.turnkeyUserId || row.turnkeySubOrgId) return [];
+    const match = records.find((record) => record.userId === row.turnkeyUserId);
+    if (!match) return [];
+    return [{ id: row.id, turnkeySubOrgId: match.organizationId }];
+  });
+  if (apply) {
+    await Promise.all(
+      syncs.map((sync) =>
+        db
           .update(users)
-          .set({ turnkeySubOrgId: match.organizationId })
-          .where(eq(users.id, row.id));
-      }
-    }
-    const duplicateEmails = new Map<string, string[]>();
-    for (const row of rows) {
-      const email = normalizeTurnkeyEmail(row.email);
-      if (!email || isPlaceholderTurnkeyEmail(row.email, row.turnkeyUserId ?? "")) continue;
-      const list = duplicateEmails.get(email) ?? [];
-      list.push(row.id);
-      duplicateEmails.set(email, list);
-    }
-    console.log(
-      JSON.stringify(
-        {
-          apply: apply && hasFlag("--sync"),
-          subOrgSync: syncs,
-          duplicateEmails: [...duplicateEmails.entries()]
-            .filter(([, ids]) => ids.length > 1)
-            .map(([email, userIds]) => ({ email, userIds })),
-          walletIssuerCount: records.filter((record) =>
-            record.providerNames.some((name) => name.toLowerCase() === "pymthouse"),
-          ).length,
-        },
-        null,
-        2,
+          .set({ turnkeySubOrgId: sync.turnkeySubOrgId })
+          .where(eq(users.id, sync.id)),
       ),
     );
   }
+  const duplicateEmails = new Map<string, string[]>();
+  for (const row of rows) {
+    const email = normalizeTurnkeyEmail(row.email);
+    if (!email || isPlaceholderTurnkeyEmail(row.email, row.turnkeyUserId ?? "")) continue;
+    const list = duplicateEmails.get(email) ?? [];
+    list.push(row.id);
+    duplicateEmails.set(email, list);
+  }
+  console.log(
+    JSON.stringify(
+      {
+        apply,
+        subOrgSync: syncs,
+        duplicateEmails: [...duplicateEmails.entries()]
+          .filter(([, ids]) => ids.length > 1)
+          .map(([email, userIds]) => ({ email, userIds })),
+        walletIssuerCount: records.filter((record) =>
+          record.providerNames.some((name) => name.toLowerCase() === "pymthouse"),
+        ).length,
+      },
+      null,
+      2,
+    ),
+  );
+}
 
-  if (!hasFlag("--backfill")) return;
-
+async function backfillPlaceholders(records: SubOrgRecord[]): Promise<void> {
   const apply = hasFlag("--apply");
   const placeholderRows = await db
     .select({
@@ -214,40 +219,44 @@ async function main(): Promise<void> {
       turnkeyUserId: users.turnkeyUserId,
     })
     .from(users);
-
-  const updates: Array<{
-    id: string;
-    from: string | null;
-    to: string;
-    turnkeyUserId: string;
-  }> = [];
-  for (const row of placeholderRows) {
-    if (!row.turnkeyUserId) continue;
-    if (!isPlaceholderTurnkeyEmail(row.email, row.turnkeyUserId)) continue;
-    const match = records.find((r) => r.userId === row.turnkeyUserId);
+  const updates = placeholderRows.flatMap((row) => {
+    if (!row.turnkeyUserId) return [];
+    if (!isPlaceholderTurnkeyEmail(row.email, row.turnkeyUserId)) return [];
+    const match = records.find((record) => record.userId === row.turnkeyUserId);
     const nextEmail = normalizeTurnkeyEmail(match?.email);
-    if (!nextEmail) continue;
-    updates.push({
-      id: row.id,
-      from: row.email,
-      to: nextEmail,
-      turnkeyUserId: row.turnkeyUserId,
-    });
-    if (apply) {
-      await db.update(users).set({ email: nextEmail }).where(eq(users.id, row.id));
-    }
-  }
-
-  console.log(
-    JSON.stringify(
+    if (!nextEmail) return [];
+    return [
       {
-        apply,
-        placeholderUpdates: updates,
+        id: row.id,
+        from: row.email,
+        to: nextEmail,
+        turnkeyUserId: row.turnkeyUserId,
       },
-      null,
-      2,
-    ),
-  );
+    ];
+  });
+  if (apply) {
+    await Promise.all(
+      updates.map((update) =>
+        db.update(users).set({ email: update.to }).where(eq(users.id, update.id)),
+      ),
+    );
+  }
+  console.log(JSON.stringify({ apply, placeholderUpdates: updates }, null, 2));
+}
+
+async function main(): Promise<void> {
+  if (!PARENT_ORG_ID) {
+    throw new Error("Missing TURNKEY_ORG_ID / NEXT_PUBLIC_ORGANIZATION_ID");
+  }
+  const client = getTurnkeyServerApiClient();
+  const records = await collectRecords(client, await listSubOrgIds(client));
+  printInventory(records);
+  if (hasFlag("--sync") || hasFlag("--backfill")) {
+    await printSyncReport(records);
+  }
+  if (hasFlag("--backfill")) {
+    await backfillPlaceholders(records);
+  }
 }
 
 main()

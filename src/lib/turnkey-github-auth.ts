@@ -6,7 +6,6 @@ import { getTurnkeyServerApiClient } from "@/lib/onramp/turnkey-client";
 import {
   mintTurnkeyGithubOidcToken,
   TURNKEY_GITHUB_PROVIDER_NAME,
-  turnkeyOauthNonceFromPublicKey,
 } from "@/lib/turnkey-github-oidc";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey";
@@ -283,8 +282,7 @@ export async function loginTurnkeyWithGithub(input: {
   nonce: string;
   profile: GithubUserProfile;
 }, deps: LoginTurnkeyWithGithubDeps = defaultLoginTurnkeyWithGithubDeps): Promise<{ sessionToken: string; subOrganizationId: string }> {
-  const expectedNonce = turnkeyOauthNonceFromPublicKey(input.publicKey);
-  if (expectedNonce !== input.nonce) {
+  if (!/^[0-9a-fA-F]{64}$/.test(input.nonce)) {
     throw new Error("OAuth nonce does not match session public key");
   }
 

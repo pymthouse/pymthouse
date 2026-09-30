@@ -77,7 +77,7 @@ export function WalletIssuerLogin({
     }
   }
 
-  async function sendCode(event: React.FormEvent) {
+  async function sendCode(event: { preventDefault(): void }) {
     event.preventDefault();
     setBusy(true);
     setError(null);
@@ -98,7 +98,7 @@ export function WalletIssuerLogin({
     }
   }
 
-  async function submitCode(event: React.FormEvent) {
+  async function submitCode(event: { preventDefault(): void }) {
     event.preventDefault();
     setBusy(true);
     setError(null);

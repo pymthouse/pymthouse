@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
       login: {
         verifiedEmail: identity.email,
         publicKey: state.publicKey,
+        nonce: state.nonce,
         method: "google",
         name: identity.name,
         googleIdToken: idToken,

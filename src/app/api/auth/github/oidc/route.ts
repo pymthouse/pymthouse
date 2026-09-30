@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * One-shot handoff: return the GitHub OIDC token minted for account linking
  * and clear it. Called by `/account` before `addOauthProvider`.
  */
-export async function POST(request: NextRequest) {
+export function POST(request: NextRequest) {
   const oidcToken = request.cookies
     .get(GITHUB_OIDC_HANDOFF_COOKIE)
     ?.value?.trim();

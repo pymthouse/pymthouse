@@ -4,7 +4,7 @@ import { isTurnkeyBackendAuthEnabled } from "@/lib/turnkey-backend-auth";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export function GET() {
   return NextResponse.json({
     enabled: isTurnkeyBackendAuthEnabled() && isDiscordWalletLoginConfigured(),
   });

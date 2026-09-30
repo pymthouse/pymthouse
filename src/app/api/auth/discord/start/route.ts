@@ -23,7 +23,7 @@ function fail(code: string): NextResponse {
   return NextResponse.redirect(url);
 }
 
-export async function GET(request: NextRequest) {
+export function GET(request: NextRequest) {
   if (!isTurnkeyBackendAuthEnabled() || !isDiscordWalletLoginConfigured()) {
     return fail("DiscordLoginNotConfigured");
   }

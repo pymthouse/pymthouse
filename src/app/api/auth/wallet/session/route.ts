@@ -8,7 +8,7 @@ import {
 export const dynamic = "force-dynamic";
 
 /** One-shot handoff of the Turnkey session and optional wallet-issuer attach token. */
-export async function POST(request: NextRequest) {
+export function POST(request: NextRequest) {
   const handoff = openWalletHandoff(request.cookies.get(WALLET_HANDOFF_COOKIE)?.value);
   if (!handoff) {
     return NextResponse.json({ error: "No pending wallet session" }, { status: 404 });

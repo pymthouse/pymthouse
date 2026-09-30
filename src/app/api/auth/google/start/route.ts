@@ -24,7 +24,7 @@ function fail(code: string): NextResponse {
 }
 
 /** Start Google OAuth for wallet-issuer login. Query: publicKey, callbackUrl. */
-export async function GET(request: NextRequest) {
+export function GET(request: NextRequest) {
   if (!isTurnkeyBackendAuthEnabled() || !isGoogleWalletLoginConfigured()) {
     return fail("GoogleLoginNotConfigured");
   }

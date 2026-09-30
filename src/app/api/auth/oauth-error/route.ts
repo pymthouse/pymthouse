@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   );
 }
 
-export async function GET() {
+export function GET() {
   const url = new URL("/login", getPublicOrigin());
   url.searchParams.set("error", "InvalidOauthState");
   return NextResponse.redirect(url, 303);

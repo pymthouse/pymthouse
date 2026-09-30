@@ -34,10 +34,11 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const code =
+  const rawCode =
     typeof body === "object" && body !== null
-      ? String((body as { code?: unknown }).code ?? "").trim()
-      : "";
+      ? (body as { code?: unknown }).code
+      : undefined;
+  const code = typeof rawCode === "string" ? rawCode.trim() : "";
   if (!/^\d{6}$/.test(code)) {
     return NextResponse.json({ error: "Enter the 6-digit code." }, { status: 400 });
   }

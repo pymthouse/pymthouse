@@ -61,6 +61,7 @@ export async function GET(request: NextRequest) {
       login: {
         verifiedEmail: identity.email,
         publicKey: state.publicKey,
+        nonce: state.nonce,
         method: "discord",
         name: identity.name,
         discordIdToken: identity.idToken ?? undefined,

@@ -123,6 +123,7 @@ export async function GET(request: NextRequest) {
         login: {
           verifiedEmail,
           publicKey: state.publicKey,
+          nonce: state.nonce,
           method: "github",
           name: profile.name,
           githubUserId: profile.id,

@@ -3,9 +3,7 @@ import { SignJWT } from "jose";
 import { v4 as uuidv4 } from "uuid";
 import { ensureSigningKey, getPublicJWKS } from "@/lib/oidc/jwks";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
-
-export { TURNKEY_WALLET_PROVIDER_NAME };
+export { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
 
 /** Issuer Turnkey fetches for every PymtHouse wallet login, regardless of button. */
 export const TURNKEY_WALLET_OIDC_MOUNT = "/api/v1/turnkey-wallet-oidc";

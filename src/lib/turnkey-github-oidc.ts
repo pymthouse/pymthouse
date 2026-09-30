@@ -2,9 +2,7 @@ import { SignJWT } from "jose";
 import { v4 as uuidv4 } from "uuid";
 import { ensureSigningKey, getPublicJWKS } from "@/lib/oidc/jwks";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
-
-export { turnkeyOauthNonceFromPublicKey };
+export { turnkeyOauthNonceFromPublicKey } from "@/lib/turnkey-wallet-oidc";
 
 /** Dedicated issuer path for GitHub → Turnkey BYO OIDC (OAuth2 wrapper). */
 export const TURNKEY_GITHUB_OIDC_MOUNT = "/api/v1/turnkey-github-oidc";

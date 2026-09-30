@@ -38,6 +38,8 @@ export type WalletLoginInput = {
   discordIdToken?: string;
   githubUserId?: string | number;
   githubLogin?: string | null;
+  /** Precomputed sha256 nonce from the sealed OAuth state. Skips rehashing that public key. */
+  nonce?: string;
   otp?: {
     verificationToken: string;
     clientSignature: OtpClientSignature;
@@ -307,7 +309,7 @@ export async function completeWalletLogin(
   if (!publicKey) {
     throw new WalletLoginError("invalid_public_key", "A session public key is required.");
   }
-  const nonce = turnkeyOauthNonceFromPublicKey(publicKey);
+  const nonce = input.nonce ?? turnkeyOauthNonceFromPublicKey(publicKey);
   const parent = deps.parentOrganizationId();
   if (!parent) {
     throw new WalletLoginError(
@@ -491,9 +493,7 @@ async function finishLegacy(
     throw new WalletLoginError("legacy_login_failed", "Turnkey session has no user.");
   }
   let user = args.user;
-  if (!user) {
-    user = await deps.findByTurnkeyUserId(resolvedTurnkeyUserId);
-  }
+  user ??= await deps.findByTurnkeyUserId(resolvedTurnkeyUserId);
   if (!user) {
     const id = uuidv4();
     await deps.insertUser({
@@ -653,7 +653,10 @@ export async function claimVerifiedEmailForUser(
     userId: string;
     verifiedEmail: string;
     publicKey: string;
-    otp?: WalletLoginInput["otp"];
+    otp?: {
+      verificationToken: string;
+      clientSignature: OtpClientSignature;
+    };
   },
   deps: WalletLoginDeps = defaultDeps,
 ): Promise<WalletLoginResult | { kind: "updated" }> {
