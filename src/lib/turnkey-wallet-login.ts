@@ -12,9 +12,9 @@ import {
 } from "@/lib/turnkey";
 import {
   mintTurnkeyWalletOidcToken,
-  TURNKEY_WALLET_PROVIDER_NAME,
   turnkeyOauthNonceFromPublicKey,
 } from "@/lib/turnkey-wallet-oidc";
+import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
 import type { OtpClientSignature } from "@/lib/turnkey-otp";
 
 export class WalletLoginError extends Error {

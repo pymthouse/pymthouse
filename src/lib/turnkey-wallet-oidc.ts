@@ -3,14 +3,15 @@ import { SignJWT } from "jose";
 import { v4 as uuidv4 } from "uuid";
 import { ensureSigningKey, getPublicJWKS } from "@/lib/oidc/jwks";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
+
+export { TURNKEY_WALLET_PROVIDER_NAME };
 
 /** Issuer Turnkey fetches for every PymtHouse wallet login, regardless of button. */
 export const TURNKEY_WALLET_OIDC_MOUNT = "/api/v1/turnkey-wallet-oidc";
 
 /** Stable audience. Part of Turnkey's (iss, sub, aud) fingerprint. */
 export const TURNKEY_WALLET_OIDC_AUDIENCE = "urn:pymthouse:turnkey-wallet";
-
-export const TURNKEY_WALLET_PROVIDER_NAME = "PymtHouse";
 
 const ID_TOKEN_TTL_SECONDS = 5 * 60;
 

@@ -8,7 +8,7 @@ import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
-import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-oidc";
+import { TURNKEY_WALLET_PROVIDER_NAME } from "@/lib/turnkey-wallet-provider";
 
 type Attach = {
   organizationId: string;
