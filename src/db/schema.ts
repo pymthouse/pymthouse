@@ -399,6 +399,8 @@ export const plans = pgTable(
     /**
      * draft | active | phase_out
      * phase_out: existing subscribers keep working; new subscribe/change-to blocked.
+     * Starter default (`is_starter_default`): `draft` disables auto-enrollment
+     * and new subscribe/change-to; existing Starter subscribers keep working.
      */
     status: text("status").notNull().default("draft"),
     /** ISO timestamp when forced migration should complete (typically next cycle). */

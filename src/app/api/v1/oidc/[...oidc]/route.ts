@@ -540,7 +540,17 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
 
     // Use the provider's callback to handle the request
     const callback = provider.callback();
-    callback(req, res);
+    void Promise.resolve()
+      .then(() => callback(req, res))
+      .catch((err: unknown) => {
+        console.error("[OIDC] provider callback failed:", err);
+        resolve(
+          NextResponse.json(
+            { error: "server_error", error_description: "Internal error" },
+            { status: 500 },
+          ),
+        );
+      });
   });
 }
 

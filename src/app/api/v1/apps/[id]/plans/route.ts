@@ -33,9 +33,9 @@ import {
   NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
 } from "@/lib/network-default-plan";
 import {
-  STARTER_DEFAULT_PLAN_DISPLAY_NAME,
-  STARTER_DEFAULT_PLAN_INTERNAL_NAME,
-} from "@/lib/starter-default-plan-display";
+  isNameTakenByStarter,
+  selectStarterDefaultPlan,
+} from "@/lib/starter-default-plan";
 import { parseRetailRateUsd, defaultRetailRateUsd } from "@/lib/plan-pricing";
 import {
   resolveCapabilityFeatureKey,
@@ -279,7 +279,8 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (name === STARTER_DEFAULT_PLAN_INTERNAL_NAME || name === STARTER_DEFAULT_PLAN_DISPLAY_NAME) {
+  const starter = await selectStarterDefaultPlan(appId);
+  if (isNameTakenByStarter(name, starter)) {
     return NextResponse.json(
       { error: "This plan name is reserved for the Starter default plan" },
       { status: 400 },
@@ -538,6 +539,16 @@ export async function PUT(
       );
     }
     putPlanName = nameCheck.value;
+  }
+
+  if (putPlanName) {
+    const starter = await selectStarterDefaultPlan(appId);
+    if (isNameTakenByStarter(putPlanName, starter)) {
+      return NextResponse.json(
+        { error: "This plan name is reserved for the Starter default plan" },
+        { status: 400 },
+      );
+    }
   }
 
   let discoveryProfileIdPut: string | null | undefined = undefined;

@@ -7,7 +7,10 @@
 import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
 import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
-import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
+import {
+  oidcInteractionPath,
+  redirectUrisForOidcClient,
+} from "@/lib/oidc/customer-service-id";
 import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
@@ -76,7 +79,10 @@ async function loadClients(): Promise<ClientMetadata[]> {
   const rows = await db.select().from(oidcClients);
 
   return rows.map((row) => {
-    const redirectUris = (JSON.parse(row.redirectUris) as string[])
+    const redirectUris = redirectUrisForOidcClient(
+      row.clientId,
+      JSON.parse(row.redirectUris) as string[],
+    )
       // Expand wildcard patterns into common localhost ports.
       // node-oidc-provider requires exact redirect URI matching per spec.
       .flatMap((uri) => {

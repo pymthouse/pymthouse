@@ -194,7 +194,7 @@ export function extractPipelineModelFromCapabilitiesObject(
 
     const modelKeys = Object.keys(models)
       .filter((m) => typeof m === "string" && m.trim())
-      .sort();
+      .sort((a, b) => a.localeCompare(b, "en"));
     if (modelKeys.length === 0) continue;
 
     return { pipeline, modelId: modelKeys[0]! };
