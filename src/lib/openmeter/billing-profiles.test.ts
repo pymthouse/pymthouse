@@ -3,11 +3,34 @@ import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 import {
   assignMerchantCustomInvoicingProfile,
+  connectPlaneOverride,
   ensureOwnersBillingProfile,
   isAppBillingReady,
   resetOwnersBillingProfileCacheForTests,
 } from "./billing-profiles";
 import { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } from "./client";
+
+test("connectPlaneOverride keeps the payment plane off the active account", () => {
+  const active = {
+    billingMode: "merchant",
+    stripeLivemode: true,
+    stripeConnectedAccountId: "acct_live",
+  };
+  const sandbox = connectPlaneOverride(active, {
+    livemode: false,
+    connectedAccountId: "acct_sandbox",
+  });
+  assert.equal(sandbox.stripeLivemode, false);
+  assert.equal(sandbox.stripeConnectedAccountId, "acct_sandbox");
+  assert.equal(active.stripeConnectedAccountId, "acct_live");
+
+  const missingParked = connectPlaneOverride(active, {
+    livemode: false,
+    connectedAccountId: null,
+  });
+  assert.equal(missingParked.stripeLivemode, false);
+  assert.equal(missingParked.stripeConnectedAccountId, null);
+});
 
 test("isAppBillingReady requires Stripe app id and billing profile id", () => {
   assert.equal(isAppBillingReady(null), false);
