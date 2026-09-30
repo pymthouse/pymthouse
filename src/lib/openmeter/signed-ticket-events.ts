@@ -36,6 +36,14 @@ const LIST_FETCH_LIMIT = 100;
 /** Cap meter-discovered subjects so admin event fan-out stays bounded. */
 const MAX_ADMIN_DISCOVERED_SUBJECTS = 40;
 
+/** Every `events.list` / `listV2` attempt failed — handlers map this to 502. */
+export class SignedTicketEventsListError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignedTicketEventsListError";
+  }
+}
+
 export type SignedTicketRequestRow = {
   time: string;
   clientId: string;
@@ -424,6 +432,7 @@ async function listSignedTicketRequestsForSubjects(input: {
   clientId?: string | null;
   clientIds?: string[] | null;
   manifestId?: string | null;
+  gatewayRequestIds?: ReadonlySet<string> | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -446,7 +455,8 @@ async function listSignedTicketRequestsForSubjects(input: {
   const from = input.from?.trim() || cycle.start;
   const to = input.to?.trim() || cycle.end;
   const limit = clampLimit(input.limit);
-  const offset = decodeOffsetCursor(input.cursor);
+  const idFilter = normalizeGatewayRequestIdFilter(input.gatewayRequestIds);
+  const offset = idFilter ? 0 : decodeOffsetCursor(input.cursor);
   const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
 
   const rawEvents = await fetchSignedTicketEvents({
@@ -464,7 +474,13 @@ async function listSignedTicketRequestsForSubjects(input: {
       eventMatchesUsageSubjectKeys(ev, actorKeys),
   );
 
-  return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
+  return pageSignedTicketEvents(
+    matching,
+    limit,
+    offset,
+    input.manifestId,
+    idFilter,
+  );
 }
 
 /**
@@ -581,11 +597,24 @@ export async function listDeveloperSignedTicketRequests(
   return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
 
+function normalizeGatewayRequestIdFilter(
+  ids?: ReadonlySet<string> | readonly string[] | null,
+): Set<string> | null {
+  if (!ids) return null;
+  const out = new Set<string>();
+  for (const id of ids) {
+    const trimmed = id.trim();
+    if (trimmed) out.add(trimmed);
+  }
+  return out.size > 0 ? out : null;
+}
+
 async function pageSignedTicketEvents(
   matching: IngestedEventLike[],
   limit: number,
   offset: number,
   manifestId?: string | null,
+  gatewayRequestIds?: ReadonlySet<string> | null,
 ): Promise<ListViewerSignedTicketRequestsResult> {
   const appNames = await loadAppNames(
     matching.map((ev) => eventClientId(ev)).filter((id): id is string => Boolean(id)),
@@ -597,6 +626,13 @@ async function pageSignedTicketEvents(
     .map((ev) => normalizeSignedTicketEvent(ev, appNames))
     .filter((row): row is SignedTicketRequestRow => row != null)
     .filter((row) => {
+      if (
+        gatewayRequestIds &&
+        gatewayRequestIds.size > 0 &&
+        !gatewayRequestIds.has(row.gatewayRequestId)
+      ) {
+        return false;
+      }
       if (!manifestFilter) return true;
       const mid = row.manifestId?.trim() || "unknown";
       return mid === manifestFilter;
@@ -635,6 +671,7 @@ export type ListEndUserSignedTicketRequestsInput = {
   /** Public OIDC client_id (app_…), not developer_apps.id. */
   clientId: string;
   manifestId?: string | null;
+  gatewayRequestIds?: readonly string[] | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -690,6 +727,7 @@ export async function listEndUserSignedTicketRequests(
     actorExternalUserIds: new Set([externalUserId]),
     clientId,
     manifestId: input.manifestId,
+    gatewayRequestIds: normalizeGatewayRequestIdFilter(input.gatewayRequestIds),
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -1273,33 +1311,17 @@ async function fetchSignedTicketEvents(input: {
 }): Promise<IngestedEventLike[]> {
   const subjectQueries = buildSubjectQueries(input.subjects, input.clientIds);
   const batches = await Promise.all(
-    subjectQueries.map(async (subject) => {
-      try {
-        const listed = await input.client.events.list({
-          subject,
-          from: input.from,
-          to: input.to,
-          limit: LIST_FETCH_LIMIT,
-        });
-        return coerceIngestedEvents(listed);
-      } catch {
-        // listV2 fallback when list is unavailable (some Konnect deployments).
-        try {
-          const listedV2 = await input.client.events.listV2({
-            limit: LIST_FETCH_LIMIT,
-            filter: JSON.stringify({
-              type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
-              subject: { contains: subject },
-            }),
-          });
-          return coerceIngestedEvents(listedV2?.items ?? listedV2);
-        } catch {
-          return [];
-        }
-      }
-    }),
+    subjectQueries.map((subject) =>
+      listSignedTicketEventsForSubject({
+        client: input.client,
+        subject,
+        from: input.from,
+        to: input.to,
+        subjectMatch: "contains",
+      }),
+    ),
   );
-  return batches.flat();
+  return flattenListedEventBatches(batches, "fetchSignedTicketEvents");
 }
 
 /**
@@ -1330,8 +1352,8 @@ async function fetchPlatformSignedTicketEvents(input: {
       to: input.to,
     });
     if (subjects.size > 0) {
-      // Exact subjects from meter discovery — do not re-expand via
-      // buildSubjectQueries (that would explode fan-out).
+      // Exact subjects from meter discovery + owner payer keys — do not
+      // re-expand via buildSubjectQueries (that would explode fan-out).
       return fetchEventsForExactSubjects({
         client: input.client,
         subjects,
@@ -1368,12 +1390,18 @@ async function listRecentPlatformSignedTicketEvents(
   try {
     const listedV2 = await client.events.listV2({
       limit: LIST_FETCH_LIMIT,
-      filter: JSON.stringify({
-        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
-      }),
-    });
+      from,
+      to,
+      filter: signedTicketListV2Filter({ from, to }),
+    } as { limit: number; from: string; to: string; filter: string });
     return coerceIngestedEvents(listedV2?.items ?? listedV2);
-  } catch {
+  } catch (err) {
+    console.warn("[signed-ticket-events] events.listV2 failed", {
+      subject: null,
+      from,
+      to,
+      err,
+    });
     try {
       const listed = await client.events.list({
         from,
@@ -1381,9 +1409,111 @@ async function listRecentPlatformSignedTicketEvents(
         limit: LIST_FETCH_LIMIT,
       } as { from: string; to: string; limit: number });
       return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
-    } catch {
-      return [];
+    } catch (listErr) {
+      console.warn("[signed-ticket-events] events.list failed", {
+        subject: null,
+        from,
+        to,
+        err: listErr,
+      });
+      throw new SignedTicketEventsListError(
+        "OpenMeter events.list failed for platform signed-ticket history",
+      );
     }
+  }
+}
+
+type ListedEventBatch = {
+  events: IngestedEventLike[];
+  listed: boolean;
+};
+
+function signedTicketListV2Filter(input: {
+  from: string;
+  to: string;
+  subject?: { eq?: string; contains?: string };
+}): string {
+  return JSON.stringify({
+    type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
+    ...(input.subject ? { subject: input.subject } : {}),
+    time: { gte: input.from, lte: input.to },
+  });
+}
+
+function flattenListedEventBatches(
+  batches: readonly ListedEventBatch[],
+  context: string,
+): IngestedEventLike[] {
+  if (batches.length > 0 && batches.every((batch) => !batch.listed)) {
+    throw new SignedTicketEventsListError(
+      `OpenMeter events.list failed for all subjects (${context})`,
+    );
+  }
+  return batches.flatMap((batch) => batch.events);
+}
+
+async function listSignedTicketEventsForSubject(input: {
+  client: OpenMeter;
+  subject: string;
+  from: string;
+  to: string;
+  subjectMatch: "eq" | "contains";
+}): Promise<ListedEventBatch> {
+  try {
+    const listed = await input.client.events.list({
+      subject: input.subject,
+      from: input.from,
+      to: input.to,
+      limit: LIST_FETCH_LIMIT,
+    });
+    const events = coerceIngestedEvents(listed).filter(eventIsSignedTicket);
+    if (events.length > 0) {
+      return { events, listed: true };
+    }
+    if (input.subjectMatch === "eq") {
+      console.warn("[signed-ticket-events] events.list empty", {
+        subject: input.subject,
+        from: input.from,
+        to: input.to,
+      });
+    }
+  } catch (err) {
+    console.warn("[signed-ticket-events] events.list failed", {
+      subject: input.subject,
+      from: input.from,
+      to: input.to,
+      err,
+    });
+  }
+
+  try {
+    const listedV2 = await input.client.events.listV2({
+      limit: LIST_FETCH_LIMIT,
+      from: input.from,
+      to: input.to,
+      filter: signedTicketListV2Filter({
+        from: input.from,
+        to: input.to,
+        subject:
+          input.subjectMatch === "eq"
+            ? { eq: input.subject }
+            : { contains: input.subject },
+      }),
+    } as { limit: number; from: string; to: string; filter: string });
+    return {
+      events: coerceIngestedEvents(listedV2?.items ?? listedV2).filter(
+        eventIsSignedTicket,
+      ),
+      listed: true,
+    };
+  } catch (err) {
+    console.warn("[signed-ticket-events] events.listV2 failed", {
+      subject: input.subject,
+      from: input.from,
+      to: input.to,
+      err,
+    });
+    return { events: [], listed: false };
   }
 }
 
@@ -1399,32 +1529,17 @@ async function fetchEventsForExactSubjects(input: {
     .filter(Boolean)
     .slice(0, MAX_ADMIN_DISCOVERED_SUBJECTS);
   const batches = await Promise.all(
-    subjectList.map(async (subject) => {
-      try {
-        const listed = await input.client.events.list({
-          subject,
-          from: input.from,
-          to: input.to,
-          limit: LIST_FETCH_LIMIT,
-        });
-        return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
-      } catch {
-        try {
-          const listedV2 = await input.client.events.listV2({
-            limit: LIST_FETCH_LIMIT,
-            filter: JSON.stringify({
-              type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
-              subject: { eq: subject },
-            }),
-          });
-          return coerceIngestedEvents(listedV2?.items ?? listedV2);
-        } catch {
-          return [];
-        }
-      }
-    }),
+    subjectList.map((subject) =>
+      listSignedTicketEventsForSubject({
+        client: input.client,
+        subject,
+        from: input.from,
+        to: input.to,
+        subjectMatch: "eq",
+      }),
+    ),
   );
-  return batches.flat();
+  return flattenListedEventBatches(batches, "fetchEventsForExactSubjects");
 }
 
 async function listSignedTicketEventsForSubjectContains(
@@ -1433,28 +1548,17 @@ async function listSignedTicketEventsForSubjectContains(
   from: string,
   to: string,
 ): Promise<IngestedEventLike[]> {
-  try {
-    const listedV2 = await client.events.listV2({
-      limit: LIST_FETCH_LIMIT,
-      filter: JSON.stringify({
-        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
-        subject: { contains: subjectFragment },
-      }),
-    });
-    return coerceIngestedEvents(listedV2?.items ?? listedV2);
-  } catch {
-    try {
-      const listed = await client.events.list({
-        subject: subjectFragment,
-        from,
-        to,
-        limit: LIST_FETCH_LIMIT,
-      });
-      return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
-    } catch {
-      return [];
-    }
-  }
+  const batch = await listSignedTicketEventsForSubject({
+    client,
+    subject: subjectFragment,
+    from,
+    to,
+    subjectMatch: "contains",
+  });
+  return flattenListedEventBatches(
+    [batch],
+    "listSignedTicketEventsForSubjectContains",
+  );
 }
 
 /**
@@ -1546,32 +1650,76 @@ function meterValueToCount(value: unknown): number {
   return 0;
 }
 
+/**
+ * Owner-rollup CloudEvents use the bare owner `users.id` as `subject`.
+ * Meter groupBy `external_user_id` is the actor (`eu_…`), so listing only
+ * those keys misses the tickets.
+ */
+export async function resolveOwnerPayerSubjectsForClientIds(
+  clientIds: ReadonlySet<string>,
+): Promise<string[]> {
+  const unique = [...clientIds].map((id) => id.trim()).filter(Boolean);
+  if (unique.length === 0) {
+    return [];
+  }
+  try {
+    const rows = await db
+      .select({
+        ownerId: developerApps.ownerId,
+      })
+      .from(oidcClients)
+      .innerJoin(developerApps, eq(developerApps.oidcClientId, oidcClients.id))
+      .where(inArray(oidcClients.clientId, unique));
+    const subjects = new Set<string>();
+    for (const row of rows) {
+      const ownerId = row.ownerId?.trim();
+      if (ownerId) {
+        subjects.add(buildOwnerCustomerKey(ownerId));
+      }
+    }
+    return [...subjects];
+  } catch {
+    return [];
+  }
+}
+
 async function discoverAdminUsageSubjects(input: {
   client: OpenMeter;
   clientIds: ReadonlySet<string>;
   from: string;
   to: string;
 }): Promise<Set<string>> {
-  const batches = await Promise.all(
-    [...input.clientIds].map(async (clientId) => {
-      try {
-        const result = await input.client.meters.query(SIGNED_TICKET_COUNT_METER, {
-          from: new Date(input.from),
-          to: new Date(input.to),
-          windowSize: "MONTH",
-          clientId,
-          groupBy: ["client_id", "external_user_id"],
-        });
-        return result?.data ?? [];
-      } catch {
-        return [];
-      }
-    }),
-  );
+  const [batches, ownerPayers] = await Promise.all([
+    Promise.all(
+      [...input.clientIds].map(async (clientId) => {
+        try {
+          const result = await input.client.meters.query(SIGNED_TICKET_COUNT_METER, {
+            from: new Date(input.from),
+            to: new Date(input.to),
+            windowSize: "MONTH",
+            clientId,
+            groupBy: ["client_id", "external_user_id"],
+          });
+          return result?.data ?? [];
+        } catch {
+          return [];
+        }
+      }),
+    ),
+    resolveOwnerPayerSubjectsForClientIds(input.clientIds),
+  ]);
 
-  return new Set(
-    collectAdminSubjectsFromMeterRows(batches.flat(), input.clientIds),
-  );
+  const merged: string[] = [...ownerPayers];
+  const seen = new Set(merged);
+  for (const subject of collectAdminSubjectsFromMeterRows(
+    batches.flat(),
+    input.clientIds,
+  )) {
+    if (seen.has(subject)) continue;
+    seen.add(subject);
+    merged.push(subject);
+  }
+  return new Set(merged.slice(0, MAX_ADMIN_DISCOVERED_SUBJECTS));
 }
 
 function normalizeClientIdFilter(
