@@ -332,6 +332,9 @@ async function executeEnabledAutoTopUp(input: {
       amountUsdMicros: input.amountUsdMicros,
       source: "topup",
       idempotencyKey: legacyAutoTopUpGrantIdempotencyKey(pi.id),
+      // Charge ran while merchant; pin eu_/sbx_eu_ if billingMode flipped
+      // to owner_rollup between PaymentIntent success and this grant.
+      billingMode: "merchant",
     });
   } catch (err) {
     console.warn(

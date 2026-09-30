@@ -5,8 +5,10 @@ import {
   type TurnkeyProviderConfig,
 } from "@turnkey/react-wallet-kit";
 import { useEffect } from "react";
+import { buildTurnkeyWalletOauthAuthConfig } from "@/lib/turnkey-oauth-config";
 import { getTurnkeyWalletConfigId } from "@/lib/turnkey-wallet-config";
 import { TurnkeyModalDismissGuard } from "./TurnkeyModalDismissGuard";
+import { TurnkeyOauthRedirectResume } from "./TurnkeyOauthRedirectResume";
 
 // Wallet Kit auto-calls fetchUser/fetchWallets on mount whenever it thinks
 // a session might exist. On /login (or after a stale/expired session) these
@@ -35,46 +37,6 @@ const BENIGN_TURNKEY_CODES = new Set([
   "CLIENT_NOT_INITIALIZED",
   "INVALID_OTP_CODE",
 ]);
-
-function trimEnv(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed || undefined;
-}
-
-/**
- * Optional OAuth overrides for Wallet Kit social logins.
- * Prefer Auth Proxy dashboard toggles; set these when local/prod need different
- * client IDs or redirect URIs than the dashboard defaults.
- */
-function buildOauthConfig(): TurnkeyProviderConfig["auth"] | undefined {
-  const oauthRedirectUri =
-    trimEnv(process.env.NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI) ||
-    trimEnv(process.env.NEXT_PUBLIC_OAUTH_REDIRECT_URI);
-  const googleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID);
-  const appleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_APPLE_CLIENT_ID);
-  const discordClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_DISCORD_CLIENT_ID);
-  const xClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_X_CLIENT_ID);
-
-  if (
-    !oauthRedirectUri &&
-    !googleClientId &&
-    !appleClientId &&
-    !discordClientId &&
-    !xClientId
-  ) {
-    return undefined;
-  }
-
-  return {
-    oauthConfig: {
-      ...(oauthRedirectUri ? { oauthRedirectUri } : {}),
-      ...(googleClientId ? { google: { primaryClientId: googleClientId } } : {}),
-      ...(appleClientId ? { apple: { primaryClientId: appleClientId } } : {}),
-      ...(discordClientId ? { discord: { primaryClientId: discordClientId } } : {}),
-      ...(xClientId ? { x: { primaryClientId: xClientId } } : {}),
-    },
-  };
-}
 
 /** Kit OTP UI catches, shows a friendly message, then rethrows → unhandledRejection. */
 function rejectionMessage(reason: unknown): string {
@@ -148,11 +110,10 @@ export default function TurnkeyProviderWrapper({
     return <>{children}</>;
   }
 
-  const auth = buildOauthConfig();
   const turnkeyConfig: TurnkeyProviderConfig = {
     organizationId,
     authProxyConfigId,
-    ...(auth ? { auth } : {}),
+    auth: buildTurnkeyWalletOauthAuthConfig(),
     ui: {
       darkMode: true,
       logoDark: "/pymthouse-mark.svg",
@@ -177,6 +138,7 @@ export default function TurnkeyProviderWrapper({
     >
       <TurnkeyModalDismissGuard />
       <TurnkeyExpectedErrorGuard />
+      <TurnkeyOauthRedirectResume />
       {children}
     </TurnkeyProviderBase>
   );

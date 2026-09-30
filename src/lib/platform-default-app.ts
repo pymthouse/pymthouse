@@ -154,8 +154,10 @@ export async function getPlatformDefaultApp() {
 /**
  * Resolve the canonical platform admin for owning the platform default app.
  * Prefers `npm run bootstrap` admin, then named/email match, then non-test
- * admins, then any admin. Optional `fallbackEmail` widens the named tier
- * (bootstrap CLI passes its email arg).
+ * admins. Disposable `user-test-*` admins are never selected: parallel tests
+ * delete those rows, and a platform-default app still pointing at one fails
+ * that delete. In tests, a stable admin row is created instead. Optional
+ * `fallbackEmail` widens the named tier (bootstrap CLI passes its email arg).
  */
 export async function findAdminOwnerId(
   fallbackEmail = "admin@pymthouse.local",
@@ -206,13 +208,27 @@ export async function findAdminOwnerId(
     .limit(1);
   if (nonTest[0]?.id) return nonTest[0].id;
 
-  const rows = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.role, "admin"))
-    .orderBy(asc(users.createdAt))
-    .limit(1);
-  return rows[0]?.id ?? null;
+  if (process.env.NODE_ENV === "test") {
+    return ensureTestPlatformAdmin();
+  }
+  return null;
+}
+
+/** Stable admin for the platform default app while tests run. Not deleted by fixtures. */
+async function ensureTestPlatformAdmin(): Promise<string> {
+  const id = "user-platform-test-admin";
+  await db
+    .insert(users)
+    .values({
+      id,
+      email: "platform-test-admin@pymthouse.local",
+      name: "Platform Test Admin",
+      oauthProvider: "bootstrap",
+      oauthSubject: "platform_test_admin",
+      role: "admin",
+    })
+    .onConflictDoNothing();
+  return id;
 }
 
 /** Prefer `preferredOwnerId` when that user is an admin; else the bootstrap admin. */
@@ -249,13 +265,21 @@ async function ensurePlatformDefaultOwnedByAdmin(
   const row = rows[0];
   if (!row || row.ownerId === adminId) return;
 
+  // Lookup and update are separate statements. A concurrent delete of this
+  // admin (common while tests tear down user-test-* rows) must not fail the
+  // owner foreign key. Skip the write when the user is already gone.
   await db
     .update(developerApps)
     .set({
       ownerId: adminId,
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(developerApps.id, appId));
+    .where(
+      and(
+        eq(developerApps.id, appId),
+        sql`exists (select 1 from ${users} where ${users.id} = ${adminId})`,
+      ),
+    );
 }
 
 function isUniqueViolation(err: unknown): boolean {

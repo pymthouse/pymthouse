@@ -26,6 +26,34 @@ export function customerServiceCallbackUri(origin?: string): string {
   return `${base}/api/auth/callback/pymthouse`;
 }
 
+function splitRedirectUriEnv(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
+  const out: string[] = [];
+  for (const part of raw.split(/[,\s]+/)) {
+    const uri = part.trim();
+    if (uri.length > 0 && !out.includes(uri)) out.push(uri);
+  }
+  return out;
+}
+
+/** Callbacks this deployment allows for the customer-service RP. */
+export function builtinCustomerServiceRedirectUris(): string[] {
+  return splitRedirectUriEnv(process.env.CS_OIDC_BUILTIN_REDIRECT_URIS);
+}
+
+/** Add this deployment's customer-service callbacks onto that RP. */
+export function redirectUrisForOidcClient(
+  clientId: string,
+  stored: string[],
+): string[] {
+  if (!isCustomerServiceOidcClient(clientId)) return stored;
+  const out = [...stored];
+  for (const uri of builtinCustomerServiceRedirectUris()) {
+    if (!out.includes(uri)) out.push(uri);
+  }
+  return out;
+}
+
 export function getCustomerServiceOidcClientId(): string {
   return process.env.CS_OIDC_CLIENT_ID?.trim() || CUSTOMER_SERVICE_OIDC_CLIENT_ID;
 }

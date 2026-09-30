@@ -62,7 +62,7 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
 | Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest) | Personal mint returns bare `pmth_*`; Builder mint returns composite presentation of the same secret |
-| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes pathless exchange / webhooks |
+| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes path-scoped exchange without a DB lookup |
 | Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
@@ -88,12 +88,12 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
 - Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite and `subject_token_type=urn:pymthouse:oauth:token-type:api_key`
 
-Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer. Personal network keys keep a bare `apiKey` for usage, but mint `sdkToken` with the same composite Authorization header.
+Composite remains the default presentation for Builder keys so pathless callers can recover the public client id from a single Bearer without a DB lookup. Personal network keys stay bare `pmth_*`; the remote-signer identity webhook exchanges that Bearer on the issuer path (`POST /api/v1/oidc/token`) by resolving the stored key. Personal `sdkToken` embeds the same bare Authorization header.
 
 **Design notes**
 
-- Personal keys stay bare for usage/self-serve; `sdkToken` (livepeer-python-sdk `--token`) embeds the composite `app_*_*` form so pathless signer webhooks can recover `{clientId}`.
-- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) for the same reason.
+- Personal keys stay bare for usage/self-serve, as `Authorization: Bearer` on the remote signer, and inside personal `sdkToken` (`--token`). The webhook treats `pmth_*` as an API key (not a JWT) and resolves the app from the credential.
+- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) so pathless callers can recover `{clientId}` without a lookup.
 - Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
 - `formatCompositeApiKey` / `splitCompositeApiKey` parse the composite presentation form.
 
@@ -104,6 +104,7 @@ Do not pass M2M client secrets as `subject_token` on the signer session exchange
 - [x] Issue bare `pmth_*` from personal key mint; composite `app_*_*` from Builder app-user key mint.
 - [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
 - [x] End-user usage at `/api/v1/user/usage*` (app from credential) and `/api/v1/apps/{clientId}/me/usage*` (path-scoped).
+- [x] Remote-signer webhook exchanges bare personal `pmth_*` Bearers via issuer-path RFC 8693 (app from the stored key).
 
 ## Authentication
 
@@ -445,6 +446,8 @@ JWTs carry `billing_subject_key` (payer) and keep `cost_owner_user_id` for owner
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
    - `data.manifest_id` = stream / remote-signer session mid; falls back to Kafka `session_id` (payment StateID) then `request_id` when missing (`"unknown"` only as last resort)
    - `data.billable_secs` = billable duration from the signer as a **number** (required for OpenMeter SUM; prefer this over `pixels` for time analytics across LV2V and BYOC signers)
+   - `data.app` = signer **model attribution** (for example `livepeer-example/hello-world`). Collector and HTTP ingest dual-write the same resolved value onto `data.model_id` so legacy meters that still `groupBy` `model_id` keep attributing. For `pipeline=live-video-to-video` with an empty app, the collector sets `data.app` (and `data.model_id`) to `live-video-to-video`.
+   - `data.pipeline` is passed through as-is (not split on `:`)
 
 **Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
 
@@ -458,7 +461,7 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (rounded up once per session/read boundary), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=pipeline_model` labels come from signer `data.app` (with `live-video-to-video` pipeline as the app name when app is empty). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (rounded up once per session/read boundary), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 ### End-user Usage API
 
@@ -551,7 +554,7 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 **Balance (Builder M2M):** `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=...` (legacy `/api/v1/apps/...` alias) is the confidential-client equivalent when an end-user JWT is not available.
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `plans.included_usd_micros`, seeded by `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$0`). **App owners** share one platform wallet on bare `{users.id}`: **Owner Sandbox Starter** (`pymthouse_owner_starter`) first (sandbox profile, hard balance gate; included usage from `platform_billing_settings` / per-owner override, not the app-starter env var), then an **Owner Paid tier** (`pymthouse_owner_paid` / `pymthouse_owner_paid_*`) after payment-method attach and explicit Upgrade (`/api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }` — flat fee + included usage + overage). Not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `plans.included_usd_micros`, seeded by `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$0`). Platform owners can **rename** it and **disable** it (`PUT /api/v1/apps/{clientId}/starter-plan` with `name` and/or `status: "draft"`). While disabled, new end users are not auto-subscribed and cannot change onto it; existing Starter subscribers keep working. **App owners** share one platform wallet on bare `{users.id}`: **Owner Sandbox Starter** (`pymthouse_owner_starter`) first (sandbox profile, hard balance gate; included usage from `platform_billing_settings` / per-owner override, not the app-starter env var), then an **Owner Paid tier** (`pymthouse_owner_paid` / `pymthouse_owner_paid_*`) after payment-method attach and explicit Upgrade (`/api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }` — flat fee + included usage + overage). Not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) unless that plan’s `status` is `draft`.
 
 **Manual allowance top-ups:** Free prepaid grants are **admin-only** via `POST /api/v1/admin/billing/owners/{userId}/grants` (customer-service / platform admin Bearer or session). Builder `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` returns `403 free_grant_admin_only`. Paid balance adds use Stripe Checkout wallet top-up (`source: topup` via webhook).
 
@@ -1137,9 +1140,10 @@ Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for 
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`** and, on the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), legacy upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. On publish (`status: active`), syncs to OpenMeter when configured. |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). Status may be **`draft`**, **`active`**, or **`phase_out`** (optional **`replacementPlanId`**, **`phaseOutAt`**). |
+| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`**, **`isStarterDefault`**, and a display **`name`** (Starter/Network defaults never leak their internal seed names). On the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
+| `GET` / `PUT` | `/api/v1/apps/{clientId}/starter-plan` | Provider session only | Read or update the app’s free-tier Starter plan. `PUT` accepts any of **`name`**, **`status`** (`active` \| `draft`), **`includedUsdMicros`**. `draft` disables auto-enrollment and new subscribe/change-to; existing subscribers keep the plan. **`PUT` on the Starter id via `/plans`** returns **`400`**. |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Discovery`** / the current Starter display name / internal default names rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), legacy upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. On publish (`status: active`), syncs to OpenMeter when configured. |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. **`PUT` on the Starter default plan id** returns **`400`** — use **`PUT /starter-plan`**. Optional **`discoveryProfileId`** (`null` clears the link). Status may be **`draft`**, **`active`**, or **`phase_out`** (optional **`replacementPlanId`**, **`phaseOutAt`**). |
 | `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** / **Starter** default plan returns **`409`**. Returns **`409`** while active OpenMeter subscribers remain — phase out + migrate first. |
 
 **`discoveryPolicy`** (optional JSON object on legacy profile-linked plans, aligned with NaaP orchestrator leaderboard plan inputs):
@@ -1148,7 +1152,7 @@ Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for 
 - `sortBy` — `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/starter-plan/route.ts`](../src/app/api/v1/apps/[id]/starter-plan/route.ts), [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/starter-default-plan.ts`](../src/lib/starter-default-plan.ts), [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts).
 
 ---
 

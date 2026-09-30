@@ -128,7 +128,7 @@ export default function DeviceVerifyForm() {
     e.preventDefault();
     const cleaned = normalizeUserCode(userCode.trim());
     setUserCode(cleaned);
-    lookupCode(cleaned);
+    void lookupCode(cleaned);
   }
 
   if (status === "success") {

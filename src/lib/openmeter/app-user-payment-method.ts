@@ -31,7 +31,7 @@ import {
   unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 import {
-  appLivemodeMatchesWebhookPlane,
+  appActiveLivemodeMatchesWebhookPlane,
   appStripeLivemode,
   connectPaymentsOnlyEnabled,
   createMerchantConnectCheckoutForUser,
@@ -361,7 +361,7 @@ export async function restoreAppUserBillingProfileForCheckoutSession(
     return { restored: false };
   }
   if (expectedLivemode !== undefined) {
-    const matches = await appLivemodeMatchesWebhookPlane(
+    const matches = await appActiveLivemodeMatchesWebhookPlane(
       target.clientId,
       expectedLivemode,
     );

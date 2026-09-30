@@ -284,6 +284,43 @@ export function resolveMerchantChargeModel(config: {
   return "destination";
 }
 
+/**
+ * Charge model for settlement metadata.
+ * Omit `accountIdentity` for the active plane (supplier columns on
+ * `app_billing_config`). Pass the parked Connected Account's identity when
+ * those columns describe the other plane — they are not parked. `null` means
+ * that identity is unknown, so the model is destination rather than the
+ * active plane's supplier. Developer-supplied `supplierTaxId` is shared.
+ */
+export function chargeModelForConnectPlane(input: {
+  config: {
+    supplierCountry?: string | null;
+    supplierName?: string | null;
+    supplierTaxId?: string | null;
+    supplierTaxIdOnFileAtStripe?: boolean | null;
+  };
+  accountIdentity?: Pick<
+    ConnectedAccountIdentity,
+    "country" | "legalName" | "taxIdProvided" | "detailsSubmitted"
+  > | null;
+}): "direct" | "destination" {
+  if (input.accountIdentity === undefined) {
+    return resolveMerchantChargeModel(input.config);
+  }
+  if (
+    !input.accountIdentity ||
+    (!input.accountIdentity.detailsSubmitted && !input.accountIdentity.country)
+  ) {
+    return "destination";
+  }
+  return resolveMerchantChargeModel({
+    supplierCountry: input.accountIdentity.country,
+    supplierName: input.accountIdentity.legalName,
+    supplierTaxId: input.config.supplierTaxId,
+    supplierTaxIdOnFileAtStripe: input.accountIdentity.taxIdProvided,
+  });
+}
+
 export function supplierStatusPayload(config: {
   supplierCountry?: string | null;
   supplierName?: string | null;

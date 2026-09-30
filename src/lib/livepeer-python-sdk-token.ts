@@ -70,7 +70,7 @@ export function encodeLivepeerPythonSdkToken(
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
 }
 
-/** Build and encode a `--token` for the minted composite API key. */
+/** Build and encode a `--token` for the minted API key (`pmth_*` or composite). */
 export function createLivepeerPythonSdkToken(input: {
   apiKey: string;
   signer?: string;
