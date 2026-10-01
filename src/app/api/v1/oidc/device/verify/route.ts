@@ -11,7 +11,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { SqliteAdapter } from "@/lib/oidc/adapter";
 import { getClient } from "@/lib/oidc/clients";
-import { approveDeviceCodeForAccount } from "@/lib/oidc/device-approval";
+import { approveDeviceCodeForAccount, isDeviceCodeDenied } from "@/lib/oidc/device-approval";
 import { db } from "@/db/index";
 import { oidcClients } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -70,7 +70,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return errorResponse("expired_token", "The device code has expired");
   }
 
+  const devicePayload = deviceCode as Record<string, unknown>;
+  const alreadyDenied = isDeviceCodeDenied(devicePayload);
+
   if (action === "lookup") {
+    if (alreadyDenied) {
+      return errorResponse(
+        "access_denied",
+        "The user denied the authorization request",
+      );
+    }
     const clientId = deviceCode.clientId || deviceCode.params?.client_id;
     const client =
       typeof clientId === "string" ? await getClient(clientId) : null;
@@ -113,6 +122,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (action === "approve") {
+    if (alreadyDenied) {
+      return errorResponse(
+        "access_denied",
+        "The user denied the authorization request",
+      );
+    }
     const clientId = deviceCode.clientId || deviceCode.params?.client_id;
     if (typeof clientId !== "string" || !clientId) {
       return errorResponse("server_error", "Device code is missing client binding", 500);
@@ -140,7 +155,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ status: "authorized" });
   }
 
-  // action === "deny"
+  // action === "deny" — terminal; idempotent if already denied.
+  if (alreadyDenied) {
+    return NextResponse.json({ status: "denied" });
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const expiresIn = deviceCode.exp ? Math.max(deviceCode.exp - now, 1) : 600;
   await adapter.upsert(

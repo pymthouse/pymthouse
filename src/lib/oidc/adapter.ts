@@ -128,6 +128,8 @@ export class PostgresOidcAdapter implements Adapter {
           isNull(oidcPayloads.grantId),
           sql`coalesce((${oidcPayloads.payload})::jsonb->>'accountId', '') = ''`,
           sql`coalesce((${oidcPayloads.payload})::jsonb->>'grantId', '') = ''`,
+          // Denied DeviceCodes are terminal — never clear error via bind.
+          sql`coalesce((${oidcPayloads.payload})::jsonb->>'error', '') = ''`,
         ),
       )
       .returning({ id: oidcPayloads.id });
