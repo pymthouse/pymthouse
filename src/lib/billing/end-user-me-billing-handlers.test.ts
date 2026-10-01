@@ -118,9 +118,14 @@ test("me billing merchant wallet and allowances after OpenMeter-unset", async (t
   const walletBody = (await wallet.json()) as {
     clientId: string;
     payPerUsePlans: unknown[];
+    balance: unknown;
+    degraded: boolean;
   };
   assert.equal(walletBody.clientId, app.clientId);
   assert.ok(Array.isArray(walletBody.payPerUsePlans));
+  // OpenMeter is unreachable: balance is unknown, not zero.
+  assert.equal(walletBody.balance, null);
+  assert.equal(walletBody.degraded, true);
 
   const allowances = await handleEndUserMeAllowancesGet(
     meRequest(app.clientId, "allowances", bare),

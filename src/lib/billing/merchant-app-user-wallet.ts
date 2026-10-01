@@ -13,9 +13,9 @@ import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { loadAppUserAutoTopUpPrefs } from "@/lib/stripe/auto-topup";
 
 /**
- * Merchant prepaid wallet JSON for an app end-user. Balance and billing-state
- * failures propagate (a null balance would read as "no credit"); only the
- * payment-method lookup fails open.
+ * Merchant prepaid wallet JSON for an app end-user. OpenMeter / Stripe reads
+ * fail open so prefs and plans still render, but `degraded: true` marks the
+ * response — a null `balance` then means "unknown", not "no credit".
  */
 export async function loadMerchantAppUserWallet(input: {
   publicClientId: string;
@@ -39,23 +39,43 @@ export async function loadMerchantAppUserWallet(input: {
     )
     .orderBy(desc(plans.updatedAt));
 
+  let degraded = false;
+  const failOpen = <T>(read: Promise<T>, label: string): Promise<T | null> =>
+    read.catch((err: unknown) => {
+      degraded = true;
+      console.warn(
+        `merchant-wallet: ${label} unavailable`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    });
+
   const [trialBalance, paymentMethods, usagePlanRows, billingState, autoTopUp] =
     await Promise.all([
-      getTrialCreditBalance({
-        clientId: input.publicClientId,
-        externalUserId: endUserId,
-      }),
-      listAppUserPaymentMethods({
-        clientId: input.appId,
-        externalUserId: endUserId,
-      }).catch(() => null),
+      failOpen(
+        getTrialCreditBalance({
+          clientId: input.publicClientId,
+          externalUserId: endUserId,
+        }),
+        "balance",
+      ),
+      failOpen(
+        listAppUserPaymentMethods({
+          clientId: input.appId,
+          externalUserId: endUserId,
+        }),
+        "payment methods",
+      ),
       usagePlanRowsPromise,
-      loadBillingState({
-        publicClientId: input.publicClientId,
-        appId: input.appId,
-        target: { mode: "merchant", externalUserId: endUserId },
-        externalUserId: endUserId,
-      }),
+      failOpen(
+        loadBillingState({
+          publicClientId: input.publicClientId,
+          appId: input.appId,
+          target: { mode: "merchant", externalUserId: endUserId },
+          externalUserId: endUserId,
+        }),
+        "billing state",
+      ),
       loadAppUserAutoTopUpPrefs({
         appId: input.appId,
         externalUserId: endUserId,
@@ -81,6 +101,7 @@ export async function loadMerchantAppUserWallet(input: {
     },
     autoTopUp,
     billingState,
+    degraded,
     payPerUsePlans: usagePlanRows.map((usagePlan) => ({
       planId: usagePlan.id,
       planName: usagePlan.name,
