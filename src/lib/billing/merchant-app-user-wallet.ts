@@ -12,7 +12,11 @@ import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-meth
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { loadAppUserAutoTopUpPrefs } from "@/lib/stripe/auto-topup";
 
-/** Merchant prepaid wallet JSON for an app end-user. */
+/**
+ * Merchant prepaid wallet JSON for an app end-user. Balance and billing-state
+ * failures propagate (a null balance would read as "no credit"); only the
+ * payment-method lookup fails open.
+ */
 export async function loadMerchantAppUserWallet(input: {
   publicClientId: string;
   appId: string;
@@ -40,7 +44,7 @@ export async function loadMerchantAppUserWallet(input: {
       getTrialCreditBalance({
         clientId: input.publicClientId,
         externalUserId: endUserId,
-      }).catch(() => null),
+      }),
       listAppUserPaymentMethods({
         clientId: input.appId,
         externalUserId: endUserId,
@@ -51,7 +55,7 @@ export async function loadMerchantAppUserWallet(input: {
         appId: input.appId,
         target: { mode: "merchant", externalUserId: endUserId },
         externalUserId: endUserId,
-      }).catch(() => null),
+      }),
       loadAppUserAutoTopUpPrefs({
         appId: input.appId,
         externalUserId: endUserId,

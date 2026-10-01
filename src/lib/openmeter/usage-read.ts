@@ -414,16 +414,19 @@ async function resolveUsageMeterSubjects(input: {
       clientId: input.clientId,
       externalUserId,
     });
-    const subjects = new Set<string>([
-      identity.payerCustomerKey,
-      identity.actorExternalUserId,
-      identity.actorEndUserId,
-    ]);
+    // Query the payer wallet. The actor is filtered by groupBy.external_user_id
+    // (resolveUsageActorMatchKeys), never by adding integrator ids as subjects.
+    const subjects = new Set<string>([identity.payerCustomerKey]);
     if (identity.legacyCompoundCustomerKey) {
       subjects.add(identity.legacyCompoundCustomerKey);
     }
+    // Canonical `eu_{end_users.id}` keeps pre-switch history readable after an
+    // app moves merchant → owner_rollup. It is unique to this actor.
+    if (isEndUserCustomerKey(identity.actorEndUserId)) {
+      subjects.add(identity.actorEndUserId);
+    }
     // Owner self-view and owner_rollup actors bill the owner wallet — events
-    // live on those subjects. GroupBy.external_user_id still filters the actor.
+    // live on those subjects.
     const ownerUserId = ownerCostRailUserId(identity);
     if (ownerUserId) {
       for (const key of buildOwnerMeterSubjects(ownerUserId, [
@@ -431,10 +434,20 @@ async function resolveUsageMeterSubjects(input: {
       ])) {
         subjects.add(key);
       }
+      // Dual-read this cycle's pre-rollup / pre-eu_ compound events.
+      if (!identity.legacyCompoundCustomerKey) {
+        subjects.add(
+          buildOpenMeterCustomerKey(identity.publicClientId, externalUserId),
+        );
+      }
     }
     return [...subjects].filter((key) => key.trim());
   } catch {
-    return buildUsageMeterSubjects(input.clientId, externalUserId);
+    // Do not invent owner-wire subjects without a verified publicClientId.
+    return [
+      buildOpenMeterCustomerKey(input.clientId, externalUserId),
+      externalUserId,
+    ];
   }
 }
 

@@ -25,7 +25,11 @@ export const COST_OWNER_USER_ID_CLAIM = "cost_owner_user_id";
 /** JWT claim: OpenMeter payer customer key (owner bare id, `eu_…`, or `sbx_eu_…`). */
 export const BILLING_SUBJECT_KEY_CLAIM = "billing_subject_key";
 
-/** JWT claim: app `billing_mode` so clients skip merchant-only `/me/billing` money reads. */
+/**
+ * JWT claim: app `billing_mode` so clients skip merchant-only `/me/billing`
+ * money reads. A hint only — it is stamped at mint and goes stale after a mode
+ * switch, so servers must gate on live `app_billing_config`, never this claim.
+ */
 export const BILLING_MODE_CLAIM = "billing_mode";
 
 /** Separator between payer and actor in the wire `usage_subject`. */

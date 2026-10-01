@@ -12,6 +12,7 @@ import {
   appUserRetailCustomerKey,
   AppUserOwnerWalletMutationError,
   assertAppUserRetailBillingSubject,
+  BILLING_MODE_CLAIM,
   billingSubjectClaim,
   buildPayerActorWireSubject,
   costOwnerUserIdClaim,
@@ -518,6 +519,7 @@ test("billingMode override keeps merchant eu_ after switch to owner_rollup", asy
     externalUserId: endUserId,
   });
   assert.equal(withoutPin.sharesOwnerCostRail, true);
+  assert.equal(withoutPin.billingMode, "owner_rollup");
   assert.equal(
     withoutPin.payerCustomerKey,
     buildOwnerCustomerKey(seeded.userId),
@@ -532,6 +534,9 @@ test("billingMode override keeps merchant eu_ after switch to owner_rollup", asy
   assert.equal(pinned.payerKind, "end_user");
   assert.equal(pinned.payerCustomerKey, whileMerchant.payerCustomerKey);
   assert.equal(pinned.actorEndUserId, whileMerchant.actorEndUserId);
+  // The settlement pin also drives the `billing_mode` JWT hint.
+  assert.equal(pinned.billingMode, "merchant");
+  assert.equal(billingSubjectClaim(pinned)[BILLING_MODE_CLAIM], "merchant");
 });
 
 test("canonical eu_ customer key remaps to the integrator external id", async (t) => {
