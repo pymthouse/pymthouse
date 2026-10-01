@@ -32,14 +32,14 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
 
 /** Shown once at mint time for personal / network bare `pmth_*` keys. */
 export const PERSONAL_API_KEY_STORE_MESSAGE =
-  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on the remote signer and /api/v1/user/usage* (or /api/v1/apps/{clientId}/me/usage*), as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/oidc/token or POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
+  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on the remote signer and /api/v2/user/usage* (or /api/v2/apps/{clientId}/me/usage*), as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/oidc/token or POST /api/v2/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
 
 /**
  * Shown once at mint time for Builder-issued app-user keys (composite
  * `app_<24hex>_<secret>` presentation).
  */
 export const BUILDER_API_KEY_STORE_MESSAGE =
-  "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer, as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v1/apps/{clientId}/oidc/token (or the bare pmth_… segment), or use sdkToken as --token with livepeer-python-sdk.";
+  "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer and the end user's /api/v2/apps/{clientId}/me/usage* and /me/billing/*, as subject_token with subject_token_type=urn:pymthouse:oauth:token-type:api_key on POST /api/v2/apps/{clientId}/oidc/token (or the bare pmth_… segment), or use sdkToken as --token with livepeer-python-sdk.";
 
 /** Presented composite: `app_<24hex>_<secret>` (underscore separator for copy UX). */
 const COMPOSITE_API_KEY_RE = /^(app_[a-f0-9]{24})_(.+)$/;

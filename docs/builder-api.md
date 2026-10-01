@@ -18,11 +18,12 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 ## Identity model
 
 - `client_id` is the canonical app identifier in Builder API URLs.
+- **API versions:** `/api/v2` is the current public API and `/api/v1` is legacy. v2 serves the same Builder and End-user handlers (generated aliases), adds end-user billing under `/api/v2/apps/{clientId}/me/billing/*`, and **drops** v1 routes where M2M names the billed end user (`POST …/users/{externalUserId}/payment-methods`, `POST …/billing/checkout`). On v2 owner-wallet routes (`…/billing/{wallet,wallet/top-up,wallet/invoices,wallet/payment-methods,state}`) M2M acts on the owner wallet only: a query/body `externalUserId` (or a merchant-mode app, where those routes only target end users) returns `403 end_user_credential_required` with `Link: </api/v2/apps/{clientId}/me/billing/…>; rel="successor-version"`. The surface is defined in `src/lib/api-version/v2-surface.ts`; regenerate aliases with `npm run api:v2:generate`.
 - **API surfaces:**
-  - **Builder (M2M):** canonical `/api/v1/builder/…` for usage; integrator `/api/v1/apps/{clientId}/…` for users, tokens, billing reads (legacy `/apps/…/usage*` aliases remain M2M-only)
-  - **End-user:** `/api/v1/user/usage*` (app from Bearer) or `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT. Usage is at `/me/usage*`; self-serve billing reads are at `/me/billing/{allowances,wallet,state,invoices,payment-methods,subscription}`. Query/body `externalUserId` / `userId` on `/me/*` is rejected (400). Drop the user JWT into the app; do not proxy M2M with a caller-chosen user id.
-  - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI)
-- OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
+  - **Builder (M2M):** canonical `/api/v2/builder/…` for usage; integrator `/api/v2/apps/{clientId}/…` for users, tokens, owner-wallet billing (legacy `/api/v1/apps/…/usage*` aliases remain M2M-only)
+  - **End-user:** `/api/v2/user/usage*` (app from Bearer) or `/api/v2/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT. Usage is at `/me/usage*`; self-serve billing reads are at `/me/billing/{allowances,wallet,state,invoices,payment-methods,subscription}` (**v2 only**). Query/body `externalUserId` / `userId` on `/me/*` is rejected (400). Drop the user JWT into the app; do not proxy M2M with a caller-chosen user id.
+  - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI; not versioned)
+- OIDC issuer stays at `/api/v1/oidc/*` (the issuer URL is in every token's `iss`). Public catalog/health are under `/api/v2/*` (and `/api/v1/*`) without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
 
 ## OpenAPI
@@ -31,12 +32,13 @@ Machine-readable contract and interactive reference:
 
 | Surface | Spec | Docs UI |
 | --- | --- | --- |
-| **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
+| **Public v2 (current)** | `GET /api/v2/openapi.json` | `GET /api/v2/docs` (picker defaults to v2) |
+| **Public v1 (legacy)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` (picker defaults to v1) |
 | **Internal (dashboard/session)** | `GET /api/v1/internal/openapi.json` | `GET /api/v1/internal/docs` |
 
-The public document includes M2M integrator routes and end-user `/api/v1/user/usage*` plus `/api/v1/apps/{clientId}/me/usage*` and `/me/billing*` reads. Internal is available at the paths above but is not linked from `/api/v1/docs`.
+The v2 document includes M2M integrator routes and end-user `/api/v2/user/usage*` plus `/api/v2/apps/{clientId}/me/usage*` and `/me/billing*` reads. The v1 document has no `/me/billing` and marks the v1 routes that v2 dropped as `deprecated`. Internal is available at the paths above but is not linked from the public docs.
 
-Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
+Regenerate after adding handlers: `npm run openapi:generate` (v2 aliases + route inventory). CI runs `npm run check:openapi` and fails on alias, inventory, or metadata drift.
 
 OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange accepts a bare `pmth_*` API key as RFC 8693 `subject_token` on both `POST /api/v1/oidc/token` (app resolved from the credential) and `POST /api/v1/apps/{clientId}/oidc/token` (path-scoped). Canonical `subject_token_type` for API keys is `urn:pymthouse:oauth:token-type:api_key` (legacy `urn:ietf:params:oauth:token-type:access_token` still accepted when the subject is key-shaped).
 
