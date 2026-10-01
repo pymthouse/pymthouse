@@ -123,11 +123,19 @@ export function buildCapabilityMeterGroupByFilters(input: {
 type OpenMeterFeatureRow = {
   id?: string;
   key: string;
-  advancedMeterGroupByFilters?: Record<string, { $eq?: string } | unknown>;
+  advancedMeterGroupByFilters?: Record<string, unknown> | null;
 };
 
+function meterFilterEq(value: unknown): string {
+  if (!value || typeof value !== "object" || !("$eq" in value)) {
+    return "";
+  }
+  const eq = (value as { $eq?: unknown }).$eq;
+  return typeof eq === "string" ? eq : "";
+}
+
 function capabilityMeterFiltersMatch(
-  existing: OpenMeterFeatureRow["advancedMeterGroupByFilters"] | undefined,
+  existing: OpenMeterFeatureRow["advancedMeterGroupByFilters"],
   expected: Record<string, { $eq: string }>,
 ): boolean {
   if (!existing) {
@@ -139,16 +147,51 @@ function capabilityMeterFiltersMatch(
     return false;
   }
   for (const key of expectedKeys) {
-    const want = expected[key]?.$eq;
-    const got = existing[key];
-    const gotEq =
-      got && typeof got === "object" && "$eq" in got
-        ? String((got as { $eq?: unknown }).$eq ?? "")
-        : "";
-    if (want !== gotEq) {
+    if (expected[key]?.$eq !== meterFilterEq(existing[key])) {
       return false;
     }
   }
+  return true;
+}
+
+async function loadCapabilityFeatureDetail(
+  client: OpenMeter,
+  row: OpenMeterFeatureRow,
+): Promise<OpenMeterFeatureRow> {
+  if (!row.id) {
+    return row;
+  }
+  try {
+    const fetched = await client.features.get(row.id);
+    if (fetched?.key) {
+      return fetched as OpenMeterFeatureRow;
+    }
+  } catch {
+    /* use list row */
+  }
+  return row;
+}
+
+/** @returns true when the stale feature was deleted and must be recreated. */
+async function replaceStaleCapabilityFeature(input: {
+  client: OpenMeter;
+  row: OpenMeterFeatureRow;
+  filters: Record<string, { $eq: string }>;
+  key: string;
+}): Promise<boolean> {
+  const detail = await loadCapabilityFeatureDetail(input.client, input.row);
+  if (
+    capabilityMeterFiltersMatch(detail.advancedMeterGroupByFilters, input.filters) ||
+    detail.advancedMeterGroupByFilters == null
+  ) {
+    return false;
+  }
+  if (!input.row.id) {
+    throw new Error(
+      `OpenMeter feature ${input.key} has stale meter filters and cannot be replaced (missing id)`,
+    );
+  }
+  await input.client.features.delete(input.row.id);
   return true;
 }
 
@@ -190,34 +233,13 @@ export async function ensureCapabilityOpenMeterFeature(input: {
   }
 
   if (existingMatch) {
-    let detail = existingMatch;
-    if (existingMatch.id) {
-      try {
-        const fetched = await input.client.features.get(existingMatch.id);
-        if (fetched?.key) {
-          detail = fetched;
-        }
-      } catch {
-        /* use list row */
-      }
-    }
-    if (
-      capabilityMeterFiltersMatch(detail.advancedMeterGroupByFilters, filters)
-    ) {
-      return key;
-    }
-    // Only replace when we can see filters and they disagree. Missing filter
-    // payloads must not thrash delete/create on every plan sync.
-    if (
-      detail.advancedMeterGroupByFilters != null &&
-      existingMatch.id
-    ) {
-      await input.client.features.delete(existingMatch.id);
-    } else if (detail.advancedMeterGroupByFilters != null) {
-      throw new Error(
-        `OpenMeter feature ${key} has stale meter filters and cannot be replaced (missing id)`,
-      );
-    } else {
+    const replaced = await replaceStaleCapabilityFeature({
+      client: input.client,
+      row: existingMatch,
+      filters,
+      key,
+    });
+    if (!replaced) {
       return key;
     }
   }
