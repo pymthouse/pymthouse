@@ -9,6 +9,7 @@ import {
 } from "../src/lib/openapi/generated-route-inventory";
 import {
   registeredMetadataKeys,
+  resolveRouteMetadata,
   virtualMetadataEntries,
 } from "../src/lib/openapi/route-metadata";
 import { routeKey } from "../src/lib/openapi/route-scan";
@@ -39,8 +40,12 @@ function buildInventoryRouteKeySet(): Set<string> {
   );
 }
 
-function getMissingMetadata(publicKeys: readonly string[], metadataKeys: ReadonlySet<string>): string[] {
-  return publicKeys.filter((key) => !metadataKeys.has(key));
+/** Public keys with no metadata (v2 aliases may inherit the v1 entry). */
+function getMissingMetadata(publicKeys: readonly string[]): string[] {
+  return publicKeys.filter((key) => {
+    const space = key.indexOf(" ");
+    return !resolveRouteMetadata(key.slice(0, space), key.slice(space + 1));
+  });
 }
 
 function getStaleMetadata(
@@ -62,7 +67,7 @@ function main() {
   const metadataKeys = registeredMetadataKeys();
   const virtualKeys = buildVirtualRouteKeySet();
   const inventoryKeys = buildInventoryRouteKeySet();
-  const missing = getMissingMetadata(OPENAPI_PUBLIC_ROUTE_KEYS, metadataKeys);
+  const missing = getMissingMetadata(OPENAPI_PUBLIC_ROUTE_KEYS);
   const stale = getStaleMetadata(
     metadataKeys,
     OPENAPI_PUBLIC_ROUTE_KEYS,

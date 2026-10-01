@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   buildApiCorsHeaders,
+  isBuilderApiPath,
   originMatchesAppDomains,
   readConfiguredCorsOrigins,
   resolveApiCorsAllowOrigin,
+  resolveBuilderApiCorsOrigin,
 } from "@/lib/api-cors";
 
 test("resolveApiCorsAllowOrigin allows kongportals.com subdomains", () => {
@@ -122,5 +124,29 @@ test("originMatchesAppDomains matches bare host allowlist entries to Origin", ()
   assert.equal(
     originMatchesAppDomains("https://app.example", ["https://app.example"]),
     true,
+  );
+});
+
+test("isBuilderApiPath covers /api/v1 and /api/v2 only", () => {
+  for (const path of ["/api/v1", "/api/v1/health", "/api/v2", "/api/v2/apps/app_x/me/billing"]) {
+    assert.equal(isBuilderApiPath(path), true, path);
+  }
+  for (const path of ["/api/v3/health", "/api/v10/apps", "/api/auth/session", "/api/v2x"]) {
+    assert.equal(isBuilderApiPath(path), false, path);
+  }
+});
+
+test("resolveBuilderApiCorsOrigin treats /api/v2/apps/{clientId} as app-scoped", async () => {
+  // Localhost short-circuits the per-app allowlist lookup outside production.
+  assert.equal(
+    await resolveBuilderApiCorsOrigin(
+      "http://localhost:5173",
+      "/api/v2/apps/app_x/me/billing/wallet",
+    ),
+    "http://localhost:5173",
+  );
+  assert.equal(
+    await resolveBuilderApiCorsOrigin(null, "/api/v2/apps/app_x/me/billing/wallet"),
+    null,
   );
 });

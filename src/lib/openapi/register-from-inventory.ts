@@ -1,7 +1,7 @@
 import { defineRoute } from "@/lib/openapi/registry";
 import { OPENAPI_ROUTE_INVENTORY } from "@/lib/openapi/generated-route-inventory";
 import {
-  getRouteMetadata,
+  resolveRouteMetadata,
   virtualMetadataEntries,
 } from "@/lib/openapi/route-metadata";
 import { isOpenApiContractOperation } from "@/lib/openapi/tags";
@@ -26,7 +26,7 @@ export function registerOpenApiFromInventory(): void {
       continue;
     }
 
-    const meta = getRouteMetadata(op.method, op.path);
+    const meta = resolveRouteMetadata(op.method, op.path);
     if (!meta) {
       continue;
     }

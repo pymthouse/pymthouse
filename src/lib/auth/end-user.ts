@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 import {
   resolveActiveAppApiKeyFromBearer,
@@ -25,6 +26,7 @@ export type EndUserAuth = {
 export function endUserSubjectOverrideError(
   searchParams: URLSearchParams,
   resourceLabel: string,
+  body?: Record<string, unknown> | null,
 ): Response | null {
   if (
     searchParams.has("externalUserId") ||
@@ -38,7 +40,54 @@ export function endUserSubjectOverrideError(
       { status: 400 },
     );
   }
+  if (
+    body &&
+    (hasNonEmptySubjectField(body.externalUserId) ||
+      hasNonEmptySubjectField(body.external_user_id) ||
+      hasNonEmptySubjectField(body.userId))
+  ) {
+    return Response.json(
+      {
+        error: `userId/externalUserId are not allowed; ${resourceLabel} is scoped to the authenticated user`,
+      },
+      { status: 400 },
+    );
+  }
   return null;
+}
+
+function hasNonEmptySubjectField(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export type EndUserRouteAuthResult =
+  | { auth: EndUserAuth }
+  | { response: Response };
+
+export async function requireEndUserRouteAuth(
+  request: NextRequest,
+  publicClientId: string | undefined,
+  resourceLabel: string,
+  body?: Record<string, unknown> | null,
+): Promise<EndUserRouteAuthResult> {
+  const override = endUserSubjectOverrideError(
+    request.nextUrl.searchParams,
+    resourceLabel,
+    body,
+  );
+  if (override) {
+    return { response: override };
+  }
+
+  const auth = await authenticateEndUser(request, {
+    expectedPublicClientId: publicClientId,
+  });
+  if (!auth) {
+    return {
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+  return { auth };
 }
 
 function readBearerToken(request: Request): string | null {

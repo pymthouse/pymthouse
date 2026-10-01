@@ -1,9 +1,11 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { API_V1_PREFIX, API_V2_PREFIX } from "@/lib/api-version/v2-surface";
 import { isOpenApiContractOperation } from "@/lib/openapi/tags";
 
 export const API_V1_ROOT = join(process.cwd(), "src/app/api/v1");
+export const API_V2_ROOT = join(process.cwd(), "src/app/api/v2");
 
 /**
  * Prefixes excluded from OpenAPI contracts.
@@ -81,7 +83,7 @@ export function shouldExcludeOpenApiRoute(relPath: string): string | null {
   return null;
 }
 
-export function toOpenApiPath(fileRel: string): string {
+export function toOpenApiPath(fileRel: string, prefix: string = API_V1_PREFIX): string {
   const withoutRoute = fileRel.endsWith("/route.ts")
     ? fileRel.slice(0, -"/route.ts".length)
     : fileRel;
@@ -107,7 +109,7 @@ export function toOpenApiPath(fileRel: string): string {
     }
     return segment;
   });
-  return `/api/v1/${segments.join("/")}`;
+  return `${prefix}/${segments.join("/")}`;
 }
 
 export function collectRouteFiles(dir: string, base = ""): string[] {
@@ -149,12 +151,27 @@ export function exportedHttpMethods(source: string): HttpMethod[] {
 }
 
 export function scanApiV1Routes(apiRoot = API_V1_ROOT): ScannedRouteOperation[] {
+  return scanApiRoutes({ root: apiRoot, prefix: API_V1_PREFIX });
+}
+
+/** `src/app/api/v2` (aliases + v2-only routes). Missing root → no operations. */
+export function scanApiV2Routes(apiRoot = API_V2_ROOT): ScannedRouteOperation[] {
+  if (!existsSync(apiRoot)) {
+    return [];
+  }
+  return scanApiRoutes({ root: apiRoot, prefix: API_V2_PREFIX });
+}
+
+export function scanApiRoutes(input: {
+  root: string;
+  prefix: string;
+}): ScannedRouteOperation[] {
   const operations: ScannedRouteOperation[] = [];
 
-  for (const fileRel of collectRouteFiles(apiRoot)) {
+  for (const fileRel of collectRouteFiles(input.root)) {
     const fileExclusion = shouldExcludeOpenApiRoute(fileRel);
-    const source = readFileSync(join(apiRoot, fileRel), "utf8");
-    const path = toOpenApiPath(fileRel);
+    const source = readFileSync(join(input.root, fileRel), "utf8");
+    const path = toOpenApiPath(fileRel, input.prefix);
 
     for (const method of exportedHttpMethods(source)) {
       const methodLower = method.toLowerCase() as HttpMethodLower;

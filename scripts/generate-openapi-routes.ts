@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Regenerate OpenAPI route inventory from src/app/api/v1 route handlers.
+ * Regenerate OpenAPI route inventory from src/app/api/{v1,v2} route handlers.
  * Run via: npm run openapi:generate
  */
 import { writeFileSync } from "node:fs";
@@ -8,7 +8,9 @@ import { join } from "node:path";
 
 import {
   publicRouteOperations,
+  routeKey,
   scanApiV1Routes,
+  scanApiV2Routes,
   type ScannedRouteOperation,
 } from "../src/lib/openapi/route-scan";
 
@@ -30,7 +32,10 @@ function formatInventoryLine(op: ScannedRouteOperation): string {
 }
 
 function main() {
-  const scanned = scanApiV1Routes();
+  const scanned = [...scanApiV1Routes(), ...scanApiV2Routes()].toSorted(
+    (left, right) =>
+      routeKey(left.method, left.path).localeCompare(routeKey(right.method, right.path)),
+  );
   const publicOps = publicRouteOperations(scanned);
   const inventoryLines = scanned.map(formatInventoryLine).join("\n");
 
