@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { CREATE_SIGNED_TICKET_EVENT_TYPE } from "./constants";
+import { test as dbTest } from "@/test-utils/db-guard";
+import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
+
 import {
   aggregateManifestSessionEventStats,
   buildSubjectMatchKeys,
@@ -20,11 +23,13 @@ import {
   listAdminSignedTicketSessions,
   listDeveloperSignedTicketRequests,
   listDeveloperSignedTicketSessions,
+  listEndUserSignedTicketRequests,
   listEndUserSignedTicketSessions,
   manifestMeterRowToSessionRow,
   normalizeSignedTicketEvent,
   resolveSessionBillableSecs,
   sessionEventStatsKey,
+  SignedTicketEventsListError,
   signedTicketSessionSortKey,
 } from "./signed-ticket-events";
 
@@ -47,7 +52,7 @@ function sampleEvent(overrides?: {
         usage_subject: "user-123",
         gateway_request_id: "req-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
         fee_wei: "100",
         pixels: "64",
@@ -111,7 +116,7 @@ test("eventMatchesViewerSubjects matches owner wallet CE subjects", () => {
         usage_subject: `owner:${ownerId}`,
         gateway_request_id: "req-owner-1",
         pipeline: "text-to-image",
-        model_id: "sdxl",
+        app: "sdxl",
         network_fee_usd_micros: "1500",
       },
     },
@@ -231,6 +236,62 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.ethUsdPrice, "3456.78");
   assert.equal(row?.billableSecs, 12.5);
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
+});
+
+test("normalizeSignedTicketEvent uses signer app for model attribution", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live",
+        app: "livepeer-example/hello-world",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live");
+  assert.equal(row?.modelId, "livepeer-example/hello-world");
+});
+
+test("normalizeSignedTicketEvent uses live-video-to-video pipeline when app is empty", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        app: "",
+        model_id: "unknown",
+      },
+    }),
+  );
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video");
+});
+
+test("normalizeSignedTicketEvent prefers event app over unknown model_id", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "live-video-to-video",
+        model_id: "unknown",
+        app: "live-video-to-video/scope",
+      },
+    }),
+  );
+  assert.ok(row);
+  assert.equal(row?.pipeline, "live-video-to-video");
+  assert.equal(row?.modelId, "live-video-to-video/scope");
+});
+
+test("normalizeSignedTicketEvent keeps historical model_id when app is missing", () => {
+  const row = normalizeSignedTicketEvent(
+    sampleEvent({
+      data: {
+        pipeline: "text-to-image",
+        app: "",
+        model_id: "sdxl",
+      },
+    }),
+  );
+  assert.equal(row?.modelId, "sdxl");
 });
 
 test("coerceIngestedEvent accepts wrapped IngestedEvent", () => {
@@ -683,16 +744,51 @@ test("eventMatchesUsageSubjectKeys gates on the event actor", () => {
 /** OpenMeter double: meter discovery plus per-subject event listing. */
 function fakeOpenMeterClient(
   eventsBySubject: Record<string, ReturnType<typeof sampleEvent>[]>,
-  meterRows: { subject: string; value: number; groupBy: Record<string, string> }[],
+  meterRows: {
+    subject?: string | null;
+    value: number;
+    groupBy: Record<string, string>;
+  }[],
+  options?: {
+    listThrows?: boolean;
+    listV2Throws?: boolean;
+    listV2BySubject?: Record<string, ReturnType<typeof sampleEvent>[]>;
+    onListV2?: (args: {
+      filter?: string;
+      from?: string;
+      to?: string;
+    }) => void;
+  },
 ) {
   return {
     meters: {
       query: async () => ({ data: meterRows }),
     },
     events: {
-      list: async ({ subject }: { subject?: string }) =>
-        eventsBySubject[subject ?? ""] ?? [],
-      listV2: async () => ({ items: [] }),
+      list: async ({ subject }: { subject?: string }) => {
+        if (options?.listThrows) {
+          throw new Error("events.list unavailable");
+        }
+        return eventsBySubject[subject ?? ""] ?? [];
+      },
+      listV2: async (args?: {
+        filter?: string;
+        from?: string;
+        to?: string;
+      }) => {
+        options?.onListV2?.(args ?? {});
+        if (options?.listV2Throws) {
+          throw new Error("events.listV2 unavailable");
+        }
+        const filter = args?.filter ?? "";
+        const bySubject = options?.listV2BySubject ?? {};
+        for (const [subject, items] of Object.entries(bySubject)) {
+          if (filter.includes(subject)) {
+            return { items };
+          }
+        }
+        return { items: [] };
+      },
     },
   };
 }
@@ -836,4 +932,277 @@ test("enrichSessionRowWithEventStats attaches times and resolves duration", () =
   assert.equal(enriched.startedAt, "2026-07-20T15:00:00.000Z");
   assert.equal(enriched.endedAt, "2026-07-20T15:01:00.000Z");
   assert.equal(enriched.billableSecs, "12.5");
+});
+
+test("enrichSessionRowWithEventStats overlays app when meter model_id is unknown", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+        app: "live-video-to-video/scope",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video/scope");
+});
+
+test("enrichSessionRowWithEventStats uses live-video-to-video pipeline when app is empty", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "live-video-to-video",
+      modelId: "unknown",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+        pipeline: "live-video-to-video",
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.modelId, "live-video-to-video");
+});
+
+test("listDeveloperSignedTicketRequests falls through empty list to listV2 with from/to", async (t) => {
+  const { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } =
+    await import("./client");
+  const ticket = sampleEvent({
+    id: "evt-v2",
+    subject: "app_abc:eu_tenant",
+    data: {
+      client_id: "app_abc",
+      external_user_id: "eu_tenant",
+      usage_subject: "eu_tenant",
+      gateway_request_id: "req-v2",
+    },
+  });
+  const listV2Calls: Array<{ filter?: string; from?: string; to?: string }> = [];
+  __testSetHostedOpenMeterClient(
+    fakeOpenMeterClient(
+      {},
+      [
+        {
+          subject: "app_abc:eu_tenant",
+          value: 1,
+          groupBy: { client_id: "app_abc", external_user_id: "eu_tenant" },
+        },
+      ],
+      {
+        listThrows: true,
+        listV2BySubject: { "app_abc:eu_tenant": [ticket] },
+        onListV2: (args) => listV2Calls.push(args),
+      },
+    ) as never,
+  );
+  t.after(() => resetHostedOpenMeterClientForTests());
+
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-08-01T00:00:00.000Z";
+  const result = await listDeveloperSignedTicketRequests({
+    userId: "00000000-0000-0000-0000-000000000000",
+    managedClientIds: ["app_abc"],
+    memberClientIds: [],
+    from,
+    to,
+  });
+  assert.deepEqual(
+    result.items.map((row) => row.gatewayRequestId),
+    ["req-v2"],
+  );
+  assert.ok(listV2Calls.length > 0);
+  assert.ok(listV2Calls.some((call) => call.from === from && call.to === to));
+  assert.ok(
+    listV2Calls.some(
+      (call) =>
+        typeof call.filter === "string" &&
+        call.filter.includes(from) &&
+        call.filter.includes(to),
+    ),
+  );
+});
+
+test("listDeveloperSignedTicketRequests throws when every event fetch fails", async (t) => {
+  const { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } =
+    await import("./client");
+  __testSetHostedOpenMeterClient(
+    fakeOpenMeterClient(
+      {},
+      [
+        {
+          subject: "app_abc:eu_tenant",
+          value: 1,
+          groupBy: { client_id: "app_abc", external_user_id: "eu_tenant" },
+        },
+      ],
+      { listThrows: true, listV2Throws: true },
+    ) as never,
+  );
+  t.after(() => resetHostedOpenMeterClientForTests());
+
+  await assert.rejects(
+    () =>
+      listDeveloperSignedTicketRequests({
+        userId: "00000000-0000-0000-0000-000000000000",
+        managedClientIds: ["app_abc"],
+        memberClientIds: [],
+        from: "2026-07-01T00:00:00.000Z",
+        to: "2026-08-01T00:00:00.000Z",
+      }),
+    (err: unknown) => err instanceof SignedTicketEventsListError,
+  );
+});
+
+dbTest("listDeveloperSignedTicketRequests finds owner-rollup tickets by payer subject", async (t) => {
+  const { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } =
+    await import("./client");
+  const app = await seedDeveloperAppWithClient({ name: "rollup-requests" });
+  t.after(async () => {
+    resetHostedOpenMeterClientForTests();
+    await cleanupTestApp(app);
+  });
+
+  const ticket = sampleEvent({
+    id: "evt-schnell",
+    subject: app.userId,
+    time: "2026-09-09T15:00:00.000Z",
+    data: {
+      client_id: app.clientId,
+      external_user_id: "eu_51fba6419832421c9a56f6bee25cc68b",
+      usage_subject: app.userId,
+      gateway_request_id: "job_fd7d4bec9c3643cc",
+      pipeline: "fixed",
+      app: "livepeer-example/fal-flux-schnell",
+      network_fee_usd_micros: "3000",
+    },
+  });
+  __testSetHostedOpenMeterClient(
+    fakeOpenMeterClient(
+      { [app.userId]: [ticket] },
+      [
+        {
+          subject: null,
+          value: 1,
+          groupBy: {
+            client_id: app.clientId,
+            external_user_id: "eu_51fba6419832421c9a56f6bee25cc68b",
+          },
+        },
+      ],
+    ) as never,
+  );
+
+  const result = await listDeveloperSignedTicketRequests({
+    userId: app.userId,
+    managedClientIds: [app.clientId],
+    memberClientIds: [],
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.gatewayRequestId, "job_fd7d4bec9c3643cc");
+  assert.equal(result.items[0]?.pipeline, "fixed");
+  assert.equal(result.items[0]?.modelId, "livepeer-example/fal-flux-schnell");
+  assert.equal(
+    result.items[0]?.externalUserId,
+    "eu_51fba6419832421c9a56f6bee25cc68b",
+  );
+});
+
+dbTest("listEndUserSignedTicketRequests keeps the actor on owner-rollup tickets", async (t) => {
+  const { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } =
+    await import("./client");
+  const app = await seedDeveloperAppWithClient({ name: "rollup-end-user" });
+  t.after(async () => {
+    resetHostedOpenMeterClientForTests();
+    await cleanupTestApp(app);
+  });
+
+  const keep = sampleEvent({
+    id: "evt-keep",
+    subject: app.userId,
+    data: {
+      client_id: app.clientId,
+      external_user_id: "eu_keep",
+      usage_subject: app.userId,
+      gateway_request_id: "req-keep",
+      pipeline: "fixed",
+      app: "livepeer-example/fal-flux-schnell",
+    },
+  });
+  const other = sampleEvent({
+    id: "evt-other",
+    subject: app.userId,
+    data: {
+      client_id: app.clientId,
+      external_user_id: "eu_other",
+      usage_subject: app.userId,
+      gateway_request_id: "req-other",
+      pipeline: "live",
+      app: "comfystream",
+    },
+  });
+  __testSetHostedOpenMeterClient(
+    fakeOpenMeterClient({ [app.userId]: [keep, other] }, []) as never,
+  );
+
+  const result = await listEndUserSignedTicketRequests({
+    externalUserId: "eu_keep",
+    clientId: app.clientId,
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.deepEqual(
+    result.items.map((row) => row.gatewayRequestId),
+    ["req-keep"],
+  );
+  assert.equal(result.items[0]?.pipeline, "fixed");
+
+  const byId = await listEndUserSignedTicketRequests({
+    externalUserId: "eu_keep",
+    clientId: app.clientId,
+    gatewayRequestIds: ["req-keep"],
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.deepEqual(
+    byId.items.map((row) => row.gatewayRequestId),
+    ["req-keep"],
+  );
+
+  const miss = await listEndUserSignedTicketRequests({
+    externalUserId: "eu_keep",
+    clientId: app.clientId,
+    gatewayRequestIds: ["req-other"],
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-09-30T23:59:59.999Z",
+  });
+  assert.deepEqual(miss.items, []);
 });

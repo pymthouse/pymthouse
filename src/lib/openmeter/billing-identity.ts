@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { appBillingConfig, developerApps, oidcClients } from "@/db/schema";
+import { appBillingConfig, developerApps, endUsers, oidcClients } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import {
@@ -11,9 +11,11 @@ import {
   buildOwnerWireSubject,
   buildSandboxEndUserCustomerKey,
   isEndUserCustomerKey,
+  isEndUserRowId,
   isOwnerWireSubject,
   normalizePlatformUserId,
   parseCustomerKey,
+  parseEndUserCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
@@ -482,17 +484,39 @@ function identityCacheKey(input: {
  * App owners and owner_rollup end-users share the owner's `{users.id}` wallet;
  * platform-default (Livepeer Direct) members bill their own owner wallet;
  * merchant end-users bill `eu_{end_users.id}` (live) or `sbx_eu_{id}` (sandbox).
+ *
+ * Pass `stripeLivemode` when settling a Connect webhook so prepaid credits land
+ * on the payment plane's wallet even if the operator already switched planes.
+ * Pass `billingMode` when settling a Connect top-up so prepaid credits stay on
+ * the `eu_` / `sbx_eu_` wallet even if the operator already switched the app to
+ * `owner_rollup` (Connect `acct_` may still match while identity would otherwise
+ * re-resolve onto the owner bare id).
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
   externalUserId: string;
+  /** Override active `app_billing_config.stripeLivemode` (Connect settlement). */
+  stripeLivemode?: boolean;
+  /** Override active `app_billing_config.billingMode` (Connect settlement). */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId.trim();
   if (!externalUserId) {
     throw new Error("externalUserId is required");
   }
   const clientId = input.clientId.trim();
-  const app = await loadAppIdentity(clientId);
+  const loaded = await loadAppIdentity(clientId);
+  const app =
+    loaded &&
+    (input.billingMode || typeof input.stripeLivemode === "boolean")
+      ? {
+          ...loaded,
+          ...(input.billingMode ? { billingMode: input.billingMode } : {}),
+          ...(typeof input.stripeLivemode === "boolean"
+            ? { stripeLivemode: input.stripeLivemode }
+            : {}),
+        }
+      : loaded;
   return getIdentityCache().get(
     identityCacheKey({ clientId, externalUserId, app }),
     () =>
@@ -508,9 +532,35 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
   clientId: string;
   externalUserId: string;
   app: AppIdentityRow | null;
+  /**
+   * When true, `externalUserId` is already the integrator id remapped from a
+   * canonical `eu_{end_users.id}` / `sbx_eu_{id}` key — do not remap again.
+   */
+  resolvedFromEndUserKey?: boolean;
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId;
   const app = input.app;
+
+  // Canonical `eu_{end_users.id}` / `sbx_eu_{id}` remaps to the integrator
+  // id so findOrCreate does not provision a shadow wallet. The prefix is not
+  // the source of truth: only a UUID suffix can be a primary key, the row
+  // must belong to this app, and the plane comes from `app.stripeLivemode`
+  // (already loaded, including a settlement override) on the resolve below.
+  if (!input.resolvedFromEndUserKey && app) {
+    const mapped = await remapEndUserCustomerKeyToIntegratorId({
+      subject: externalUserId,
+      developerAppId: app.developerAppId,
+    });
+    if (mapped) {
+      return resolveOpenMeterBillingIdentityUncached({
+        clientId: input.clientId,
+        externalUserId: mapped,
+        app,
+        resolvedFromEndUserKey: true,
+      });
+    }
+  }
+
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).
     // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
@@ -634,6 +684,43 @@ export async function resolveAppUserOpenMeterLookupKeys(input: {
   } catch {
     return [buildOpenMeterCustomerKey(clientId, externalUserId)];
   }
+}
+
+/**
+ * Map `eu_{end_users.id}` / `sbx_eu_{id}` → integrator `external_user_id`
+ * for this app. One primary-key read.
+ *
+ * Returns null without a query when {@link parseEndUserCustomerKey} does not
+ * yield a UUID (`eu_billing_1`, `eu_tenant`). Returns null when the row is
+ * missing, has no external id, or belongs to another app — the caller keeps
+ * the original subject. A database error propagates: swallowing it and
+ * provisioning that subject creates a shadow `end_users` row.
+ *
+ * Does not read OpenMeter customer metadata or `billing_customers`, and does
+ * not infer live vs sandbox from the prefix.
+ */
+async function remapEndUserCustomerKeyToIntegratorId(input: {
+  subject: string;
+  developerAppId: string;
+}): Promise<string | null> {
+  const endUserRowId = parseEndUserCustomerKey(input.subject);
+  if (!endUserRowId || !isEndUserRowId(endUserRowId)) {
+    return null;
+  }
+  const rows = await db
+    .select({
+      appId: endUsers.appId,
+      externalUserId: endUsers.externalUserId,
+    })
+    .from(endUsers)
+    .where(eq(endUsers.id, endUserRowId.toLowerCase()))
+    .limit(1);
+  const row = rows[0];
+  const externalUserId = row?.externalUserId?.trim() || "";
+  if (!row || row.appId !== input.developerAppId || !externalUserId) {
+    return null;
+  }
+  return externalUserId;
 }
 
 /** True when this external user id is the owner of the given app. */

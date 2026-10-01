@@ -12,7 +12,7 @@ import {
   resolveViewerUsageClientScopes,
   type ViewerUsageClientScopes,
 } from "@/lib/viewer-usage-clients";
-import { parseOptionalDateRange } from "@/lib/usage/parse-optional-date-range";
+import { parseUsageRequestDateRange } from "@/lib/billing-utils";
 
 type MeUsageGroupBy = "request" | "session";
 type MeUsageScope = "own" | "all";
@@ -90,6 +90,19 @@ function validateMeUsageRequestsParams(
     };
   }
   return { scope, groupBy };
+}
+
+function parseOptionalDateRange(
+  params: URLSearchParams,
+): { error: NextResponse } | { from?: string; to?: string } {
+  const parsed = parseUsageRequestDateRange(
+    params.get("from"),
+    params.get("to"),
+  );
+  if (!parsed.ok) {
+    return { error: NextResponse.json({ error: parsed.error }, { status: 400 }) };
+  }
+  return { from: parsed.from, to: parsed.to };
 }
 
 /** Session-authenticated viewer signed-ticket history (Internal API). */

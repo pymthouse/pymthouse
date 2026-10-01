@@ -26,6 +26,16 @@ export type GrantAllowanceUsdMicros = (input: {
   featureKey?: string;
   /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
   idempotencyKey?: string;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }) => Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -57,6 +67,16 @@ export async function grantAllowanceUsdMicros(input: {
   featureKey?: string;
   /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
   idempotencyKey?: string;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` from the Connect payment plane when the
+   * app's active stripeLivemode may already have switched.
+   */
+  stripeLivemode?: boolean;
+  /**
+   * Force merchant `eu_` / `sbx_eu_` when settling a Connect charge whose app
+   * may already have switched to `owner_rollup`.
+   */
+  billingMode?: "owner_rollup" | "merchant";
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -77,6 +97,8 @@ export async function grantAllowanceUsdMicros(input: {
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId,
+    stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
   const provisionExternalUserId = identity.isOwner
     ? identity.payerPlatformUserId || externalUserId
@@ -89,10 +111,14 @@ export async function grantAllowanceUsdMicros(input: {
   await ensureStarterSubscriptionForAppUser({
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
+    stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
   await ensureTrialAllowanceForAppUser({
     clientId: identity.developerAppId,
     externalUserId: provisionExternalUserId,
+    stripeLivemode: input.stripeLivemode,
+    billingMode: input.billingMode,
   });
 
   const featureKey =

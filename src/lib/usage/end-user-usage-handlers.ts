@@ -4,6 +4,7 @@ import {
   authenticateEndUser,
   endUserSubjectOverrideError,
 } from "@/lib/auth/end-user";
+import { parseUsageRequestDateRange } from "@/lib/billing-utils";
 import {
   listEndUserSignedTicketRequests,
   listEndUserSignedTicketSessions,
@@ -12,7 +13,6 @@ import {
   handleAppUsageBalanceGet,
   handleAppUsageGet,
 } from "@/lib/usage/app-usage-handlers";
-import { parseOptionalDateRange } from "@/lib/usage/parse-optional-date-range";
 
 /**
  * `publicClientId` is the app the credential must belong to. Omit it for the
@@ -93,13 +93,36 @@ export async function handleEndUserMeUsageRequestsGet(
   const params = request.nextUrl.searchParams;
   const cursor = params.get("cursor")?.trim() || undefined;
   const manifestId = params.get("manifestId")?.trim() || undefined;
+  const gatewayRequestIds = [
+    ...new Set(
+      params
+        .getAll("gatewayRequestId")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (gatewayRequestIds.length > 50) {
+    return NextResponse.json(
+      { error: "at most 50 gatewayRequestId values" },
+      { status: 400 },
+    );
+  }
+  if (gatewayRequestIds.some((id) => id.length > 512)) {
+    return NextResponse.json(
+      { error: "gatewayRequestId too long" },
+      { status: 400 },
+    );
+  }
   const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
-
-  const dateRange = parseOptionalDateRange(params);
-  if ("error" in dateRange) {
-    return dateRange.error;
+  const dateRange = parseUsageRequestDateRange(
+    params.get("from"),
+    params.get("to"),
+    { clampOversize: true },
+  );
+  if (!dateRange.ok) {
+    return NextResponse.json({ error: dateRange.error }, { status: 400 });
   }
 
   if (groupBy !== "request" && groupBy !== "session") {
@@ -109,10 +132,33 @@ export async function handleEndUserMeUsageRequestsGet(
     );
   }
 
-  if (groupBy === "session") {
-    const result = await listEndUserSignedTicketSessions({
+  try {
+    if (groupBy === "session") {
+      const result = await listEndUserSignedTicketSessions({
+        externalUserId: auth.externalUserId,
+        clientId: auth.publicClientId,
+        cursor,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        from: dateRange.from,
+        to: dateRange.to,
+      });
+
+      return NextResponse.json({
+        items: result.items,
+        nextCursor: result.nextCursor,
+        openMeterConfigured: result.openMeterConfigured,
+        clientId: auth.publicClientId,
+        externalUserId: auth.externalUserId,
+        groupBy: "session",
+      });
+    }
+
+    const result = await listEndUserSignedTicketRequests({
       externalUserId: auth.externalUserId,
       clientId: auth.publicClientId,
+      manifestId,
+      gatewayRequestIds:
+        gatewayRequestIds.length > 0 ? gatewayRequestIds : undefined,
       cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
       from: dateRange.from,
@@ -125,26 +171,13 @@ export async function handleEndUserMeUsageRequestsGet(
       openMeterConfigured: result.openMeterConfigured,
       clientId: auth.publicClientId,
       externalUserId: auth.externalUserId,
-      groupBy: "session",
+      groupBy: "request",
     });
+  } catch (err) {
+    console.error("[end-user-usage-requests] OpenMeter list failed:", err);
+    return NextResponse.json(
+      { error: "Failed to load usage requests" },
+      { status: 502 },
+    );
   }
-
-  const result = await listEndUserSignedTicketRequests({
-    externalUserId: auth.externalUserId,
-    clientId: auth.publicClientId,
-    manifestId,
-    cursor,
-    limit: Number.isFinite(limit) ? limit : undefined,
-    from: dateRange.from,
-    to: dateRange.to,
-  });
-
-  return NextResponse.json({
-    items: result.items,
-    nextCursor: result.nextCursor,
-    openMeterConfigured: result.openMeterConfigured,
-    clientId: auth.publicClientId,
-    externalUserId: auth.externalUserId,
-    groupBy: "request",
-  });
 }

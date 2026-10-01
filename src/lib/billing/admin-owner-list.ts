@@ -2,6 +2,8 @@ import { and, eq, exists, gte, ilike, inArray, lte, or, sql } from "drizzle-orm"
 
 import { db } from "@/db/index";
 import {
+  appBillingConfig,
+  appUsers,
   developerApps,
   oidcClients,
   ownerBillingConfig,
@@ -51,9 +53,10 @@ export type AdminOwnerListQuery = {
 export type AdminOwnerListApp = {
   id: string;
   name: string;
+  billingMode: "owner_rollup" | "merchant";
 };
 
-type OwnerListOwnedApp = AdminOwnerListApp & {
+export type OwnerListOwnedApp = AdminOwnerListApp & {
   publicClientId: string;
 };
 
@@ -312,6 +315,23 @@ function ownerSearchFilter(q: string) {
           ),
         ),
     ),
+    exists(
+      db
+        .select({ id: appUsers.id })
+        .from(appUsers)
+        .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
+        .where(
+          and(
+            eq(developerApps.ownerId, users.id),
+            or(
+              ilike(appUsers.email, pattern),
+              ilike(appUsers.externalUserId, pattern),
+              eq(appUsers.externalUserId, q),
+              eq(appUsers.id, q),
+            ),
+          ),
+        ),
+    ),
   );
 }
 
@@ -355,9 +375,14 @@ async function loadOwnedAppsByOwner(
       id: developerApps.id,
       name: developerApps.name,
       publicClientId: oidcClients.clientId,
+      billingMode: appBillingConfig.billingMode,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(
+      appBillingConfig,
+      eq(appBillingConfig.clientId, developerApps.id),
+    )
     .where(inArray(developerApps.ownerId, ownerIds));
   for (const row of rows) {
     const list = byOwner.get(row.ownerId) ?? [];
@@ -365,6 +390,7 @@ async function loadOwnedAppsByOwner(
       id: row.id,
       name: row.name,
       publicClientId: row.publicClientId?.trim() || row.id,
+      billingMode: row.billingMode === "merchant" ? "merchant" : "owner_rollup",
     });
     byOwner.set(row.ownerId, list);
   }
@@ -375,7 +401,7 @@ async function loadOwnedAppsByOwner(
 }
 
 function publicClientIdsByOwner(
-  appsByOwner: ReadonlyMap<string, readonly OwnerListOwnedApp[]>,
+  appsByOwner: ReadonlyMap<string, readonly { publicClientId: string }[]>,
 ): Map<string, string[]> {
   const byOwner = new Map<string, string[]>();
   for (const [ownerId, apps] of appsByOwner) {
@@ -390,7 +416,7 @@ function publicClientIdsByOwner(
 async function queryOpenMeterCycleUsageByOwner(input: {
   cycle: { start: string; end: string };
   ownerIds: string[];
-  appsByOwner: Map<string, OwnerListOwnedApp[]>;
+  appsByOwner: Map<string, Array<{ publicClientId: string }>>;
 }): Promise<Map<string, OwnerListUsageTotals> | null> {
   if (!requireOpenMeterForUsageReads() || !isHostedAdminClientAvailable()) {
     return null;
@@ -475,17 +501,17 @@ async function loadTransactionCycleUsageByOwner(cycle: {
   return byOwner;
 }
 
-async function loadCycleUsageByOwner(input: {
+export async function loadCycleUsageByOwner(input: {
   cycle: { start: string; end: string };
   ownerIds: string[];
-  appsByOwner: Map<string, OwnerListOwnedApp[]>;
+  appsByOwner: Map<string, Array<{ publicClientId: string }>>;
 }): Promise<Map<string, OwnerListUsageTotals>> {
   const fromOpenMeter = await queryOpenMeterCycleUsageByOwner(input);
   if (fromOpenMeter) return fromOpenMeter;
   return loadTransactionCycleUsageByOwner(input.cycle);
 }
 
-async function loadPaidPlanByOwner(
+export async function loadPaidPlanByOwner(
   ownerIds: string[],
 ): Promise<Map<string, { planKey: string; includedUsdMicros: string | null }>> {
   const byOwner = new Map<string, { planKey: string; includedUsdMicros: string | null }>();
@@ -540,7 +566,8 @@ async function loadPaidPlanByOwner(
 
 /**
  * GET /api/v1/admin/billing/owners list payload: search by email/name/id/app,
- * current-cycle usage, blocked/overage filters, most-used first.
+ * app-user email/external id, current-cycle usage, blocked/overage filters,
+ * most-used first.
  */
 export async function listAdminBillingOwners(
   query: AdminOwnerListQuery,
@@ -615,6 +642,7 @@ export async function listAdminBillingOwners(
       ownedApps: (appsByOwner.get(row.id) ?? []).map((app) => ({
         id: app.id,
         name: app.name,
+        billingMode: app.billingMode,
       })),
       cycleUsage: {
         usedUsdMicros,

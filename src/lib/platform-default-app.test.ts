@@ -17,9 +17,22 @@ import { db } from "@/db/index";
 import { developerApps, users } from "@/db/schema";
 import {
   ensurePlatformDefaultApp,
+  findAdminOwnerId,
   notPlatformDefaultApp,
   resolvePlatformDefaultClientId,
 } from "@/lib/platform-default-app";
+
+test("findAdminOwnerId does not select a disposable test admin", async (t) => {
+  const adminId = await createTestUser({ role: "admin" });
+  t.after(async () => {
+    await db.delete(users).where(eq(users.id, adminId));
+  });
+
+  const ownerId = await findAdminOwnerId();
+  assert.ok(ownerId);
+  assert.notEqual(ownerId, adminId);
+  assert.equal(ownerId.startsWith("user-test-"), false);
+});
 
 test("catalog filters exclude the flagged platform default app", async (t) => {
   const app = await seedDeveloperAppWithClient({
@@ -177,6 +190,35 @@ test("ensurePlatformDefaultApp reassigns non-admin ownership to admin", async (t
       .where(eq(users.id, after[0]!.ownerId))
       .limit(1);
     assert.equal(owner[0]?.role, "admin");
+  });
+});
+
+test("ensurePlatformDefaultApp does not throw when the preferred admin is already gone", async (t) => {
+  const developerId = await createTestUser({ role: "developer" });
+  const adminId = await createTestUser({ role: "admin" });
+  const app = await seedDeveloperAppWithClient({
+    ownerId: developerId,
+    name: `GoneAdmin ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+    await db.delete(users).where(eq(users.id, developerId));
+  });
+
+  await db.delete(users).where(eq(users.id, adminId));
+
+  await withTemporaryPlatformDefault(app.clientId, async () => {
+    const result = await ensurePlatformDefaultApp({ ownerId: adminId });
+    assert.equal(result.created, false);
+    assert.equal(result.clientId, app.clientId);
+
+    const after = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .where(eq(developerApps.id, app.clientId))
+      .limit(1);
+    assert.ok(after[0]?.ownerId);
+    assert.notEqual(after[0]?.ownerId, adminId);
   });
 });
 

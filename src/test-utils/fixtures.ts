@@ -39,6 +39,7 @@ export async function createTestUser(opts?: { id?: string; role?: string }): Pro
 export async function deleteTestUser(id: string): Promise<void> {
   await db.execute(sql`DELETE FROM sessions WHERE user_id = ${id}`);
   await db.execute(sql`DELETE FROM provider_admins WHERE user_id = ${id}`);
+  await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${id}`);
   await db.execute(sql`DELETE FROM app_billing_oauth_states WHERE user_id = ${id}`);
   await db.execute(sql`DELETE FROM owner_billing_config WHERE owner_user_id = ${id}`);
   await db.execute(
@@ -57,6 +58,9 @@ export async function deleteTestUser(id: string): Promise<void> {
   await db.execute(
     sql`UPDATE subscriptions SET user_id = NULL WHERE user_id = ${id}`,
   );
+  await deleteFromOptionalTable("oidc_auth_codes", "user_id", id);
+  await deleteFromOptionalTable("oidc_device_codes", "user_id", id);
+  await deleteFromOptionalTable("oidc_refresh_tokens", "user_id", id);
   await db.execute(sql`DELETE FROM users WHERE id = ${id}`);
 }
 

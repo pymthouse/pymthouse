@@ -10,6 +10,7 @@ import type {
   BillingUserUsageRow,
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 
 type AppUsageEntry = BillingAppUsageSummary;
@@ -244,8 +245,7 @@ export function AppUsageSection({
                   className="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded"
                   title={`${pm.requestCount} requests · ${formatUsdMicrosString(pm.networkFeeUsdMicros, 6) ?? "—"}`}
                 >
-                  {pm.pipeline} /{" "}
-                  {pm.modelId.length > 20 ? `${pm.modelId.slice(0, 18)}…` : pm.modelId}
+                  {formatModelAttributionLabel(pm.pipeline, pm.modelId)}
                 </span>
               ))}
             </div>
@@ -266,9 +266,7 @@ export function AppUsageSection({
 }
 
 function formatPipelineModelLabel(pipeline: string, modelId: string): string {
-  const model =
-    modelId.length > 24 ? `${modelId.slice(0, 22)}…` : modelId;
-  return `${pipeline} / ${model}`;
+  return formatModelAttributionLabel(pipeline, modelId);
 }
 
 function AppUsageUserTable({

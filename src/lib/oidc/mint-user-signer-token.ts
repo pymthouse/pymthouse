@@ -32,7 +32,8 @@ import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export { SIGN_MINT_USER_TOKEN_SCOPE };
-const SIGNER_JWT_TTL_SECONDS = 300;
+// Signer session JWTs stay 5 minutes. Do not follow OIDC access/refresh env TTLs.
+export const SIGNER_JWT_TTL_SECONDS = 300;
 
 export class MintUserSignerTokenError extends Error {
   code: string;
@@ -369,7 +370,12 @@ async function loadMintAllowance(input: {
 
 async function resolveMintDefaultPaymentMethod(input: {
   publicClientId: string;
-  gateSubject: string;
+  /**
+   * Integrator external id (`app_users.external_user_id`). Never the OpenMeter
+   * payer key (`eu_…` / `sbx_eu_…`) — payment methods are keyed by the
+   * integrator id.
+   */
+  lookupExternalUserId: string;
   allowsOverageInvoicing: boolean;
 }): Promise<boolean | null> {
   if (input.allowsOverageInvoicing) return null;
@@ -379,7 +385,7 @@ async function resolveMintDefaultPaymentMethod(input: {
     );
     return await appUserHasChargeablePaymentMethod({
       clientId: input.publicClientId,
-      externalUserId: input.gateSubject,
+      externalUserId: input.lookupExternalUserId,
     });
   } catch {
     return null;
@@ -388,7 +394,13 @@ async function resolveMintDefaultPaymentMethod(input: {
 
 async function enforceMintSoftNegativeOrOverage(input: {
   publicClientId: string;
-  gateSubject: string;
+  /**
+   * Integrator external id for debt / invoice / PM lookups. Must not be the
+   * merchant payer cache key (`eu_{id}` live / `sbx_eu_{id}` sandbox) — that
+   * string is not an `app_users.external_user_id` and would create a shadow
+   * end-user wallet.
+   */
+  lookupExternalUserId: string;
   allowance: TrialCreditBalance | null;
   allowsOverageInvoicing: boolean;
   spendableMicros: bigint;
@@ -398,14 +410,14 @@ async function enforceMintSoftNegativeOrOverage(input: {
   );
   const softGate = await resolveSoftNegativeGate({
     clientId: input.publicClientId,
-    externalUserId: input.gateSubject,
+    externalUserId: input.lookupExternalUserId,
     spendableUsdMicros: input.spendableMicros,
     allowsOverageInvoicing: input.allowsOverageInvoicing,
   });
   if (!softGate.allow) {
     const hasDefaultPaymentMethod = await resolveMintDefaultPaymentMethod({
       publicClientId: input.publicClientId,
-      gateSubject: input.gateSubject,
+      lookupExternalUserId: input.lookupExternalUserId,
       allowsOverageInvoicing: input.allowsOverageInvoicing,
     });
     const reason = softNegativeDenyReason({
@@ -415,7 +427,7 @@ async function enforceMintSoftNegativeOrOverage(input: {
       softNegativeUsdMicros: softGate.softNegativeUsdMicros,
     });
     console.warn(
-      `[mint] soft-negative deny subject=${input.gateSubject} reason=${reason} overageEligible=${input.allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
+      `[mint] soft-negative deny subject=${input.lookupExternalUserId} reason=${reason} overageEligible=${input.allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
     );
     enforceMintAllowanceGate(input.allowance, {
       allowsOverageInvoicing: false,
@@ -432,7 +444,7 @@ async function enforceMintSoftNegativeOrOverage(input: {
   );
   scheduleInvoiceTrigger({
     clientId: input.publicClientId,
-    externalUserId: input.gateSubject,
+    externalUserId: input.lookupExternalUserId,
   });
 }
 
@@ -512,7 +524,9 @@ export async function mintSignerJwtForExternalUser(input: {
     } else {
       await enforceMintSoftNegativeOrOverage({
         publicClientId: input.publicClientId,
-        gateSubject,
+        // Debt / invoice / PM use the integrator id — not gateSubject
+        // (`eu_…` live / `sbx_eu_…` sandbox).
+        lookupExternalUserId: provisionExternalUserId,
         allowance,
         allowsOverageInvoicing,
         spendableMicros,

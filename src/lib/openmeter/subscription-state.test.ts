@@ -55,8 +55,8 @@ function sub(
 const isStarter = (s: OpenMeterSubscriptionView) =>
   s.planKey === "app_starter" || s.planKey === "pymthouse_owner_starter";
 
-/** Occupying cancel-at-period-end must be after Date.now(); keep this far-future. */
-const OCCUPYING_UNTIL = "2099-01-01T00:00:00.000Z";
+/** Occupying canceled rows must have activeTo in the future. */
+const OCCUPYING_UNTIL = "2027-12-01T00:00:00.000Z";
 
 test("status predicates: live excludes scheduled", () => {
   assert.equal(isLiveSubscriptionStatus("active"), true);

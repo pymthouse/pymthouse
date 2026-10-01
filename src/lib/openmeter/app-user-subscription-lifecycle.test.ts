@@ -20,6 +20,9 @@ import {
 } from "@/lib/openmeter/app-user-subscription-lifecycle";
 import type { OpenMeterSubscriptionView } from "@/lib/openmeter/subscription-read";
 
+/** Occupying canceled rows must have activeTo in the future. */
+const OCCUPYING_UNTIL = "2027-12-01T00:00:00.000Z";
+
 function sub(partial: Partial<OpenMeterSubscriptionView> & { id: string }): OpenMeterSubscriptionView {
   return {
     status: "active",
@@ -31,9 +34,6 @@ function sub(partial: Partial<OpenMeterSubscriptionView> & { id: string }): Open
     ...partial,
   };
 }
-
-/** Occupying cancel-at-period-end must be after Date.now(); keep this far-future. */
-const OCCUPYING_UNTIL = "2099-01-01T00:00:00.000Z";
 
 test("cancelAppUserSubscription rejects without confirm", async () => {
   await assert.rejects(
@@ -414,13 +414,13 @@ test("resolveAppUserResumeTarget resumes CAPE primary when a scheduled successor
       planKey: "paid",
       status: "canceled",
       activeFrom: "2026-08-08T03:00:31.842771Z",
-      activeTo: OCCUPYING_UNTIL,
+      activeTo: "2027-09-08T03:00:31.842771Z",
     }),
     sub({
       id: "starter_scheduled",
       planKey: "app_starter",
       status: "scheduled",
-      activeFrom: OCCUPYING_UNTIL,
+      activeFrom: "2027-09-08T03:00:31.842771Z",
     }),
     sub({ id: "superseded", planKey: "app_starter", status: "inactive" }),
   ];
@@ -442,13 +442,13 @@ test("resolveAppUserResumeTarget resumes CAPE when scheduled successor is paid",
       planKey: "paid_a",
       status: "canceled",
       activeFrom: "2026-08-11T00:35:58.500843Z",
-      activeTo: OCCUPYING_UNTIL,
+      activeTo: "2027-09-10T23:08:53.491143Z",
     }),
     sub({
       id: "sched_paid_b",
       planKey: "paid_b",
       status: "scheduled",
-      activeFrom: OCCUPYING_UNTIL,
+      activeFrom: "2027-09-10T23:08:53.491143Z",
     }),
   ];
   const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
@@ -464,7 +464,7 @@ test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable"
     planKey: "paid",
     status: "canceled",
     activeFrom: "2026-08-08T03:00:31.842771Z",
-    activeTo: OCCUPYING_UNTIL,
+    activeTo: "2027-09-08T03:00:31.842771Z",
   });
   const listed = [
     canceled,
@@ -486,7 +486,7 @@ test("resolveAppUserResumeTarget resumes occupying CAPE after paid→paid change
     planKey: "paid_b",
     status: "canceled",
     activeFrom: "2026-08-08T03:00:31.842771Z",
-    activeTo: OCCUPYING_UNTIL,
+    activeTo: "2027-09-08T03:00:31.842771Z",
   });
   const listed = [
     sub({ id: "paid_a_ended", planKey: "paid_a", status: "inactive" }),
