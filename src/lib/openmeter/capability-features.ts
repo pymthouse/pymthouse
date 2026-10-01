@@ -85,6 +85,28 @@ export function validateCapabilityFeatureKeys(input: {
   return { ok: true };
 }
 
+/**
+ * CloudEvent `data.app` value for a plan capability row.
+ *
+ * Plan rows store the discovery split `{ pipeline, modelId }`. Ingest writes the
+ * wire capability on `data.app` (e.g. `livepeer-example/hello-world`, or the bare
+ * token when pipeline === modelId). Meter filters must match that string.
+ */
+export function capabilityWireAppAttribution(input: {
+  pipeline: string;
+  modelId: string;
+}): string {
+  const pipeline = input.pipeline.trim();
+  const modelId = input.modelId.trim();
+  if (!pipeline || !modelId || modelId === "*") {
+    return modelId;
+  }
+  if (pipeline === modelId) {
+    return modelId;
+  }
+  return `${pipeline}/${modelId}`;
+}
+
 export function buildCapabilityMeterGroupByFilters(input: {
   pipeline: string;
   modelId: string;
@@ -93,9 +115,95 @@ export function buildCapabilityMeterGroupByFilters(input: {
     pipeline: { $eq: input.pipeline },
   };
   if (input.modelId !== "*") {
-    filters.app = { $eq: input.modelId };
+    filters.app = { $eq: capabilityWireAppAttribution(input) };
   }
   return filters;
+}
+
+type OpenMeterFeatureRow = {
+  id?: string;
+  key: string;
+  advancedMeterGroupByFilters?: Record<string, unknown> | null;
+};
+
+function meterFilterEq(value: unknown): string {
+  if (!value || typeof value !== "object" || !("$eq" in value)) {
+    return "";
+  }
+  const eq = (value as { $eq?: unknown }).$eq;
+  return typeof eq === "string" ? eq : "";
+}
+
+function capabilityMeterFiltersMatch(
+  existing: OpenMeterFeatureRow["advancedMeterGroupByFilters"],
+  expected: Record<string, { $eq: string }>,
+): boolean {
+  if (!existing) {
+    return false;
+  }
+  const expectedKeys = Object.keys(expected);
+  const existingKeys = Object.keys(existing);
+  if (expectedKeys.length !== existingKeys.length) {
+    return false;
+  }
+  for (const key of expectedKeys) {
+    if (expected[key]?.$eq !== meterFilterEq(existing[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function loadCapabilityFeatureDetail(
+  client: OpenMeter,
+  row: OpenMeterFeatureRow,
+): Promise<OpenMeterFeatureRow> {
+  if (!row.id) {
+    return row;
+  }
+  try {
+    const fetched = await client.features.get(row.id);
+    if (fetched?.key) {
+      return fetched as OpenMeterFeatureRow;
+    }
+  } catch {
+    /* use list row */
+  }
+  return row;
+}
+
+type StaleFeatureAction = "keep" | "replace" | "fork";
+
+/**
+ * Shared app-scoped keys are referenced by every plan for this capability.
+ * Konnect rate cards store the feature UUID, so deleting that feature orphans
+ * plans that are not part of this sync. Those keys are left in place; this
+ * plan is pointed at a plan-scoped feature instead.
+ */
+async function staleCapabilityFeatureAction(input: {
+  client: OpenMeter;
+  row: OpenMeterFeatureRow;
+  filters: Record<string, { $eq: string }>;
+  key: string;
+  sharedKey: string;
+}): Promise<StaleFeatureAction> {
+  const detail = await loadCapabilityFeatureDetail(input.client, input.row);
+  if (
+    capabilityMeterFiltersMatch(detail.advancedMeterGroupByFilters, input.filters) ||
+    detail.advancedMeterGroupByFilters == null
+  ) {
+    return "keep";
+  }
+  if (input.key === input.sharedKey) {
+    return "fork";
+  }
+  if (!input.row.id) {
+    throw new Error(
+      `OpenMeter feature ${input.key} has stale meter filters and cannot be replaced (missing id)`,
+    );
+  }
+  await input.client.features.delete(input.row.id);
+  return "replace";
 }
 
 export async function ensureCapabilityOpenMeterFeature(input: {
@@ -120,25 +228,61 @@ export async function ensureCapabilityOpenMeterFeature(input: {
     );
   }
 
+  const filters = buildCapabilityMeterGroupByFilters({
+    pipeline: input.pipeline,
+    modelId: input.modelId,
+  });
+  const sharedKey = buildAppCapabilityFeatureKey({
+    clientId: input.clientId,
+    pipeline: input.pipeline,
+    modelId: input.modelId,
+  });
+
+  let existingMatch: OpenMeterFeatureRow | undefined;
   try {
-    const existing = unwrapOpenMeterListResult<{ key: string }>(
+    const existing = unwrapOpenMeterListResult<OpenMeterFeatureRow>(
       await input.client.features.list(),
     );
-    if (existing.some((f) => f.key === key)) {
+    existingMatch = existing.find((f) => f.key === key);
+  } catch {
+    existingMatch = undefined;
+  }
+
+  if (existingMatch) {
+    const action = await staleCapabilityFeatureAction({
+      client: input.client,
+      row: existingMatch,
+      filters,
+      key,
+      sharedKey,
+    });
+    if (action === "keep") {
       return key;
     }
-  } catch {
-    /* create below */
+    if (action === "fork") {
+      const planKey = buildCapabilityFeatureKey({
+        clientId: input.clientId,
+        planId: input.planId,
+        pipeline: input.pipeline,
+        modelId: input.modelId,
+      });
+      if (planKey === key) {
+        throw new Error(
+          `OpenMeter feature ${key} is shared and has stale meter filters`,
+        );
+      }
+      return ensureCapabilityOpenMeterFeature({
+        ...input,
+        preferredKey: planKey,
+      });
+    }
   }
 
   await input.client.features.create({
     key,
     name: input.displayName,
     meterSlug: NETWORK_FEE_USD_MICROS_METER,
-    advancedMeterGroupByFilters: buildCapabilityMeterGroupByFilters({
-      pipeline: input.pipeline,
-      modelId: input.modelId,
-    }),
+    advancedMeterGroupByFilters: filters,
   });
 
   return key;
