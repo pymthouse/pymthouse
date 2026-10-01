@@ -90,9 +90,9 @@ function DeviceApprovedPanel({
 
 function DeviceDeniedPanel({
   brandName,
-}: {
+}: Readonly<{
   brandName: string;
-}) {
+}>) {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
       <div className="max-w-md w-full border border-zinc-800 bg-zinc-900/60 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-black/30">

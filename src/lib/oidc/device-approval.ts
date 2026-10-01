@@ -204,7 +204,27 @@ export async function approveDeviceCodeForAccount(
 
   if (!bound) {
     await grant.destroy();
-    return { ok: true };
+    const after = await adapter.find(deviceCode.jti);
+    const afterRecord = (after ?? {}) as Record<string, unknown>;
+    // Re-read after the conditional update. A concurrent deny stays denied.
+    // A concurrent approve that already bound the code is idempotent success.
+    if (isDeviceCodeDenied(afterRecord)) {
+      return {
+        ok: false,
+        error: "access_denied",
+        description: "The user denied the authorization request",
+        status: 400,
+      };
+    }
+    if (isDeviceCodeBound(afterRecord)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: "invalid_grant",
+      description: "Invalid, expired, or already used device code",
+      status: 400,
+    };
   }
 
   return { ok: true };

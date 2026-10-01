@@ -149,6 +149,100 @@ test(
 );
 
 test(
+  "approveDeviceCodeForAccount rejects when denial lands during bind",
+  { skip: skipDb },
+  async () => {
+    const adapter = new PostgresOidcAdapter("DeviceCode");
+    const id = `device-code-approve-bind-deny-${crypto.randomUUID()}`;
+    const userCode = `BDN${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const originalBind = PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound;
+    PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound =
+      async function bindAfterDeny(bindId, payload, expiresIn) {
+        if (bindId === id) {
+          const current = await this.find(bindId);
+          await this.upsert(
+            bindId,
+            {
+              ...(current ?? {}),
+              error: "access_denied",
+              errorDescription: "The user denied the authorization request",
+            },
+            expiresIn,
+          );
+        }
+        return originalBind.call(this, bindId, payload, expiresIn);
+      };
+    try {
+      await insertPendingDeviceCode(adapter, id, userCode);
+
+      const result = await approveDeviceCodeForAccount(
+        userCode,
+        "test-client",
+        "acct_during_bind",
+      );
+
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error, "access_denied");
+        assert.equal(result.status, 400);
+      }
+      const after = await adapter.find(id);
+      assert.equal(after?.error, "access_denied");
+      assert.equal(after?.accountId, undefined);
+      assert.equal(after?.grantId, undefined);
+    } finally {
+      PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound = originalBind;
+      await adapter.destroy(id);
+    }
+  },
+);
+
+test(
+  "approveDeviceCodeForAccount is idempotent when bind loses to an existing binding",
+  { skip: skipDb },
+  async () => {
+    const adapter = new PostgresOidcAdapter("DeviceCode");
+    const id = `device-code-approve-bind-race-${crypto.randomUUID()}`;
+    const userCode = `BWN${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const originalBind = PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound;
+    PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound =
+      async function bindAfterWinner(bindId, payload, expiresIn) {
+        if (bindId === id) {
+          const current = await this.find(bindId);
+          await this.upsert(
+            bindId,
+            {
+              ...(current ?? {}),
+              accountId: "acct_winner",
+              grantId: "grant_winner",
+            },
+            expiresIn,
+          );
+        }
+        return originalBind.call(this, bindId, payload, expiresIn);
+      };
+    try {
+      await insertPendingDeviceCode(adapter, id, userCode);
+
+      const result = await approveDeviceCodeForAccount(
+        userCode,
+        "test-client",
+        "acct_loser",
+      );
+
+      assert.deepEqual(result, { ok: true });
+      const after = await adapter.find(id);
+      assert.equal(after?.accountId, "acct_winner");
+      assert.equal(after?.grantId, "grant_winner");
+      assert.equal(after?.error, undefined);
+    } finally {
+      PostgresOidcAdapter.prototype.bindDeviceApprovalIfUnbound = originalBind;
+      await adapter.destroy(id);
+    }
+  },
+);
+
+test(
   "approveDeviceCodeForAccount is idempotent when the DeviceCode is already bound",
   { skip: skipDb },
   async () => {
