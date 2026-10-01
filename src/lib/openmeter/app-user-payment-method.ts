@@ -7,22 +7,15 @@ import {
 import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import { loadOpenMeterCustomerForAppUser } from "@/lib/openmeter/app-user-customer";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "./admin-client";
 import {
-  appUserRetailCustomerKey,
-  resolveOpenMeterBillingIdentity,
-} from "./billing-identity";
-import {
   getAppBillingConfig,
   prepareAppCustomerStripeBilling,
 } from "./billing-profiles";
-import {
-  ensureOpenMeterCustomer,
-  findOpenMeterCustomerByKey,
-} from "./customers";
 import {
   buildOwnerPaymentMethodList,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
@@ -135,36 +128,12 @@ export async function recordAppUserPaymentMethodCheckout(input: {
  * Uses `eu_{end_users.id}` for end-users — never the owner wallet and never
  * the legacy `app_…:externalUserId` compound key.
  */
-async function loadAppUserRetailOpenMeterCustomer(input: {
+function loadAppUserRetailOpenMeterCustomer(input: {
   clientId: string;
   externalUserId: string;
   ensure: boolean;
 }): Promise<{ id: string; key: string } | null> {
-  if (!input.ensure && !isHostedAdminClientAvailable()) {
-    return null;
-  }
-  const client = getHostedAdminClient();
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  const customerKey = appUserRetailCustomerKey(identity);
-  if (input.ensure) {
-    const customer = await ensureOpenMeterCustomer(client, customerKey);
-    return {
-      id: customer.id,
-      key: customer.key,
-    };
-  }
-  const customer = await findOpenMeterCustomerByKey(client, customerKey);
-  const id = customer?.id?.trim();
-  if (!customer || !id) {
-    return null;
-  }
-  return {
-    id,
-    key: customer.key?.trim() || customerKey,
-  };
+  return loadOpenMeterCustomerForAppUser({ ...input, role: "retail" });
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   BILLING_MODE_CLAIM,
   billingSubjectClaim,
   buildPayerActorWireSubject,
+  isAppUserRetailSubject,
   costOwnerUserIdClaim,
   ownerCostRailUserId,
   parsePayerActorWireSubject,
@@ -59,6 +60,58 @@ nodeTest("rejectOwnerWireRetailSubject rejects owner: subjects only", () => {
   );
   rejectOwnerWireRetailSubject("user-1");
   rejectOwnerWireRetailSubject("ext-abc");
+});
+
+nodeTest("isAppUserRetailSubject is false only when retail falls back to a platform wallet", () => {
+  const base = {
+    publicClientId: "app_demo",
+    developerAppId: "app_demo",
+    actorExternalUserId: "ext-9",
+    isOwner: false,
+  } as const;
+  // owner_rollup end user: payer is the owner, retail is their own eu_.
+  assert.equal(
+    isAppUserRetailSubject({
+      ...base,
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      sharesOwnerCostRail: true,
+      actorEndUserId: "eu_end-user-1",
+      billingMode: "owner_rollup",
+    }),
+    true,
+  );
+  // merchant end user (live and sandbox planes).
+  for (const key of ["eu_end-user-1", "sbx_eu_end-user-1"]) {
+    assert.equal(
+      isAppUserRetailSubject({
+        ...base,
+        customerKey: key,
+        payerCustomerKey: key,
+        payerKind: "end_user",
+        sharesOwnerCostRail: false,
+        actorEndUserId: key,
+        billingMode: "merchant",
+      }),
+      true,
+      key,
+    );
+  }
+  // app owner / platform-default member: retail would be the platform wallet.
+  assert.equal(
+    isAppUserRetailSubject({
+      ...base,
+      isOwner: true,
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      sharesOwnerCostRail: true,
+      actorEndUserId: "owner-uuid",
+      billingMode: "merchant",
+    }),
+    false,
+  );
 });
 
 nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", () => {

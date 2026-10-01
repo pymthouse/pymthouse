@@ -22,6 +22,7 @@ const ME_BILLING_GETS = [
   ["invoices", () => import("./invoices/route")],
   ["payment-methods", () => import("./payment-methods/route")],
   ["subscription", () => import("./subscription/route")],
+  ["wallet/transactions", () => import("./wallet/transactions/route")],
 ] as const;
 
 test("me billing routes reject subject overrides and require end-user auth", async () => {

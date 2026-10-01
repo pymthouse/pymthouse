@@ -755,6 +755,16 @@ export async function isAppOwnerExternalUser(input: {
  * Thrown when an app retail subscription mutation targets the shared owner
  * wallet (ADR: an owner is never subscribed to a plan on an app they own).
  */
+/**
+ * True when the app user's retail billing (cards, invoices, `/me/billing`) is
+ * its own end-user customer (`eu_…` / `sbx_eu_…`). False when it would fall
+ * back to a platform wallet — the app owner, or a platform-default member —
+ * which is managed by the owner session APIs, never by `/me/billing`.
+ */
+export function isAppUserRetailSubject(identity: ResolvedBillingIdentity): boolean {
+  return isEndUserCustomerKey(appUserRetailCustomerKey(identity));
+}
+
 export class AppUserOwnerWalletMutationError extends Error {
   readonly code = "owner_wallet_not_app_user" as const;
 

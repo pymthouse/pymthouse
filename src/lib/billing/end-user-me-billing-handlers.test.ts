@@ -7,11 +7,14 @@ import { apiKeys } from "@/db/schema";
 import {
   handleEndUserMeAllowancesGet,
   handleEndUserMeBillingStateGet,
+  handleEndUserMeInvoiceHostedUrlGet,
   handleEndUserMeInvoicesGet,
   handleEndUserMePaymentMethodsGet,
   handleEndUserMeSubscriptionGet,
   handleEndUserMeWalletGet,
+  handleEndUserMeWalletTransactionsGet,
   MERCHANT_BILLING_REQUIRED_CODE,
+  OWNER_WALLET_NOT_APP_USER_CODE,
 } from "@/lib/billing/end-user-me-billing-handlers";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { hashToken } from "@/lib/token-hash";
@@ -22,10 +25,12 @@ import {
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 
-async function seedEndUserBearer(app: {
-  clientId: string;
-}) {
-  const externalUserId = `user-${randomUUID()}`;
+async function seedEndUserBearer(
+  app: {
+    clientId: string;
+  },
+  externalUserId = `user-${randomUUID()}`,
+) {
   const appUser = await createAppUser({
     clientId: app.clientId,
     externalUserId,
@@ -48,7 +53,7 @@ function meRequest(
   bearer?: string,
 ) {
   return new NextRequest(
-    `http://localhost/api/v1/apps/${clientId}/me/billing/${path}`,
+    `http://localhost/api/v2/apps/${clientId}/me/billing/${path}`,
     bearer
       ? { headers: { Authorization: `Bearer ${bearer}` } }
       : undefined,
@@ -148,3 +153,59 @@ test("me billing merchant wallet and allowances after OpenMeter-unset", async (t
   const subBody = (await subscription.json()) as { subscription: unknown };
   assert.equal(subBody.subscription, null);
 });
+
+test("me billing rejects an owner credential that bills the owner wallet", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+  await upsertAppBillingConfig(app.clientId, { billingMode: "merchant" });
+  // The app owner's own key: identity resolves to the platform owner wallet.
+  const { bare } = await seedEndUserBearer(app, app.userId);
+
+  for (const [label, call] of [
+    ["wallet", () => handleEndUserMeWalletGet(meRequest(app.clientId, "wallet", bare), app.clientId)],
+    ["payment-methods", () =>
+      handleEndUserMePaymentMethodsGet(
+        meRequest(app.clientId, "payment-methods", bare),
+        app.clientId,
+      )],
+    ["invoices", () =>
+      handleEndUserMeInvoicesGet(meRequest(app.clientId, "invoices", bare), app.clientId)],
+  ] as const) {
+    const res = await call();
+    assert.equal(res.status, 403, label);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, OWNER_WALLET_NOT_APP_USER_CODE, label);
+  }
+});
+
+test("me billing wallet transactions and hosted-url are scoped to the Bearer subject", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+  const { bare } = await seedEndUserBearer(app);
+
+  // owner_rollup: the ledger is a merchant money surface.
+  const rollup = await handleEndUserMeWalletTransactionsGet(
+    meRequest(app.clientId, "wallet/transactions", bare),
+    app.clientId,
+  );
+  assert.equal(rollup.status, 403);
+  assert.equal(
+    ((await rollup.json()) as { code?: string }).code,
+    MERCHANT_BILLING_REQUIRED_CODE,
+  );
+
+  const blank = await handleEndUserMeInvoiceHostedUrlGet(
+    meRequest(app.clientId, "invoices/%20/hosted-url", bare),
+    app.clientId,
+    "%20",
+  );
+  assert.equal(blank.status, 400);
+
+  const unauthenticated = await handleEndUserMeInvoiceHostedUrlGet(
+    meRequest(app.clientId, "invoices/in_123/hosted-url"),
+    app.clientId,
+    "in_123",
+  );
+  assert.equal(unauthenticated.status, 401);
+});
+

@@ -208,13 +208,18 @@ defineUserUsageRoute(
 const meBillingPath = (suffix: string) =>
   `/api/v2/apps/{clientId}/me/billing${suffix}`;
 
-function defineMeBillingGet(suffix: string, summary: string, description: string) {
+function defineMeBillingGet(
+  suffix: string,
+  summary: string,
+  description: string,
+  params: z.ZodObject<z.ZodRawShape> = z.object({ clientId }),
+) {
   defineRouteMetadata("get", meBillingPath(suffix), {
     tags: [OPENAPI_TAGS.endUserBilling],
     summary,
     description,
     security: endUserSecurity,
-    request: { params: z.object({ clientId }) },
+    request: { params },
     responses: {
       200: jsonSuccess,
       ...builderErrorResponses,
@@ -265,4 +270,18 @@ defineMeBillingGet(
   "/subscription",
   "End-user subscription",
   "Live OpenMeter subscription for the Bearer subject.",
+);
+defineMeBillingGet(
+  "/wallet/transactions",
+  "End-user wallet transactions",
+  "Merchant prepaid ledger for the Bearer subject: credit adds, usage drawdowns, and Connect invoices. `degraded: true` when an upstream read failed.",
+);
+defineMeBillingGet(
+  "/invoices/{invoiceId}/hosted-url",
+  "End-user invoice hosted URL",
+  "Stripe hosted invoice URL / PDF for one of the Bearer subject's invoices. Another user's invoice id is 404.",
+  z.object({
+    clientId,
+    invoiceId: z.string().min(1).openapi({ param: { name: "invoiceId", in: "path" } }),
+  }),
 );

@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireEndUserRouteAuth } from "@/lib/auth/end-user";
+import { type EndUserAuth, requireEndUserRouteAuth } from "@/lib/auth/end-user";
+import { appUserInvoiceLinksResponse } from "@/lib/billing/app-user-invoice-links";
 import { listAppUserBillingInvoices } from "@/lib/billing/app-user-invoices-read";
+import { loadAppUserBillingLedger } from "@/lib/billing/app-user-ledger";
 import { loadAppUserSubscriptionView } from "@/lib/billing/app-user-subscription-view";
 import { loadBillingState } from "@/lib/billing/billing-state-read";
 import { loadMerchantAppUserWallet } from "@/lib/billing/merchant-app-user-wallet";
-import { clampPageParam } from "@/lib/billing/wallet-http";
+import {
+  clampPageParam,
+  walletUpstreamErrorResponse,
+} from "@/lib/billing/wallet-http";
 import {
   listAppUserPaymentMethods,
 } from "@/lib/openmeter/app-user-payment-method";
+import {
+  isAppUserRetailSubject,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { readAppUserCreditBalance } from "@/lib/openmeter/entitlements";
 
@@ -19,31 +28,74 @@ const MERCHANT_BILLING_REQUIRED_BODY = {
   code: MERCHANT_BILLING_REQUIRED_CODE,
 };
 
-async function requireMeBillingAuth(
+export const OWNER_WALLET_NOT_APP_USER_CODE = "owner_wallet_not_app_user";
+
+export type EndUserBillingGate = { auth: EndUserAuth } | { response: Response };
+
+/**
+ * Gate for `/apps/{clientId}/me/billing/*`.
+ *
+ * - End-user Bearer bound to path `{clientId}`; a query (or `body`) subject is
+ *   400 and M2M Basic is 401 — the subject is the credential only.
+ * - `merchantOnly` money surfaces (wallet, credits, state, plan) need live
+ *   `billing_mode=merchant`; the JWT `billing_mode` claim is only a hint.
+ * - The subject's retail billing must be its own end-user customer: an owner
+ *   or platform-wallet credential gets 403 `owner_wallet_not_app_user`.
+ */
+export async function requireEndUserBillingAuth(
   request: NextRequest,
   clientId: string,
   resourceLabel: string,
-) {
+  options: { merchantOnly?: boolean; body?: Record<string, unknown> | null } = {},
+): Promise<EndUserBillingGate> {
   const publicClientId = clientId.trim();
   if (!publicClientId) {
     return { response: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
-  return requireEndUserRouteAuth(request, publicClientId, resourceLabel);
-}
-
-async function requireMeRetailBillingAuth(
-  request: NextRequest,
-  clientId: string,
-  resourceLabel: string,
-) {
-  const gate = await requireMeBillingAuth(request, clientId, resourceLabel);
+  const gate = await requireEndUserRouteAuth(
+    request,
+    publicClientId,
+    resourceLabel,
+    options.body,
+  );
   if ("response" in gate) {
     return gate;
   }
-  const config = await getAppBillingConfig(gate.auth.developerAppId);
-  if (config?.billingMode !== "merchant") {
+
+  if (options.merchantOnly) {
+    const config = await getAppBillingConfig(gate.auth.developerAppId);
+    if (config?.billingMode !== "merchant") {
+      return {
+        response: NextResponse.json(MERCHANT_BILLING_REQUIRED_BODY, { status: 403 }),
+      };
+    }
+  }
+
+  let identity: Awaited<ReturnType<typeof resolveOpenMeterBillingIdentity>>;
+  try {
+    identity = await resolveOpenMeterBillingIdentity({
+      clientId: gate.auth.publicClientId,
+      externalUserId: gate.auth.externalUserId,
+    });
+  } catch (err) {
+    console.warn(
+      "me-billing: identity resolve failed",
+      err instanceof Error ? err.message : String(err),
+    );
     return {
-      response: NextResponse.json(MERCHANT_BILLING_REQUIRED_BODY, { status: 403 }),
+      response: NextResponse.json({ error: "Billing unavailable" }, { status: 503 }),
+    };
+  }
+  if (!isAppUserRetailSubject(identity)) {
+    return {
+      response: NextResponse.json(
+        {
+          error:
+            "This credential bills a platform wallet; use the owner billing APIs, not /me/billing",
+          code: OWNER_WALLET_NOT_APP_USER_CODE,
+        },
+        { status: 403 },
+      ),
     };
   }
   return gate;
@@ -54,7 +106,9 @@ export async function handleEndUserMeAllowancesGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeRetailBillingAuth(request, clientId, "allowances");
+  const gate = await requireEndUserBillingAuth(request, clientId, "allowances", {
+    merchantOnly: true,
+  });
   if ("response" in gate) return gate.response;
 
   const currency = request.nextUrl.searchParams.get("filter[currency][eq]")?.trim();
@@ -93,7 +147,7 @@ export async function handleEndUserMePaymentMethodsGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeBillingAuth(request, clientId, "payment-methods");
+  const gate = await requireEndUserBillingAuth(request, clientId, "payment-methods");
   if ("response" in gate) return gate.response;
 
   let paymentMethods: Awaited<ReturnType<typeof listAppUserPaymentMethods>> = [];
@@ -113,7 +167,7 @@ export async function handleEndUserMeInvoicesGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeBillingAuth(request, clientId, "invoices");
+  const gate = await requireEndUserBillingAuth(request, clientId, "invoices");
   if ("response" in gate) return gate.response;
 
   const url = new URL(request.url);
@@ -138,7 +192,9 @@ export async function handleEndUserMeBillingStateGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeRetailBillingAuth(request, clientId, "billing state");
+  const gate = await requireEndUserBillingAuth(request, clientId, "billing state", {
+    merchantOnly: true,
+  });
   if ("response" in gate) return gate.response;
 
   const state = await loadBillingState({
@@ -158,7 +214,9 @@ export async function handleEndUserMeWalletGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeRetailBillingAuth(request, clientId, "wallet");
+  const gate = await requireEndUserBillingAuth(request, clientId, "wallet", {
+    merchantOnly: true,
+  });
   if ("response" in gate) return gate.response;
 
   return loadMerchantAppUserWallet({
@@ -173,11 +231,51 @@ export async function handleEndUserMeSubscriptionGet(
   request: NextRequest,
   clientId: string,
 ): Promise<Response> {
-  const gate = await requireMeRetailBillingAuth(request, clientId, "subscription");
+  const gate = await requireEndUserBillingAuth(request, clientId, "subscription", {
+    merchantOnly: true,
+  });
   if ("response" in gate) return gate.response;
 
   return loadAppUserSubscriptionView({
     appId: gate.auth.developerAppId,
     externalUserId: gate.auth.externalUserId,
+  });
+}
+
+/** GET /apps/{clientId}/me/billing/wallet/transactions — merchant prepaid ledger. */
+export async function handleEndUserMeWalletTransactionsGet(
+  request: NextRequest,
+  clientId: string,
+): Promise<Response> {
+  const gate = await requireEndUserBillingAuth(request, clientId, "wallet transactions", {
+    merchantOnly: true,
+  });
+  if ("response" in gate) return gate.response;
+
+  try {
+    const result = await loadAppUserBillingLedger({
+      appId: gate.auth.developerAppId,
+      publicClientId: gate.auth.publicClientId,
+      externalUserId: gate.auth.externalUserId,
+    });
+    return NextResponse.json({ items: result.items, degraded: result.degraded });
+  } catch (err) {
+    return walletUpstreamErrorResponse(err, "transaction ledger");
+  }
+}
+
+/** GET /apps/{clientId}/me/billing/invoices/{invoiceId}/hosted-url */
+export async function handleEndUserMeInvoiceHostedUrlGet(
+  request: NextRequest,
+  clientId: string,
+  rawInvoiceId: string,
+): Promise<Response> {
+  const gate = await requireEndUserBillingAuth(request, clientId, "invoices");
+  if ("response" in gate) return gate.response;
+
+  return appUserInvoiceLinksResponse({
+    appId: gate.auth.developerAppId,
+    externalUserId: gate.auth.externalUserId,
+    rawInvoiceId,
   });
 }

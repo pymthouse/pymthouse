@@ -120,8 +120,10 @@ export const V2_ALIAS_SUBJECT_PARAM_ALLOWED: ReadonlySet<string> = new Set([
 export const V2_NATIVE_END_USER_OPERATION_KEYS: ReadonlySet<string> = new Set([
   "GET /api/v2/apps/{clientId}/me/billing/allowances",
   "GET /api/v2/apps/{clientId}/me/billing/wallet",
+  "GET /api/v2/apps/{clientId}/me/billing/wallet/transactions",
   "GET /api/v2/apps/{clientId}/me/billing/state",
   "GET /api/v2/apps/{clientId}/me/billing/invoices",
+  "GET /api/v2/apps/{clientId}/me/billing/invoices/{invoiceId}/hosted-url",
   "GET /api/v2/apps/{clientId}/me/billing/payment-methods",
   "GET /api/v2/apps/{clientId}/me/billing/subscription",
 ]);
