@@ -236,10 +236,18 @@ export async function handleEndUserMeSubscriptionGet(
   });
   if ("response" in gate) return gate.response;
 
-  return loadAppUserSubscriptionView({
-    appId: gate.auth.developerAppId,
-    externalUserId: gate.auth.externalUserId,
-  });
+  try {
+    return await loadAppUserSubscriptionView({
+      appId: gate.auth.developerAppId,
+      externalUserId: gate.auth.externalUserId,
+    });
+  } catch (err) {
+    console.warn(
+      "me-billing: subscription read failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
+  }
 }
 
 /** GET /apps/{clientId}/me/billing/wallet/transactions — merchant prepaid ledger. */
