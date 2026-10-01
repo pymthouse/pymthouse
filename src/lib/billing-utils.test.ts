@@ -10,6 +10,8 @@ import {
   formatBillingCycleMonthLabel,
   invoiceOverlapsCycle,
   isValidBoundedDateRange,
+  billingCycleHref,
+  listBillingCycleKeysSince,
   listRecentBillingCycleKeys,
   MAX_DATE_RANGE_DAYS,
   parseUsageRequestDateRange,
@@ -70,6 +72,26 @@ test("formatBillingCycleMonthLabel uses a long UTC month name", () => {
   assert.equal(formatBillingCycleMonthLabel("bad"), "bad");
 });
 
+test("listBillingCycleKeysSince starts at the first month with usage", () => {
+  const keys = listBillingCycleKeysSince("2026-08", NOW, 4);
+  assert.deepEqual(keys, ["2026-09", "2026-08"]);
+});
+
+test("listBillingCycleKeysSince keeps the full lookback when earliest is unknown", () => {
+  assert.deepEqual(
+    listBillingCycleKeysSince(null, NOW, 2),
+    listRecentBillingCycleKeys(NOW, 2),
+  );
+});
+
+test("billingCycleHref omits cycle on the current month", () => {
+  assert.equal(billingCycleHref("/billing", "2026-09-01T00:00:00.000Z", NOW), "/billing");
+  assert.equal(
+    billingCycleHref("/usage", "2026-07-01T00:00:00.000Z", NOW),
+    "/usage?cycle=2026-07",
+  );
+});
+
 test("billingCycleSelectOptions keeps a bookmarked month that fell off the lookback", () => {
   const options = billingCycleSelectOptions({
     selectedKey: "2025-01",
@@ -82,6 +104,19 @@ test("billingCycleSelectOptions keeps a bookmarked month that fell off the lookb
   );
   assert.equal(options[0]?.isCurrent, true);
   assert.equal(options[2]?.isCurrent, false);
+});
+
+test("billingCycleSelectOptions drops months before usage began", () => {
+  const options = billingCycleSelectOptions({
+    selectedKey: "2026-09",
+    now: NOW,
+    count: 4,
+    earliestKey: "2026-08",
+  });
+  assert.deepEqual(
+    options.map((option) => option.key),
+    ["2026-09", "2026-08"],
+  );
 });
 
 test("invoiceOverlapsCycle uses the billing period when present", () => {

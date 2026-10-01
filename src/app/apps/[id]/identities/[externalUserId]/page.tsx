@@ -11,6 +11,7 @@ import IdentityRequestLog from "@/components/identities/IdentityRequestLog";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillableDuration } from "@/lib/billing-format";
 import { dateKeysInclusiveUtc, resolveBillingCycle } from "@/lib/billing-utils";
+import { queryEarliestUsageCycleKey } from "@/lib/usage/usage-cycle-keys";
 import {
   formatUsageJobTypeLabel,
   type BillingChartSeries,
@@ -80,6 +81,52 @@ function SummaryTile({
   );
 }
 
+async function authorizeIdentityApp(id: string) {
+  try {
+    return await getAuthorizedProviderApp(id);
+  } catch (err) {
+    console.warn(
+      "app-identity-detail: auth resolution failed",
+      id,
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+async function loadIdentityMeterRows(input: {
+  openMeterConfigured: boolean;
+  clientId: string;
+  externalUserId: string;
+  cycle: { start: string; end: string };
+}) {
+  if (!input.openMeterConfigured) {
+    return { identities: [], dailyRows: [], earliestUsageCycleKey: null as string | null };
+  }
+  const [identities, dailyRows, earliestUsageCycleKey] = await Promise.all([
+    listAppIdentities({
+      clientId: input.clientId,
+      startDate: input.cycle.start,
+      endDate: input.cycle.end,
+    }).catch((err) => {
+      console.warn(
+        "app-identity-detail: listAppIdentities failed",
+        input.clientId,
+        err instanceof Error ? err.message : String(err),
+      );
+      return [];
+    }),
+    queryOpenMeterUserDailyByPipeline({
+      clientId: input.clientId,
+      startDate: input.cycle.start,
+      endDate: input.cycle.end,
+      externalUserId: input.externalUserId,
+    }).catch(() => []),
+    queryEarliestUsageCycleKey(input.clientId),
+  ]);
+  return { identities, dailyRows, earliestUsageCycleKey };
+}
+
 export default async function AppIdentityDetailPage({
   params,
   searchParams,
@@ -95,17 +142,7 @@ export default async function AppIdentityDetailPage({
     notFound();
   }
 
-  let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
-  try {
-    providerAuth = await getAuthorizedProviderApp(id);
-  } catch (err) {
-    console.warn(
-      "app-identity-detail: auth resolution failed",
-      id,
-      err instanceof Error ? err.message : String(err),
-    );
-    providerAuth = null;
-  }
+  const providerAuth = await authorizeIdentityApp(id);
   if (!providerAuth) {
     notFound();
   }
@@ -119,30 +156,12 @@ export default async function AppIdentityDetailPage({
   const billingMode =
     billingConfig?.billingMode === "merchant" ? "merchant" : "owner_rollup";
 
-  const [identities, dailyRows] = await Promise.all([
-    openMeterConfigured
-      ? listAppIdentities({
-          clientId: app.id,
-          startDate: cycle.start,
-          endDate: cycle.end,
-        }).catch((err) => {
-          console.warn(
-            "app-identity-detail: listAppIdentities failed",
-            app.id,
-            err instanceof Error ? err.message : String(err),
-          );
-          return [];
-        })
-      : Promise.resolve([]),
-    openMeterConfigured
-      ? queryOpenMeterUserDailyByPipeline({
-          clientId: app.id,
-          startDate: cycle.start,
-          endDate: cycle.end,
-          externalUserId,
-        }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
+  const { identities, dailyRows, earliestUsageCycleKey } = await loadIdentityMeterRows({
+    openMeterConfigured,
+    clientId: app.id,
+    externalUserId,
+    cycle,
+  });
 
   const identity = identities.find((row) => row.externalUserId === externalUserId);
   const todayKeyUtc = new Date().toISOString().slice(0, 10);
@@ -179,7 +198,7 @@ export default async function AppIdentityDetailPage({
             Usage for this identity in the selected billing cycle.
           </p>
         </div>
-        <BillingCyclePicker />
+        <BillingCyclePicker earliestKey={earliestUsageCycleKey} />
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:mb-8 sm:grid-cols-4">

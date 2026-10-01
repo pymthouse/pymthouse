@@ -131,8 +131,8 @@ export default function IdentitiesTable({
 }>) {
   const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_SORT);
   const sorted = useMemo(() => sortIdentities(identities, sortKey), [identities, sortKey]);
-  const cycleQuery =
-    cycleKey && cycleKey.trim() ? `?cycle=${encodeURIComponent(cycleKey)}` : "";
+  const trimmedCycle = cycleKey?.trim();
+  const cycleQuery = trimmedCycle ? `?cycle=${encodeURIComponent(trimmedCycle)}` : "";
 
   if (identities.length === 0) {
     return (

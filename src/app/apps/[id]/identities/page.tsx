@@ -7,6 +7,7 @@ import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
 import BillingCyclePicker from "@/components/billing/BillingCyclePicker";
 import IdentitiesTable from "@/components/identities/IdentitiesTable";
 import { BILLING_CYCLE_PARAM, resolveBillingCycle } from "@/lib/billing-utils";
+import { queryEarliestUsageCycleKey } from "@/lib/usage/usage-cycle-keys";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { listAppIdentities } from "@/lib/usage/identity-rollup";
@@ -40,20 +41,23 @@ export default async function AppIdentitiesPage({
   const app = providerAuth.app;
   const cycle = { start: selectedCycle.start, end: selectedCycle.end };
   const openMeterConfigured = requireOpenMeterForUsageReads();
-  const identities = openMeterConfigured
-    ? await listAppIdentities({
-        clientId: app.id,
-        startDate: cycle.start,
-        endDate: cycle.end,
-      }).catch((err) => {
-        console.warn(
-          "app-identities: listAppIdentities failed",
-          app.id,
-          err instanceof Error ? err.message : String(err),
-        );
-        return [];
-      })
-    : [];
+  const [identities, earliestUsageCycleKey] = openMeterConfigured
+    ? await Promise.all([
+        listAppIdentities({
+          clientId: app.id,
+          startDate: cycle.start,
+          endDate: cycle.end,
+        }).catch((err) => {
+          console.warn(
+            "app-identities: listAppIdentities failed",
+            app.id,
+            err instanceof Error ? err.message : String(err),
+          );
+          return [];
+        }),
+        queryEarliestUsageCycleKey(app.id),
+      ])
+    : [[], null];
 
   return (
     <>
@@ -69,7 +73,7 @@ export default async function AppIdentitiesPage({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
-          <BillingCyclePicker />
+          <BillingCyclePicker earliestKey={earliestUsageCycleKey} />
           <Link
             href={`/apps/${id}/usage${
               selectedCycle.isCurrent ? "" : `?${BILLING_CYCLE_PARAM}=${selectedCycle.key}`

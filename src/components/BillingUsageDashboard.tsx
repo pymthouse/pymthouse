@@ -52,6 +52,8 @@ type BillingUsageDashboardClientPayload = {
   activeSubscriptions?: OwnerBillingSubscriptionRow[];
   creditBalanceUsdMicros?: string | null;
   defaultPaymentMethod?: { brand?: string | null; last4?: string | null } | null;
+  /** First UTC month with usage for a single-app view. Null keeps the lookback. */
+  earliestUsageCycleKey?: string | null;
 };
 
 type UsageTab = "mine" | "all";
@@ -596,7 +598,7 @@ function BillingUsageBody({
               </TabLink>
             </div>
           ) : null}
-          <BillingCyclePicker />
+          <BillingCyclePicker earliestKey={data.earliestUsageCycleKey} />
         </div>
       </div>
 
@@ -639,6 +641,153 @@ function BillingUsageBody({
   );
 }
 
+function cycleTabHref(path: string, cycleKey: string): string {
+  return resolveBillingCycle(cycleKey).isCurrent
+    ? path
+    : `${path}?${BILLING_CYCLE_PARAM}=${cycleKey}`;
+}
+
+function redirectAwayFromAllUsage(input: {
+  wantsAllUsage: boolean;
+  authStatus: string;
+  isAdmin: boolean;
+  replace: (href: string) => void;
+}): void {
+  if (!input.wantsAllUsage) return;
+  if (input.authStatus === "loading") return;
+  if (input.authStatus === "unauthenticated" || !input.isAdmin) {
+    input.replace("/usage");
+  }
+}
+
+function dashboardRequestUrl(input: {
+  filterAppId?: string | null;
+  showTabs: boolean;
+  activeTab: UsageTab;
+  cycleKey: string;
+}): string {
+  const params = new URLSearchParams();
+  if (input.filterAppId) {
+    params.set("appId", input.filterAppId);
+  } else if (input.showTabs && input.activeTab === "all") {
+    params.set("scope", "all");
+  } else {
+    params.set("scope", "own");
+  }
+  const selectedCycle = resolveBillingCycle(input.cycleKey);
+  if (!selectedCycle.isCurrent) {
+    params.set(BILLING_CYCLE_PARAM, selectedCycle.key);
+  }
+  return `/api/v1/billing/dashboard?${params.toString()}`;
+}
+
+async function readUsageDashboardResponse(url: string): Promise<LoadState> {
+  try {
+    const response = await fetch(url);
+    if (response.status === 401) {
+      return {
+        status: "error",
+        message: "Please sign in to view billing and usage.",
+        code: 401,
+      };
+    }
+    if (response.status === 403 || response.status === 404) {
+      return { status: "error", message: "Usage not found.", code: response.status };
+    }
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: "Usage unavailable right now.",
+        code: response.status,
+      };
+    }
+    const data = (await response.json()) as BillingUsageDashboardClientPayload;
+    return { status: "ready", data };
+  } catch (err) {
+    const error = err as Error & { code?: number };
+    return {
+      status: "error",
+      message: error.message || "Usage unavailable",
+      code: error.code,
+    };
+  }
+}
+
+function UsageDashboardStatus({
+  state,
+  fundPanel,
+  showTabs,
+  activeTab,
+  cycleKey,
+  earliestKey,
+  filterAppId,
+  onRetry,
+}: Readonly<{
+  state: LoadState;
+  fundPanel?: ReactNode;
+  showTabs: boolean;
+  activeTab: UsageTab;
+  cycleKey: string;
+  earliestKey: string | null;
+  filterAppId?: string | null;
+  onRetry: () => void;
+}>) {
+  if (state.status === "loading") {
+    return (
+      <>
+        {fundPanel}
+        <div className="mb-4 flex flex-col items-end gap-3">
+          {showTabs ? (
+            <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
+              <TabLink active={activeTab === "mine"} href={cycleTabHref("/usage", cycleKey)}>
+                My Usage
+              </TabLink>
+              <TabLink
+                active={activeTab === "all"}
+                href={cycleTabHref("/usage/all", cycleKey)}
+              >
+                All Usage
+              </TabLink>
+            </div>
+          ) : null}
+          <BillingCyclePicker earliestKey={earliestKey} />
+        </div>
+        <UsageLoadingShell filterAppId={filterAppId} showingAll={activeTab === "all"} />
+      </>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <>
+        {fundPanel}
+        <div className="text-center py-12">
+          <h2 className="text-lg font-medium text-zinc-300">
+            {state.code === 401 ? "Billing unavailable" : "Usage unavailable"}
+          </h2>
+          <p className="text-zinc-500 mt-2">{state.message}</p>
+          {state.code === 401 ? null : (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 text-sm text-emerald-400 hover:text-emerald-300"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {fundPanel}
+      <BillingUsageBody data={state.data} showTabs={showTabs} activeTab={activeTab} />
+    </>
+  );
+}
+
 /**
  * Usage page shell that paints immediately, then loads OpenMeter-backed data.
  * Admins get My Usage / All Usage tabs; developers always see own apps.
@@ -670,64 +819,30 @@ export default function BillingUsageDashboard({
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);
+  const [earliestKey, setEarliestKey] = useState<string | null>(null);
 
   // /usage/all is admin-only; bounce everyone else to /usage.
   useEffect(() => {
-    if (!wantsAllUsage) return;
-    if (authStatus === "loading") return;
-    if (authStatus === "unauthenticated" || !isAdmin) {
-      router.replace("/usage");
-    }
+    redirectAwayFromAllUsage({
+      wantsAllUsage,
+      authStatus,
+      isAdmin,
+      replace: (href) => router.replace(href),
+    });
   }, [wantsAllUsage, authStatus, isAdmin, router]);
 
   useEffect(() => {
     let cancelled = false;
+    const url = dashboardRequestUrl({ filterAppId, showTabs, activeTab, cycleKey });
 
     void (async () => {
       setState({ status: "loading" });
-
-      const params = new URLSearchParams();
-      if (filterAppId) {
-        params.set("appId", filterAppId);
-      } else if (showTabs && activeTab === "all") {
-        params.set("scope", "all");
-      } else {
-        params.set("scope", "own");
+      const next = await readUsageDashboardResponse(url);
+      if (cancelled) return;
+      if (next.status === "ready") {
+        setEarliestKey(next.data.earliestUsageCycleKey ?? null);
       }
-      const selectedCycle = resolveBillingCycle(cycleKey);
-      if (!selectedCycle.isCurrent) {
-        params.set(BILLING_CYCLE_PARAM, selectedCycle.key);
-      }
-      const url = `/api/v1/billing/dashboard?${params.toString()}`;
-
-      try {
-        const r = await fetch(url);
-        if (r.status === 401) {
-          throw Object.assign(
-            new Error("Please sign in to view billing and usage."),
-            { code: 401 },
-          );
-        }
-        if (r.status === 403 || r.status === 404) {
-          throw Object.assign(new Error("Usage not found."), { code: r.status });
-        }
-        if (!r.ok) {
-          throw Object.assign(new Error("Usage unavailable right now."), {
-            code: r.status,
-          });
-        }
-        const data = (await r.json()) as BillingUsageDashboardClientPayload;
-        if (!cancelled) setState({ status: "ready", data });
-      } catch (err) {
-        if (!cancelled) {
-          const e = err as Error & { code?: number };
-          setState({
-            status: "error",
-            message: e.message || "Usage unavailable",
-            code: e.code,
-          });
-        }
-      }
+      setState(next);
     })();
 
     return () => {
@@ -736,64 +851,16 @@ export default function BillingUsageDashboard({
   }, [filterAppId, activeTab, retryToken, showTabs, cycleKey]);
 
   const body = (
-    <>
-      {fundPanel}
-      {state.status === "loading" ? (
-        <>
-          <div className="mb-4 flex flex-col items-end gap-3">
-            {showTabs ? (
-              <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
-                <TabLink active={activeTab === "mine"} href={`/usage${
-                  resolveBillingCycle(cycleKey).isCurrent
-                    ? ""
-                    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`
-                }`}>
-                  My Usage
-                </TabLink>
-                <TabLink active={activeTab === "all"} href={`/usage/all${
-                  resolveBillingCycle(cycleKey).isCurrent
-                    ? ""
-                    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`
-                }`}>
-                  All Usage
-                </TabLink>
-              </div>
-            ) : null}
-            <BillingCyclePicker />
-          </div>
-          <UsageLoadingShell
-            filterAppId={filterAppId}
-            showingAll={activeTab === "all"}
-          />
-        </>
-      ) : null}
-
-      {state.status === "error" ? (
-        <div className="text-center py-12">
-          <h2 className="text-lg font-medium text-zinc-300">
-            {state.code === 401 ? "Billing unavailable" : "Usage unavailable"}
-          </h2>
-          <p className="text-zinc-500 mt-2">{state.message}</p>
-          {state.code !== 401 ? (
-            <button
-              type="button"
-              onClick={() => setRetryToken((n) => n + 1)}
-              className="mt-4 text-sm text-emerald-400 hover:text-emerald-300"
-            >
-              Retry
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {state.status === "ready" ? (
-        <BillingUsageBody
-          data={state.data}
-          showTabs={showTabs}
-          activeTab={activeTab}
-        />
-      ) : null}
-    </>
+    <UsageDashboardStatus
+      state={state}
+      fundPanel={fundPanel}
+      showTabs={showTabs}
+      activeTab={activeTab}
+      cycleKey={cycleKey}
+      earliestKey={earliestKey}
+      filterAppId={filterAppId}
+      onRetry={() => setRetryToken((n) => n + 1)}
+    />
   );
 
   if (!wrapLayout) {

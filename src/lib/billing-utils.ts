@@ -96,6 +96,36 @@ export function listRecentBillingCycleKeys(
   return keys;
 }
 
+/**
+ * Lookback months from `earliestKey` through the current month.
+ * Missing or malformed keys keep the full lookback.
+ */
+export function listBillingCycleKeysSince(
+  earliestKey: string | null | undefined,
+  now: Date = new Date(),
+  count: number = BILLING_CYCLE_LOOKBACK_MONTHS,
+): string[] {
+  const recent = listRecentBillingCycleKeys(now, count);
+  const earliest = earliestKey?.trim() ?? "";
+  if (!calendarMonthBoundsForYearMonth(earliest)) {
+    return recent;
+  }
+  const filtered = recent.filter((key) => key >= earliest);
+  return filtered.length > 0 ? filtered : recent;
+}
+
+/** Path plus `?cycle=` when `cycleStart` is not the current UTC month. */
+export function billingCycleHref(
+  path: string,
+  cycleStart: string,
+  now: Date = new Date(),
+): string {
+  const selected = resolveBillingCycle(cycleStart.slice(0, 7), now);
+  if (selected.isCurrent) return path;
+  const joiner = path.includes("?") ? "&" : "?";
+  return `${path}${joiner}${BILLING_CYCLE_PARAM}=${selected.key}`;
+}
+
 /** `2026-07` → `July 2026`. */
 export function formatBillingCycleMonthLabel(yearMonth: string): string {
   const bounds = calendarMonthBoundsForYearMonth(yearMonth);
@@ -118,10 +148,12 @@ export function billingCycleSelectOptions(input: {
   selectedKey: string;
   now?: Date;
   count?: number;
+  /** First UTC month with usage. Earlier lookback months are omitted. */
+  earliestKey?: string | null;
 }): BillingCycleOption[] {
   const now = input.now ?? new Date();
   const currentKey = utcYearMonthKey(now);
-  const keys = listRecentBillingCycleKeys(now, input.count);
+  const keys = listBillingCycleKeysSince(input.earliestKey, now, input.count);
   const selected = input.selectedKey.trim();
   if (selected && !keys.includes(selected) && calendarMonthBoundsForYearMonth(selected)) {
     keys.push(selected);

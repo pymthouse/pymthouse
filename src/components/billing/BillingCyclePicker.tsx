@@ -21,13 +21,17 @@ function BillingCyclePickerFallback({ className }: Readonly<{ className?: string
 
 function BillingCyclePickerInner({
   className,
-}: Readonly<{ className?: string }>) {
+  earliestKey,
+}: Readonly<{ className?: string; earliestKey?: string | null }>) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectId = useId();
   const selected = resolveBillingCycle(searchParams.get(BILLING_CYCLE_PARAM));
-  const options = billingCycleSelectOptions({ selectedKey: selected.key });
+  const options = billingCycleSelectOptions({
+    selectedKey: selected.key,
+    earliestKey,
+  });
   const selectedIndex = options.findIndex((option) => option.key === selected.key);
   const newer = selectedIndex > 0 ? options[selectedIndex - 1] : null;
   const older =
@@ -100,10 +104,15 @@ function BillingCyclePickerInner({
  */
 export default function BillingCyclePicker({
   className,
-}: Readonly<{ className?: string }>) {
+  earliestKey,
+}: Readonly<{
+  className?: string;
+  /** First UTC month with metered usage. Earlier months stay out of the list. */
+  earliestKey?: string | null;
+}>) {
   return (
     <Suspense fallback={<BillingCyclePickerFallback className={className} />}>
-      <BillingCyclePickerInner className={className} />
+      <BillingCyclePickerInner className={className} earliestKey={earliestKey} />
     </Suspense>
   );
 }

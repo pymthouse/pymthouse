@@ -31,6 +31,7 @@ import {
 } from "@/lib/viewer-usage-clients";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 import { formatModelAttributionLabel } from "@/lib/openmeter/signed-ticket-attribution";
+import { queryEarliestUsageCycleKey } from "@/lib/usage/usage-cycle-keys";
 
 export type BillingUsageKind = "tenant" | "personal";
 
@@ -175,6 +176,11 @@ export type BillingUsageDashboardPayload = {
     OwnerPaymentMethodListItem,
     "brand" | "last4"
   > | null;
+  /**
+   * First UTC month with signed-ticket usage for a single-app view.
+   * Null on multi-app views (a cross-app month scan is not one filtered query).
+   */
+  earliestUsageCycleKey: string | null;
 };
 
 export type BillingUsageDashboardResult =
@@ -409,7 +415,9 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const [omResults, activeSubscriptions, creditAllowance, paymentMethods] =
+  const singleAppId =
+    input.scope === "single" ? input.orderedApps[0]?.id ?? "" : "";
+  const [omResults, activeSubscriptions, creditAllowance, paymentMethods, earliestUsageCycleKey] =
     await Promise.all([
       queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
       listOwnerActiveSubscriptions(input.userId, { cycle: input.cycle }).catch((err) => {
@@ -433,6 +441,7 @@ async function buildOpenMeterBillingDashboard(input: {
         );
         return [] as OwnerPaymentMethodListItem[];
       }),
+      queryEarliestUsageCycleKey(singleAppId),
     ]);
   const requestsByDay = new Map<string, number>();
   /** appId|pipeline|modelId → day → count */
@@ -675,6 +684,7 @@ async function buildOpenMeterBillingDashboard(input: {
         if (!method) return null;
         return { brand: method.brand, last4: method.last4 };
       })(),
+      earliestUsageCycleKey,
     },
   };
 }

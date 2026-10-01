@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatBillingWei } from "@/lib/billing-format";
+import { billingCycleHref } from "@/lib/billing-utils";
 import CycleRange from "@/components/billing/CycleRange";
 import type {
   BillingAppUsageSummary,
@@ -91,14 +92,14 @@ export function BillingDashboardHeader({
         <div className="flex shrink-0 flex-wrap items-center gap-3">
           {appId ? (
             <Link
-              href={`/apps/${appId}/identities`}
+              href={billingCycleHref(`/apps/${appId}/identities`, cycle.start)}
               className="text-sm text-emerald-400 transition-colors hover:text-emerald-300"
             >
               Identities →
             </Link>
           ) : null}
           <Link
-            href="/usage"
+            href={billingCycleHref("/usage", cycle.start)}
             className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
           >
             ← All applications

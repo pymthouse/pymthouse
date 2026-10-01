@@ -164,6 +164,52 @@ function InvoiceLink({ invoice }: Readonly<{ invoice: PlatformInvoiceDisplayRow 
   );
 }
 
+function InvoiceCycleFilters({
+  zeroCount,
+  showZero,
+  onShowZero,
+  showCycleToggle,
+  cycleOnly,
+  onCycleOnly,
+}: Readonly<{
+  zeroCount: number;
+  showZero: boolean;
+  onShowZero: (checked: boolean) => void;
+  showCycleToggle: boolean;
+  cycleOnly: boolean;
+  onCycleOnly: (checked: boolean) => void;
+}>) {
+  if (zeroCount <= 0 && !showCycleToggle) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-4">
+      {zeroCount > 0 ? (
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <input
+            type="checkbox"
+            checked={showZero}
+            onChange={(e) => onShowZero(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
+          />
+          {/* */}
+          Show $0 invoices ({zeroCount})
+        </label>
+      ) : null}
+      {showCycleToggle ? (
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <input
+            type="checkbox"
+            checked={cycleOnly}
+            onChange={(e) => onCycleOnly(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
+          />
+          {/* */}
+          This cycle only
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Platform (PymtHouse → developer) invoices from OpenMeter, merged with Stripe
  * paid/open receipts. Zero-value invoices are hidden by default because a
@@ -237,38 +283,20 @@ export default function PlatformInvoicesTable({
           including Stripe receipts when available.
         </p>
       ) : null}
-      {zeroCount > 0 || (selectedCycle && !selectedCycle.isCurrent) ? (
-        <div className="mb-3 flex flex-wrap items-center gap-4">
-          {zeroCount > 0 ? (
-            <label className="flex items-center gap-2 text-xs text-zinc-500">
-              <input
-                type="checkbox"
-                checked={showZero}
-                onChange={(e) => {
-                  setShowZero(e.target.checked);
-                  setVisible(PAGE_SIZE);
-                }}
-                className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
-              />
-              Show $0 invoices ({zeroCount})
-            </label>
-          ) : null}
-          {selectedCycle && !selectedCycle.isCurrent ? (
-            <label className="flex items-center gap-2 text-xs text-zinc-500">
-              <input
-                type="checkbox"
-                checked={cycleOnly}
-                onChange={(e) => {
-                  setCycleOnly(e.target.checked);
-                  setVisible(PAGE_SIZE);
-                }}
-                className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
-              />
-              This cycle only
-            </label>
-          ) : null}
-        </div>
-      ) : null}
+      <InvoiceCycleFilters
+        zeroCount={zeroCount}
+        showZero={showZero}
+        onShowZero={(checked) => {
+          setShowZero(checked);
+          setVisible(PAGE_SIZE);
+        }}
+        showCycleToggle={Boolean(selectedCycle && !selectedCycle.isCurrent)}
+        cycleOnly={cycleOnly}
+        onCycleOnly={(checked) => {
+          setCycleOnly(checked);
+          setVisible(PAGE_SIZE);
+        }}
+      />
 
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
