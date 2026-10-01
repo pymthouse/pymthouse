@@ -172,19 +172,30 @@ async function loadCapabilityFeatureDetail(
   return row;
 }
 
-/** @returns true when the stale feature was deleted and must be recreated. */
-async function replaceStaleCapabilityFeature(input: {
+type StaleFeatureAction = "keep" | "replace" | "fork";
+
+/**
+ * Shared app-scoped keys are referenced by every plan for this capability.
+ * Konnect rate cards store the feature UUID, so deleting that feature orphans
+ * plans that are not part of this sync. Those keys are left in place; this
+ * plan is pointed at a plan-scoped feature instead.
+ */
+async function staleCapabilityFeatureAction(input: {
   client: OpenMeter;
   row: OpenMeterFeatureRow;
   filters: Record<string, { $eq: string }>;
   key: string;
-}): Promise<boolean> {
+  sharedKey: string;
+}): Promise<StaleFeatureAction> {
   const detail = await loadCapabilityFeatureDetail(input.client, input.row);
   if (
     capabilityMeterFiltersMatch(detail.advancedMeterGroupByFilters, input.filters) ||
     detail.advancedMeterGroupByFilters == null
   ) {
-    return false;
+    return "keep";
+  }
+  if (input.key === input.sharedKey) {
+    return "fork";
   }
   if (!input.row.id) {
     throw new Error(
@@ -192,7 +203,7 @@ async function replaceStaleCapabilityFeature(input: {
     );
   }
   await input.client.features.delete(input.row.id);
-  return true;
+  return "replace";
 }
 
 export async function ensureCapabilityOpenMeterFeature(input: {
@@ -221,6 +232,11 @@ export async function ensureCapabilityOpenMeterFeature(input: {
     pipeline: input.pipeline,
     modelId: input.modelId,
   });
+  const sharedKey = buildAppCapabilityFeatureKey({
+    clientId: input.clientId,
+    pipeline: input.pipeline,
+    modelId: input.modelId,
+  });
 
   let existingMatch: OpenMeterFeatureRow | undefined;
   try {
@@ -233,14 +249,32 @@ export async function ensureCapabilityOpenMeterFeature(input: {
   }
 
   if (existingMatch) {
-    const replaced = await replaceStaleCapabilityFeature({
+    const action = await staleCapabilityFeatureAction({
       client: input.client,
       row: existingMatch,
       filters,
       key,
+      sharedKey,
     });
-    if (!replaced) {
+    if (action === "keep") {
       return key;
+    }
+    if (action === "fork") {
+      const planKey = buildCapabilityFeatureKey({
+        clientId: input.clientId,
+        planId: input.planId,
+        pipeline: input.pipeline,
+        modelId: input.modelId,
+      });
+      if (planKey === key) {
+        throw new Error(
+          `OpenMeter feature ${key} is shared and has stale meter filters`,
+        );
+      }
+      return ensureCapabilityOpenMeterFeature({
+        ...input,
+        preferredKey: planKey,
+      });
     }
   }
 

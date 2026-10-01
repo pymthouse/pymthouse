@@ -201,9 +201,15 @@ test("ensureCapabilityOpenMeterFeature keeps a feature whose filters already mat
   assert.equal(deleted, 0);
 });
 
-test("ensureCapabilityOpenMeterFeature replaces a feature with stale filters", async () => {
-  const key = buildAppCapabilityFeatureKey({
+test("ensureCapabilityOpenMeterFeature forks a shared feature instead of deleting it", async () => {
+  const sharedKey = buildAppCapabilityFeatureKey({
     clientId: "app_1",
+    pipeline: "livepeer-example",
+    modelId: "hello-world",
+  });
+  const planKey = buildCapabilityFeatureKey({
+    clientId: "app_1",
+    planId: "plan-1",
     pipeline: "livepeer-example",
     modelId: "hello-world",
   });
@@ -211,6 +217,93 @@ test("ensureCapabilityOpenMeterFeature replaces a feature with stale filters", a
   const created: string[] = [];
   const result = await ensureCapabilityOpenMeterFeature({
     ...ensureInput,
+    client: featureClient({
+      list: async () => [
+        {
+          id: "feat_shared",
+          key: sharedKey,
+          advancedMeterGroupByFilters: {
+            pipeline: { $eq: "livepeer-example" },
+            app: { $eq: "hello-world" },
+          },
+        },
+      ],
+      get: async () => {
+        throw new Error("get down");
+      },
+      delete: async (id) => {
+        deleted.push(id);
+      },
+      create: async (input) => {
+        created.push(input.key);
+        return {};
+      },
+    }),
+  });
+  assert.equal(result, planKey);
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(created, [planKey]);
+});
+
+test("ensureCapabilityOpenMeterFeature reuses an existing plan-scoped feature", async () => {
+  const sharedKey = buildAppCapabilityFeatureKey({
+    clientId: "app_1",
+    pipeline: "livepeer-example",
+    modelId: "hello-world",
+  });
+  const planKey = buildCapabilityFeatureKey({
+    clientId: "app_1",
+    planId: "plan-1",
+    pipeline: "livepeer-example",
+    modelId: "hello-world",
+  });
+  const filters = buildCapabilityMeterGroupByFilters({
+    pipeline: "livepeer-example",
+    modelId: "hello-world",
+  });
+  const deleted: string[] = [];
+  let created = 0;
+  const result = await ensureCapabilityOpenMeterFeature({
+    ...ensureInput,
+    preferredKey: sharedKey,
+    client: featureClient({
+      list: async () => [
+        {
+          id: "feat_shared",
+          key: sharedKey,
+          advancedMeterGroupByFilters: {
+            pipeline: { $eq: "livepeer-example" },
+            app: { $eq: "hello-world" },
+          },
+        },
+        { id: "feat_plan", key: planKey, advancedMeterGroupByFilters: filters },
+      ],
+      delete: async (id) => {
+        deleted.push(id);
+      },
+      create: async () => {
+        created += 1;
+        return {};
+      },
+    }),
+  });
+  assert.equal(result, planKey);
+  assert.deepEqual(deleted, []);
+  assert.equal(created, 0);
+});
+
+test("ensureCapabilityOpenMeterFeature replaces a plan-scoped feature with stale filters", async () => {
+  const key = buildCapabilityFeatureKey({
+    clientId: "app_1",
+    planId: "plan-1",
+    pipeline: "livepeer-example",
+    modelId: "hello-world",
+  });
+  const deleted: string[] = [];
+  const created: string[] = [];
+  const result = await ensureCapabilityOpenMeterFeature({
+    ...ensureInput,
+    preferredKey: key,
     client: featureClient({
       list: async () => [
         {
@@ -264,8 +357,9 @@ test("ensureCapabilityOpenMeterFeature leaves features without filter payloads",
 });
 
 test("ensureCapabilityOpenMeterFeature throws when stale filters have no id", async () => {
-  const key = buildAppCapabilityFeatureKey({
+  const key = buildCapabilityFeatureKey({
     clientId: "app_1",
+    planId: "plan-1",
     pipeline: "livepeer-example",
     modelId: "hello-world",
   });
@@ -297,6 +391,7 @@ test("ensureCapabilityOpenMeterFeature throws when stale filters have no id", as
       () =>
         ensureCapabilityOpenMeterFeature({
           ...ensureInput,
+          preferredKey: key,
           client: featureClient({
             list: async () => [{ key, advancedMeterGroupByFilters }],
           }),
