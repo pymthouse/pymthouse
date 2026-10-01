@@ -4,16 +4,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
+import BillingCyclePicker from "@/components/billing/BillingCyclePicker";
+import IdentityBillingPanel from "@/components/identities/IdentityBillingPanel";
 import IdentityLifecycleActions from "@/components/identities/IdentityLifecycleActions";
 import IdentityRequestLog from "@/components/identities/IdentityRequestLog";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillableDuration } from "@/lib/billing-format";
-import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import { dateKeysInclusiveUtc, resolveBillingCycle } from "@/lib/billing-utils";
+import { queryEarliestUsageCycleKey } from "@/lib/usage/usage-cycle-keys";
 import {
   formatUsageJobTypeLabel,
   type BillingChartSeries,
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import {
   canEditProviderApp,
@@ -77,60 +81,87 @@ function SummaryTile({
   );
 }
 
-export default async function AppIdentityDetailPage({
-  params,
-}: Readonly<{ params: Promise<{ id: string; externalUserId: string }> }>) {
-  const { id, externalUserId: rawExternalUserId } = await params;
-  // Next.js already decodes dynamic segments — do not decodeURIComponent again.
-  const externalUserId = rawExternalUserId.trim();
-  if (!externalUserId) {
-    notFound();
-  }
-
-  let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
+async function authorizeIdentityApp(id: string) {
   try {
-    providerAuth = await getAuthorizedProviderApp(id);
+    return await getAuthorizedProviderApp(id);
   } catch (err) {
     console.warn(
       "app-identity-detail: auth resolution failed",
       id,
       err instanceof Error ? err.message : String(err),
     );
-    providerAuth = null;
+    return null;
   }
+}
+
+async function loadIdentityMeterRows(input: {
+  openMeterConfigured: boolean;
+  clientId: string;
+  externalUserId: string;
+  cycle: { start: string; end: string };
+}) {
+  if (!input.openMeterConfigured) {
+    return { identities: [], dailyRows: [], earliestUsageCycleKey: null as string | null };
+  }
+  const [identities, dailyRows, earliestUsageCycleKey] = await Promise.all([
+    listAppIdentities({
+      clientId: input.clientId,
+      startDate: input.cycle.start,
+      endDate: input.cycle.end,
+    }).catch((err) => {
+      console.warn(
+        "app-identity-detail: listAppIdentities failed",
+        input.clientId,
+        err instanceof Error ? err.message : String(err),
+      );
+      return [];
+    }),
+    queryOpenMeterUserDailyByPipeline({
+      clientId: input.clientId,
+      startDate: input.cycle.start,
+      endDate: input.cycle.end,
+      externalUserId: input.externalUserId,
+    }).catch(() => []),
+    queryEarliestUsageCycleKey(input.clientId),
+  ]);
+  return { identities, dailyRows, earliestUsageCycleKey };
+}
+
+export default async function AppIdentityDetailPage({
+  params,
+  searchParams,
+}: Readonly<{
+  params: Promise<{ id: string; externalUserId: string }>;
+  searchParams: Promise<{ cycle?: string }>;
+}>) {
+  const { id, externalUserId: rawExternalUserId } = await params;
+  const query = await searchParams;
+  // Next.js already decodes dynamic segments — do not decodeURIComponent again.
+  const externalUserId = rawExternalUserId.trim();
+  if (!externalUserId) {
+    notFound();
+  }
+
+  const providerAuth = await authorizeIdentityApp(id);
   if (!providerAuth) {
     notFound();
   }
 
   const canManage = await canEditProviderApp(providerAuth);
   const app = providerAuth.app;
-  const cycle = calendarMonthBoundsUtc(new Date());
+  const selectedCycle = resolveBillingCycle(query.cycle);
+  const cycle = { start: selectedCycle.start, end: selectedCycle.end };
   const openMeterConfigured = requireOpenMeterForUsageReads();
+  const billingConfig = await getAppBillingConfig(app.id).catch(() => null);
+  const billingMode =
+    billingConfig?.billingMode === "merchant" ? "merchant" : "owner_rollup";
 
-  const [identities, dailyRows] = await Promise.all([
-    openMeterConfigured
-      ? listAppIdentities({
-          clientId: app.id,
-          startDate: cycle.start,
-          endDate: cycle.end,
-        }).catch((err) => {
-          console.warn(
-            "app-identity-detail: listAppIdentities failed",
-            app.id,
-            err instanceof Error ? err.message : String(err),
-          );
-          return [];
-        })
-      : Promise.resolve([]),
-    openMeterConfigured
-      ? queryOpenMeterUserDailyByPipeline({
-          clientId: app.id,
-          startDate: cycle.start,
-          endDate: cycle.end,
-          externalUserId,
-        }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
+  const { identities, dailyRows, earliestUsageCycleKey } = await loadIdentityMeterRows({
+    openMeterConfigured,
+    clientId: app.id,
+    externalUserId,
+    cycle,
+  });
 
   const identity = identities.find((row) => row.externalUserId === externalUserId);
   const todayKeyUtc = new Date().toISOString().slice(0, 10);
@@ -149,17 +180,25 @@ export default async function AppIdentityDetailPage({
       <AppSectionBreadcrumb
         appId={id}
         appName={app.name}
-        parentSection={{ label: "Identities", href: `/apps/${id}/identities` }}
+        parentSection={{
+          label: "Identities",
+          href: `/apps/${id}/identities${
+            selectedCycle.isCurrent ? "" : `?cycle=${selectedCycle.key}`
+          }`,
+        }}
         section="Identity"
       />
 
-      <div className="mb-6 sm:mb-8">
-        <h1 className="break-all font-mono text-lg font-bold text-zinc-100 sm:text-xl">
-          {externalUserId}
-        </h1>
-        <p className="mt-1 text-xs text-zinc-500 sm:text-sm">
-          Usage for this identity in the current billing cycle.
-        </p>
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="break-all font-mono text-lg font-bold text-zinc-100 sm:text-xl">
+            {externalUserId}
+          </h1>
+          <p className="mt-1 text-xs text-zinc-500 sm:text-sm">
+            Usage for this identity in the selected billing cycle.
+          </p>
+        </div>
+        <BillingCyclePicker earliestKey={earliestUsageCycleKey} />
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:mb-8 sm:grid-cols-4">
@@ -195,6 +234,16 @@ export default async function AppIdentityDetailPage({
         </div>
       ) : null}
 
+      <div className="mb-6 sm:mb-8">
+        <IdentityBillingPanel
+          appId={id}
+          externalUserId={externalUserId}
+          billingMode={billingMode}
+          canManage={canManage}
+          cycle={cycle}
+        />
+      </div>
+
       {identity?.apiKey ? (
         <div className="mb-6 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm sm:mb-8">
           <span className="text-zinc-500">API key</span>
@@ -220,7 +269,7 @@ export default async function AppIdentityDetailPage({
         </p>
         {series.length === 0 ? (
           <p className="py-6 text-center text-sm text-zinc-500">
-            No metered usage for this identity in the current cycle.
+            No metered usage for this identity in this cycle.
           </p>
         ) : (
           <UsageBreakdownChart
@@ -233,7 +282,12 @@ export default async function AppIdentityDetailPage({
         )}
       </section>
 
-      <IdentityRequestLog appId={id} externalUserId={externalUserId} />
+      <IdentityRequestLog
+        appId={id}
+        externalUserId={externalUserId}
+        from={cycle.start}
+        to={cycle.end}
+      />
     </>
   );
 }

@@ -12,6 +12,7 @@ import OwnerPaidUpgradePanel from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import OwnerResumePendingDowngradeButton from "@/components/OwnerResumePendingDowngradeButton";
 import CycleRange from "@/components/billing/CycleRange";
+import BillingCyclePicker from "@/components/billing/BillingCyclePicker";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
 import {
   ownerCanChangePaidPlan,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/billing/owner-billing-copy";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
+import { BILLING_CYCLE_PARAM, resolveBillingCycle } from "@/lib/billing-utils";
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
@@ -456,6 +458,10 @@ export default function OwnerBillingView({
       isOwnerPaidPlanKey(row.openMeterPlanKey),
     )?.planName ??
     null;
+  const selectedCycle = resolveBillingCycle(data.cycle.start.slice(0, 7));
+  const usageHref = selectedCycle.isCurrent
+    ? "/usage"
+    : `/usage?${BILLING_CYCLE_PARAM}=${selectedCycle.key}`;
 
   return (
     <DashboardLayout>
@@ -470,16 +476,19 @@ export default function OwnerBillingView({
           })}
         </p>
         {data.openMeterConfigured ? (
-          <p className="mt-2 text-xs text-zinc-600">
-            Cycle: <CycleRange start={data.cycle.start} end={data.cycle.end} />
-            <span className="mx-2 text-zinc-700">·</span>
-            <Link
-              href="/usage"
-              className="text-emerald-400 hover:text-emerald-300 transition-colors"
-            >
-              View usage →
-            </Link>
-          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <p className="text-xs text-zinc-600">
+              Cycle: <CycleRange start={data.cycle.start} end={data.cycle.end} />
+              <span className="mx-2 text-zinc-700">·</span>
+              <Link
+                href={usageHref}
+                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+              >
+                View usage →
+              </Link>
+            </p>
+            <BillingCyclePicker />
+          </div>
         ) : (
           <p className="mt-2 text-sm text-amber-400/90">
             Usage metering is not configured — billing balances are unavailable.
@@ -539,11 +548,12 @@ export default function OwnerBillingView({
               invoices={data.invoices}
               stripeInvoices={data.stripeInvoices}
               invoicesDegraded={data.invoicesDegraded}
+              cycle={data.cycle}
             />
           </section>
 
           <section className="mt-8">
-            <TransactionsLedger entries={data.ledger} />
+            <TransactionsLedger entries={data.ledger} cycle={data.cycle} />
           </section>
         </>
       ) : null}

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
@@ -10,6 +10,7 @@ import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import CostWaterfall from "@/components/billing/CostWaterfall";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
+import BillingCyclePicker from "@/components/billing/BillingCyclePicker";
 import {
   AppUsageSection,
   BillingDashboardHeader,
@@ -22,6 +23,10 @@ import type {
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
+import {
+  BILLING_CYCLE_PARAM,
+  resolveBillingCycle,
+} from "@/lib/billing-utils";
 import {
   deriveFilteredView,
   type ChartDimension,
@@ -47,6 +52,8 @@ type BillingUsageDashboardClientPayload = {
   activeSubscriptions?: OwnerBillingSubscriptionRow[];
   creditBalanceUsdMicros?: string | null;
   defaultPaymentMethod?: { brand?: string | null; last4?: string | null } | null;
+  /** First UTC month with usage for a single-app view. Null keeps the lookback. */
+  earliestUsageCycleKey?: string | null;
 };
 
 type UsageTab = "mine" | "all";
@@ -237,7 +244,7 @@ function chartEmptyMessage(selectedCount: number): string {
   if (selectedCount === 0) {
     return "Select at least one application to view the chart.";
   }
-  return "No usage in the current billing period yet.";
+  return "No usage in this billing period yet.";
 }
 
 function SignedTicketsBlock({
@@ -248,6 +255,7 @@ function SignedTicketsBlock({
   historyClientIds,
   historyIdentityIds,
   onClearIdentityFilter,
+  cycle,
 }: Readonly<{
   needsSelection: boolean;
   scope: "all" | "single";
@@ -258,6 +266,7 @@ function SignedTicketsBlock({
   /** Identity filter from the Identities dropdown; empty means all. */
   historyIdentityIds: string[];
   onClearIdentityFilter: () => void;
+  cycle: { start: string; end: string };
 }>) {
   if (needsSelection) {
     return (
@@ -277,6 +286,8 @@ function SignedTicketsBlock({
         historyScope={historyScope}
         externalUserIds={historyIdentityIds}
         onClearIdentityFilter={onClearIdentityFilter}
+        from={cycle.start}
+        to={cycle.end}
       />
     </div>
   );
@@ -384,7 +395,7 @@ function BillingPeriodPanel({
 }>) {
   const periodCopy =
     activeTab === "all" && showTabs
-      ? "Platform-wide usage for the current cycle."
+      ? "Platform-wide usage for the selected cycle."
       : "Usage for apps you own or administer.";
   const showMineSubscriptions = activeTab === "mine" || !showTabs;
 
@@ -392,7 +403,7 @@ function BillingPeriodPanel({
     <div className="mb-6 sm:mb-8 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="font-semibold text-zinc-100">This billing period</h3>
+          <h3 className="font-semibold text-zinc-100">Billing period</h3>
           <p className="text-xs text-zinc-500 mt-1">{periodCopy}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -561,6 +572,11 @@ function BillingUsageBody({
     allIdentityIds,
   );
 
+  const cycleKey = cycle.start.slice(0, 7);
+  const cycleQuery = resolveBillingCycle(cycleKey).isCurrent
+    ? ""
+    : `?${BILLING_CYCLE_PARAM}=${cycleKey}`;
+
   return (
     <>
       <div className="mb-6 sm:mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -571,16 +587,19 @@ function BillingUsageBody({
           isOpenMeter={isOpenMeter}
           appId={scope === "single" ? orderedApps[0]?.id : null}
         />
-        {showTabs ? (
-          <div className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5">
-            <TabLink active={activeTab === "mine"} href="/usage">
-              My Usage
-            </TabLink>
-            <TabLink active={activeTab === "all"} href="/usage/all">
-              All Usage
-            </TabLink>
-          </div>
-        ) : null}
+        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+          {showTabs ? (
+            <div className="flex items-center gap-1 rounded-lg bg-black/20 p-0.5">
+              <TabLink active={activeTab === "mine"} href={`/usage${cycleQuery}`}>
+                My Usage
+              </TabLink>
+              <TabLink active={activeTab === "all"} href={`/usage/all${cycleQuery}`}>
+                All Usage
+              </TabLink>
+            </div>
+          ) : null}
+          <BillingCyclePicker earliestKey={data.earliestUsageCycleKey} />
+        </div>
       </div>
 
       <BillingPeriodPanel
@@ -607,6 +626,7 @@ function BillingUsageBody({
         historyClientIds={derived.historyClientIds}
         historyIdentityIds={derived.historyIdentityIds}
         onClearIdentityFilter={() => setSelectedIdentityIds(allIdentityIds)}
+        cycle={cycle}
       />
 
       <AppUsageList
@@ -617,6 +637,153 @@ function BillingUsageBody({
         userId={userId}
         emptyMessage={emptyAppsMessage(selectedAppIds.length, isAdmin)}
       />
+    </>
+  );
+}
+
+function cycleTabHref(path: string, cycleKey: string): string {
+  return resolveBillingCycle(cycleKey).isCurrent
+    ? path
+    : `${path}?${BILLING_CYCLE_PARAM}=${cycleKey}`;
+}
+
+function redirectAwayFromAllUsage(input: {
+  wantsAllUsage: boolean;
+  authStatus: string;
+  isAdmin: boolean;
+  replace: (href: string) => void;
+}): void {
+  if (!input.wantsAllUsage) return;
+  if (input.authStatus === "loading") return;
+  if (input.authStatus === "unauthenticated" || !input.isAdmin) {
+    input.replace("/usage");
+  }
+}
+
+function dashboardRequestUrl(input: {
+  filterAppId?: string | null;
+  showTabs: boolean;
+  activeTab: UsageTab;
+  cycleKey: string;
+}): string {
+  const params = new URLSearchParams();
+  if (input.filterAppId) {
+    params.set("appId", input.filterAppId);
+  } else if (input.showTabs && input.activeTab === "all") {
+    params.set("scope", "all");
+  } else {
+    params.set("scope", "own");
+  }
+  const selectedCycle = resolveBillingCycle(input.cycleKey);
+  if (!selectedCycle.isCurrent) {
+    params.set(BILLING_CYCLE_PARAM, selectedCycle.key);
+  }
+  return `/api/v1/billing/dashboard?${params.toString()}`;
+}
+
+async function readUsageDashboardResponse(url: string): Promise<LoadState> {
+  try {
+    const response = await fetch(url);
+    if (response.status === 401) {
+      return {
+        status: "error",
+        message: "Please sign in to view billing and usage.",
+        code: 401,
+      };
+    }
+    if (response.status === 403 || response.status === 404) {
+      return { status: "error", message: "Usage not found.", code: response.status };
+    }
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: "Usage unavailable right now.",
+        code: response.status,
+      };
+    }
+    const data = (await response.json()) as BillingUsageDashboardClientPayload;
+    return { status: "ready", data };
+  } catch (err) {
+    const error = err as Error & { code?: number };
+    return {
+      status: "error",
+      message: error.message || "Usage unavailable",
+      code: error.code,
+    };
+  }
+}
+
+function UsageDashboardStatus({
+  state,
+  fundPanel,
+  showTabs,
+  activeTab,
+  cycleKey,
+  earliestKey,
+  filterAppId,
+  onRetry,
+}: Readonly<{
+  state: LoadState;
+  fundPanel?: ReactNode;
+  showTabs: boolean;
+  activeTab: UsageTab;
+  cycleKey: string;
+  earliestKey: string | null;
+  filterAppId?: string | null;
+  onRetry: () => void;
+}>) {
+  if (state.status === "loading") {
+    return (
+      <>
+        {fundPanel}
+        <div className="mb-4 flex flex-col items-end gap-3">
+          {showTabs ? (
+            <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
+              <TabLink active={activeTab === "mine"} href={cycleTabHref("/usage", cycleKey)}>
+                My Usage
+              </TabLink>
+              <TabLink
+                active={activeTab === "all"}
+                href={cycleTabHref("/usage/all", cycleKey)}
+              >
+                All Usage
+              </TabLink>
+            </div>
+          ) : null}
+          <BillingCyclePicker earliestKey={earliestKey} />
+        </div>
+        <UsageLoadingShell filterAppId={filterAppId} showingAll={activeTab === "all"} />
+      </>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <>
+        {fundPanel}
+        <div className="text-center py-12">
+          <h2 className="text-lg font-medium text-zinc-300">
+            {state.code === 401 ? "Billing unavailable" : "Usage unavailable"}
+          </h2>
+          <p className="text-zinc-500 mt-2">{state.message}</p>
+          {state.code === 401 ? null : (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 text-sm text-emerald-400 hover:text-emerald-300"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {fundPanel}
+      <BillingUsageBody data={state.data} showTabs={showTabs} activeTab={activeTab} />
     </>
   );
 }
@@ -640,6 +807,7 @@ export default function BillingUsageDashboard({
   const { data: session, status: authStatus } = useSession();
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
     | string
     | undefined;
@@ -647,120 +815,52 @@ export default function BillingUsageDashboard({
   const showTabs = isAdmin && !filterAppId;
   const wantsAllUsage = !filterAppId && pathname.startsWith("/usage/all");
   const activeTab: UsageTab = showTabs && wantsAllUsage ? "all" : "mine";
+  const cycleKey = resolveBillingCycle(searchParams.get(BILLING_CYCLE_PARAM)).key;
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);
+  const [earliestKey, setEarliestKey] = useState<string | null>(null);
 
   // /usage/all is admin-only; bounce everyone else to /usage.
   useEffect(() => {
-    if (!wantsAllUsage) return;
-    if (authStatus === "loading") return;
-    if (authStatus === "unauthenticated" || !isAdmin) {
-      router.replace("/usage");
-    }
+    redirectAwayFromAllUsage({
+      wantsAllUsage,
+      authStatus,
+      isAdmin,
+      replace: (href) => router.replace(href),
+    });
   }, [wantsAllUsage, authStatus, isAdmin, router]);
 
   useEffect(() => {
     let cancelled = false;
+    const url = dashboardRequestUrl({ filterAppId, showTabs, activeTab, cycleKey });
 
     void (async () => {
       setState({ status: "loading" });
-
-      const params = new URLSearchParams();
-      if (filterAppId) {
-        params.set("appId", filterAppId);
-      } else if (showTabs && activeTab === "all") {
-        params.set("scope", "all");
-      } else {
-        params.set("scope", "own");
+      const next = await readUsageDashboardResponse(url);
+      if (cancelled) return;
+      if (next.status === "ready") {
+        setEarliestKey(next.data.earliestUsageCycleKey ?? null);
       }
-      const url = `/api/v1/billing/dashboard?${params.toString()}`;
-
-      try {
-        const r = await fetch(url);
-        if (r.status === 401) {
-          throw Object.assign(
-            new Error("Please sign in to view billing and usage."),
-            { code: 401 },
-          );
-        }
-        if (r.status === 403 || r.status === 404) {
-          throw Object.assign(new Error("Usage not found."), { code: r.status });
-        }
-        if (!r.ok) {
-          throw Object.assign(new Error("Usage unavailable right now."), {
-            code: r.status,
-          });
-        }
-        const data = (await r.json()) as BillingUsageDashboardClientPayload;
-        if (!cancelled) setState({ status: "ready", data });
-      } catch (err) {
-        if (!cancelled) {
-          const e = err as Error & { code?: number };
-          setState({
-            status: "error",
-            message: e.message || "Usage unavailable",
-            code: e.code,
-          });
-        }
-      }
+      setState(next);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [filterAppId, activeTab, retryToken, showTabs]);
+  }, [filterAppId, activeTab, retryToken, showTabs, cycleKey]);
 
   const body = (
-    <>
-      {fundPanel}
-      {state.status === "loading" ? (
-        <>
-          {showTabs ? (
-            <div className="mb-4 flex justify-end">
-              <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
-                <TabLink active={activeTab === "mine"} href="/usage">
-                  My Usage
-                </TabLink>
-                <TabLink active={activeTab === "all"} href="/usage/all">
-                  All Usage
-                </TabLink>
-              </div>
-            </div>
-          ) : null}
-          <UsageLoadingShell
-            filterAppId={filterAppId}
-            showingAll={activeTab === "all"}
-          />
-        </>
-      ) : null}
-
-      {state.status === "error" ? (
-        <div className="text-center py-12">
-          <h2 className="text-lg font-medium text-zinc-300">
-            {state.code === 401 ? "Billing unavailable" : "Usage unavailable"}
-          </h2>
-          <p className="text-zinc-500 mt-2">{state.message}</p>
-          {state.code !== 401 ? (
-            <button
-              type="button"
-              onClick={() => setRetryToken((n) => n + 1)}
-              className="mt-4 text-sm text-emerald-400 hover:text-emerald-300"
-            >
-              Retry
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {state.status === "ready" ? (
-        <BillingUsageBody
-          data={state.data}
-          showTabs={showTabs}
-          activeTab={activeTab}
-        />
-      ) : null}
-    </>
+    <UsageDashboardStatus
+      state={state}
+      fundPanel={fundPanel}
+      showTabs={showTabs}
+      activeTab={activeTab}
+      cycleKey={cycleKey}
+      earliestKey={earliestKey}
+      filterAppId={filterAppId}
+      onRetry={() => setRetryToken((n) => n + 1)}
+    />
   );
 
   if (!wrapLayout) {

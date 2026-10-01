@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatBillingWei } from "@/lib/billing-format";
+import { billingCycleHref } from "@/lib/billing-utils";
 import CycleRange from "@/components/billing/CycleRange";
 import type {
   BillingAppUsageSummary,
@@ -83,22 +84,22 @@ export function BillingDashboardHeader({
             ) : null}
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 mt-1">
-            Usage and per-identity breakdown for this application in the current billing
-            cycle.
+            Usage and per-identity breakdown for this application in the selected
+            billing cycle.
           </p>
           {cycleLine}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3">
           {appId ? (
             <Link
-              href={`/apps/${appId}/identities`}
+              href={billingCycleHref(`/apps/${appId}/identities`, cycle.start)}
               className="text-sm text-emerald-400 transition-colors hover:text-emerald-300"
             >
               Identities →
             </Link>
           ) : null}
           <Link
-            href="/usage"
+            href={billingCycleHref("/usage", cycle.start)}
             className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
           >
             ← All applications
@@ -113,7 +114,8 @@ export function BillingDashboardHeader({
       <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Usage</h1>
       <p className="text-xs sm:text-sm text-zinc-500 mt-1">
         Applications are ordered by requests this billing cycle; apps owned by Test User appear
-        after all others, with per-user billing breakdowns.
+        after all others, with per-user billing breakdowns. Pick a prior month to review
+        closed cycles.
       </p>
       {cycleLine}
     </>

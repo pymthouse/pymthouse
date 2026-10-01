@@ -12,6 +12,7 @@ import {
 } from "@/lib/billing/platform-invoice-rows";
 import { formatInvoicePeriodLabel } from "@/lib/billing/transactions-ledger";
 import { formatBillingUtcDate } from "@/lib/billing-format";
+import { invoiceOverlapsCycle, resolveBillingCycle } from "@/lib/billing-utils";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { TenantInvoiceDto } from "@/lib/openmeter/invoices";
 import type { OwnerStripeInvoiceItem } from "@/lib/stripe/owner-platform-invoices";
@@ -163,6 +164,52 @@ function InvoiceLink({ invoice }: Readonly<{ invoice: PlatformInvoiceDisplayRow 
   );
 }
 
+function InvoiceCycleFilters({
+  zeroCount,
+  showZero,
+  onShowZero,
+  showCycleToggle,
+  cycleOnly,
+  onCycleOnly,
+}: Readonly<{
+  zeroCount: number;
+  showZero: boolean;
+  onShowZero: (checked: boolean) => void;
+  showCycleToggle: boolean;
+  cycleOnly: boolean;
+  onCycleOnly: (checked: boolean) => void;
+}>) {
+  if (zeroCount <= 0 && !showCycleToggle) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-4">
+      {zeroCount > 0 ? (
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <input
+            type="checkbox"
+            checked={showZero}
+            onChange={(e) => onShowZero(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
+          />
+          {/* */}
+          Show $0 invoices ({zeroCount})
+        </label>
+      ) : null}
+      {showCycleToggle ? (
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <input
+            type="checkbox"
+            checked={cycleOnly}
+            onChange={(e) => onCycleOnly(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
+          />
+          {/* */}
+          This cycle only
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Platform (PymtHouse → developer) invoices from OpenMeter, merged with Stripe
  * paid/open receipts. Zero-value invoices are hidden by default because a
@@ -172,14 +219,30 @@ export default function PlatformInvoicesTable({
   invoices,
   stripeInvoices = [],
   invoicesDegraded = false,
+  cycle,
 }: Readonly<{
   invoices: TenantInvoiceDto[];
   stripeInvoices?: OwnerStripeInvoiceItem[];
   invoicesDegraded?: boolean;
+  /** When set, past months default to invoices that overlap this cycle. */
+  cycle?: { start: string; end: string };
 }>) {
+  const selectedCycle = cycle
+    ? resolveBillingCycle(cycle.start.slice(0, 7))
+    : null;
   const [showZero, setShowZero] = useState(false);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [cycleOnly, setCycleOnly] = useState(
+    Boolean(selectedCycle && !selectedCycle.isCurrent),
+  );
+  const [prevCycleKey, setPrevCycleKey] = useState(selectedCycle?.key ?? "");
+  const nextCycleKey = selectedCycle?.key ?? "";
+  if (prevCycleKey !== nextCycleKey) {
+    setPrevCycleKey(nextCycleKey);
+    setCycleOnly(Boolean(selectedCycle && !selectedCycle.isCurrent));
+    setVisible(PAGE_SIZE);
+  }
 
   const merged = useMemo(
     () => mergePlatformInvoiceRows(invoices, stripeInvoices),
@@ -191,8 +254,14 @@ export default function PlatformInvoicesTable({
     [merged],
   );
   const filtered = useMemo(
-    () => (showZero ? merged : merged.filter((inv) => !isZeroInvoice(inv))),
-    [merged, showZero],
+    () => {
+      const withoutZero = showZero
+        ? merged
+        : merged.filter((inv) => !isZeroInvoice(inv));
+      if (!cycleOnly || !cycle) return withoutZero;
+      return withoutZero.filter((inv) => invoiceOverlapsCycle(inv, cycle));
+    },
+    [merged, showZero, cycleOnly, cycle],
   );
   const page = filtered.slice(0, visible);
 
@@ -214,24 +283,26 @@ export default function PlatformInvoicesTable({
           including Stripe receipts when available.
         </p>
       ) : null}
-      {zeroCount > 0 ? (
-        <label className="mb-3 flex items-center gap-2 text-xs text-zinc-500">
-          <input
-            type="checkbox"
-            checked={showZero}
-            onChange={(e) => {
-              setShowZero(e.target.checked);
-              setVisible(PAGE_SIZE);
-            }}
-            className="h-3.5 w-3.5 rounded border-zinc-700 bg-black/20"
-          />
-          Show $0 invoices ({zeroCount})
-        </label>
-      ) : null}
+      <InvoiceCycleFilters
+        zeroCount={zeroCount}
+        showZero={showZero}
+        onShowZero={(checked) => {
+          setShowZero(checked);
+          setVisible(PAGE_SIZE);
+        }}
+        showCycleToggle={Boolean(selectedCycle && !selectedCycle.isCurrent)}
+        cycleOnly={cycleOnly}
+        onCycleOnly={(checked) => {
+          setCycleOnly(checked);
+          setVisible(PAGE_SIZE);
+        }}
+      />
 
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-          No invoices with charges yet.
+          {cycleOnly
+            ? "No invoices overlap this billing cycle."
+            : "No invoices with charges yet."}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-white/[0.06] bg-white/[0.02]">

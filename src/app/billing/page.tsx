@@ -22,10 +22,10 @@ function isTurnkeyFundingConfigured(): boolean {
 export default async function BillingPage({
   searchParams,
 }: Readonly<{
-  searchParams: Promise<{ pm?: string }>;
+  searchParams: Promise<{ pm?: string; cycle?: string }>;
 }>) {
   const params = await searchParams;
-  const result = await getOwnerBillingData();
+  const result = await getOwnerBillingData(undefined, { cycleKey: params.cycle });
   if (!result.ok) {
     if (result.reason === "no_session") {
       redirect("/login");
