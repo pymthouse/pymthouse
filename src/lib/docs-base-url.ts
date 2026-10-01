@@ -5,9 +5,18 @@
  * Integration guides use paths like `/integration/device-flow` and
  * `/integration/interactive-login` (see https://docs.pymthouse.com/llms.txt).
  */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 export function getDocsBaseUrl(): string {
   const defaultDocsUrl = "https://docs.pymthouse.com";
-  const fromEnv = process.env.NEXT_PUBLIC_DOCS_URL?.trim().replace(/\/+$/, "");
+  const rawEnv = process.env.NEXT_PUBLIC_DOCS_URL?.trim();
+  const fromEnv = rawEnv ? trimTrailingSlashes(rawEnv) : "";
   if (!fromEnv) return defaultDocsUrl;
 
   try {

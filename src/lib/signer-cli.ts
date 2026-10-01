@@ -46,6 +46,15 @@ export interface SenderInfo {
   };
 }
 
+/** Coerce CLI JSON scalars to string; reject objects that would stringify as [object Object]. */
+function asCliString(value: unknown, fallback = "0"): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
 export interface SignerCliStatus {
   reachable: boolean;
   ethAddress: string | null;
@@ -108,8 +117,8 @@ export async function getSenderInfo(): Promise<SenderInfo | null> {
   try {
     const raw = await cliGet<Record<string, unknown>>("/senderInfo");
     // Normalize: go-livepeer may return PascalCase or camelCase field names
-    const deposit = String(raw.deposit ?? raw.Deposit ?? "0");
-    const withdrawRound = String(raw.withdrawRound ?? raw.WithdrawRound ?? "0");
+    const deposit = asCliString(raw.deposit ?? raw.Deposit);
+    const withdrawRound = asCliString(raw.withdrawRound ?? raw.WithdrawRound);
     const reserve = (raw.reserve ?? raw.Reserve) as
       | Record<string, unknown>
       | undefined;
@@ -117,11 +126,11 @@ export async function getSenderInfo(): Promise<SenderInfo | null> {
       deposit,
       withdrawRound,
       reserve: {
-        fundsRemaining: String(
-          reserve?.fundsRemaining ?? reserve?.FundsRemaining ?? "0"
+        fundsRemaining: asCliString(
+          reserve?.fundsRemaining ?? reserve?.FundsRemaining,
         ),
-        claimedInCurrentRound: String(
-          reserve?.claimedInCurrentRound ?? reserve?.ClaimedInCurrentRound ?? "0"
+        claimedInCurrentRound: asCliString(
+          reserve?.claimedInCurrentRound ?? reserve?.ClaimedInCurrentRound,
         ),
       },
     };

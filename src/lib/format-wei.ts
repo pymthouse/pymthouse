@@ -4,7 +4,14 @@ const WEI_PER_ETH = 10n ** 18n;
 const ETH_DISPLAY_THRESHOLD = WEI_PER_ETH / 1000n;
 
 function trimTrailingZeros(s: string): string {
-  return s.replace(/0+$/, "").replace(/\.$/, "");
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 48 /* 0 */) {
+    end -= 1;
+  }
+  if (end > 0 && s.charCodeAt(end - 1) === 46 /* . */) {
+    end -= 1;
+  }
+  return end === s.length ? s : s.slice(0, end);
 }
 
 function formatEthFraction(rem: bigint, maxDigits: number): string {
