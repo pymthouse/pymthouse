@@ -30,7 +30,7 @@ test("me billing routes reject subject overrides and require end-user auth", asy
   for (const [label, load] of ME_BILLING_GETS) {
     const { GET } = await load();
     const noAuth = await GET(
-      new NextRequest(`http://localhost/api/v1/apps/${clientId}/me/billing/${label}`),
+      new NextRequest(`http://localhost/api/v2/apps/${clientId}/me/billing/${label}`),
       { params: Promise.resolve({ id: clientId }) },
     );
     assert.equal(noAuth.status, 401, `${label} requires auth`);
@@ -38,7 +38,7 @@ test("me billing routes reject subject overrides and require end-user auth", asy
     for (const key of ["userId", "externalUserId", "external_user_id"]) {
       const overridden = await GET(
         new NextRequest(
-          `http://localhost/api/v1/apps/${clientId}/me/billing/${label}?${key}=other-user`,
+          `http://localhost/api/v2/apps/${clientId}/me/billing/${label}?${key}=other-user`,
         ),
         { params: Promise.resolve({ id: clientId }) },
       );
@@ -55,7 +55,7 @@ run("me billing GET rejects M2M Basic and scopes to the Bearer subject", async (
   t.after(() => cleanupTestApp(app));
 
   const m2m = await GET(
-    new NextRequest(`http://localhost/api/v1/apps/${app.clientId}/me/billing/allowances`, {
+    new NextRequest(`http://localhost/api/v2/apps/${app.clientId}/me/billing/allowances`, {
       headers: {
         Authorization: basicAuthHeader(app.clientId, app.clientSecret),
       },
@@ -81,7 +81,7 @@ run("me billing GET rejects M2M Basic and scopes to the Bearer subject", async (
 
   const wrongApp = await GET(
     new NextRequest(
-      "http://localhost/api/v1/apps/app_otherclientid0000000002/me/billing/allowances",
+      "http://localhost/api/v2/apps/app_otherclientid0000000002/me/billing/allowances",
       { headers: { Authorization: `Bearer ${bare}` } },
     ),
     { params: Promise.resolve({ id: "app_otherclientid0000000002" }) },

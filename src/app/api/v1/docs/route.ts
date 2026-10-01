@@ -1,13 +1,17 @@
-import { docsHtmlResponse, scalarDocsHtml } from "@/lib/openapi/docs-html";
+import {
+  docsHtmlResponse,
+  publicApiDocSources,
+  scalarDocsHtml,
+} from "@/lib/openapi/docs-html";
 
 export const dynamic = "force-dynamic";
 
-/** Public API reference (Builder + End-user). Internal is not linked here. */
+/** Public API reference, opened on v1 (legacy) with a picker for v2. */
 export async function GET() {
   return docsHtmlResponse(
     scalarDocsHtml({
-      title: "PymtHouse Builder API",
-      openApiUrl: "/api/v1/openapi.json",
+      title: "PymtHouse Builder API (v1, legacy)",
+      sources: publicApiDocSources("v1"),
     }),
   );
 }

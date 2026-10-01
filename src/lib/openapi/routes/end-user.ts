@@ -206,7 +206,7 @@ defineUserUsageRoute(
 );
 
 const meBillingPath = (suffix: string) =>
-  `/api/v1/apps/{clientId}/me/billing${suffix}`;
+  `/api/v2/apps/{clientId}/me/billing${suffix}`;
 
 function defineMeBillingGet(suffix: string, summary: string, description: string) {
   defineRouteMetadata("get", meBillingPath(suffix), {
@@ -225,6 +225,12 @@ function defineMeBillingGet(suffix: string, summary: string, description: string
       401: {
         ...builderErrorResponses[401],
         description: "Missing or invalid end-user credential",
+      },
+      403: {
+        ...builderErrorResponses[403],
+        description:
+          "`merchant_billing_required` (money reads on an owner_rollup app) or " +
+          "`owner_wallet_not_app_user` (the credential resolves to the owner wallet)",
       },
     },
   });

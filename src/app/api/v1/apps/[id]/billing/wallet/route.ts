@@ -53,7 +53,7 @@ export async function GET(
   });
   if (!billingTarget.ok) {
     return NextResponse.json(
-      { error: billingTarget.error },
+      { error: billingTarget.error, code: billingTarget.code },
       { status: billingTarget.status },
     );
   }
@@ -141,7 +141,7 @@ export async function PATCH(
   });
   if (!billingTarget.ok) {
     return NextResponse.json(
-      { error: billingTarget.error },
+      { error: billingTarget.error, code: billingTarget.code },
       { status: billingTarget.status },
     );
   }

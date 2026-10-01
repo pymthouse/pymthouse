@@ -1,3 +1,11 @@
+import {
+  API_V1_PREFIX,
+  API_V2_PREFIX,
+  type ApiVersion,
+  deriveV2OperationKeys,
+  V2_NATIVE_END_USER_OPERATION_KEYS,
+} from "@/lib/api-version/v2-surface";
+
 /** OpenAPI tag names used across route metadata. */
 export const OPENAPI_TAGS = {
   app: "App",
@@ -89,16 +97,19 @@ const END_USER_OPERATION_KEYS = new Set([
   "GET /api/v1/apps/{clientId}/me/usage",
   "GET /api/v1/apps/{clientId}/me/usage/balance",
   "GET /api/v1/apps/{clientId}/me/usage/requests",
-  "GET /api/v1/apps/{clientId}/me/billing/allowances",
-  "GET /api/v1/apps/{clientId}/me/billing/wallet",
-  "GET /api/v1/apps/{clientId}/me/billing/state",
-  "GET /api/v1/apps/{clientId}/me/billing/invoices",
-  "GET /api/v1/apps/{clientId}/me/billing/payment-methods",
-  "GET /api/v1/apps/{clientId}/me/billing/subscription",
   // Pathless: app resolved from Bearer credential.
   "GET /api/v1/user/usage",
   "GET /api/v1/user/usage/balance",
   "GET /api/v1/user/usage/requests",
+]);
+
+/** v2 Builder contract: v1 Builder minus excluded legacy ops, on `/api/v2`. */
+const V2_BUILDER_OPERATION_KEYS = deriveV2OperationKeys(BUILDER_OPERATION_KEYS);
+
+/** v2 End-user contract: aliased v1 end-user ops plus v2-only `/me/billing`. */
+const V2_END_USER_OPERATION_KEYS = new Set([
+  ...deriveV2OperationKeys(END_USER_OPERATION_KEYS),
+  ...V2_NATIVE_END_USER_OPERATION_KEYS,
 ]);
 
 /**
@@ -171,10 +182,10 @@ export function classifyOpenApiOperation(
   path: string,
 ): OpenApiAudience | null {
   const key = openApiOperationKey(method, path);
-  if (END_USER_OPERATION_KEYS.has(key)) {
+  if (END_USER_OPERATION_KEYS.has(key) || V2_END_USER_OPERATION_KEYS.has(key)) {
     return "end-user";
   }
-  if (BUILDER_OPERATION_KEYS.has(key)) {
+  if (BUILDER_OPERATION_KEYS.has(key) || V2_BUILDER_OPERATION_KEYS.has(key)) {
     return "builder";
   }
   if (INTERNAL_OPERATION_KEYS.has(key)) {
@@ -187,66 +198,78 @@ export function isOpenApiContractOperation(method: string, path: string): boolea
   return classifyOpenApiOperation(method, path) != null;
 }
 
-export const BUILDER_TAG_DEFINITIONS: Array<{
+function apiPrefix(version: ApiVersion): string {
+  return version === "v2" ? API_V2_PREFIX : API_V1_PREFIX;
+}
+
+/** Builder doc tags for one API version (paths in descriptions follow the version). */
+export function builderTagDefinitions(version: ApiVersion): Array<{
   name: OpenApiTagName;
   description: string;
-}> = [
-  {
-    name: OPENAPI_TAGS.app,
-    description: "Read app context for the authenticated M2M client.",
-  },
-  {
-    name: OPENAPI_TAGS.users,
-    description: "Provision end users, API keys, tokens, allowances, and subscription.",
-  },
-  {
-    name: OPENAPI_TAGS.credentials,
-    description: "RFC 8693 signer session exchange and related credential flows.",
-  },
-  {
-    name: OPENAPI_TAGS.usage,
-    description:
-      "App-wide usage and balance. `GET /api/v1/builder/apps/{clientId}/usage*` (M2M Basic only).",
-  },
-  {
-    name: OPENAPI_TAGS.endUserUsage,
-    description:
-      "Self-serve usage for the authenticated end user. Bearer = bare `pmth_*` API key (or user/signer JWT). " +
-      "`GET /api/v1/user/usage*` resolves the app from the credential; " +
-      "`GET /api/v1/apps/{clientId}/me/usage*` requires path `{clientId}` to match.",
-  },
-  {
-    name: OPENAPI_TAGS.endUserBilling,
-    description:
-      "Self-serve billing for the authenticated end user on `/apps/{clientId}/me/billing/*`. " +
-      "Subject is the Bearer credential only — do not pass `externalUserId`.",
-  },
-  {
-    name: OPENAPI_TAGS.billing,
-    description: "Billing profile, plan list, and checkout for integrator backends.",
-  },
-  {
-    name: OPENAPI_TAGS.discovery,
-    description: "Read discovery profiles and app manifest.",
-  },
-  {
-    name: OPENAPI_TAGS.marketplace,
-    description: "Public marketplace catalog.",
-  },
-  {
-    name: OPENAPI_TAGS.platform,
-    description: "Health, prices, and auth validate.",
-  },
-  {
-    name: OPENAPI_TAGS.oidc,
-    description: "OIDC provider token endpoint (issuer protocol).",
-  },
-  {
-    name: OPENAPI_TAGS.network,
-    description:
-      "Headless agent network registration (Ed25519 challenge) on the platform default app.",
-  },
-];
+}> {
+  const prefix = apiPrefix(version);
+  return [
+    {
+      name: OPENAPI_TAGS.app,
+      description: "Read app context for the authenticated M2M client.",
+    },
+    {
+      name: OPENAPI_TAGS.users,
+      description:
+        "Provision end users, API keys, tokens, allowances, and subscription.",
+    },
+    {
+      name: OPENAPI_TAGS.credentials,
+      description: "RFC 8693 signer session exchange and related credential flows.",
+    },
+    {
+      name: OPENAPI_TAGS.usage,
+      description: `App-wide usage and balance. \`GET ${prefix}/builder/apps/{clientId}/usage*\` (M2M Basic only).`,
+    },
+    {
+      name: OPENAPI_TAGS.endUserUsage,
+      description:
+        "Self-serve usage for the authenticated end user. Bearer = bare `pmth_*` API key (or user/signer JWT). " +
+        `\`GET ${prefix}/user/usage*\` resolves the app from the credential; ` +
+        `\`GET ${prefix}/apps/{clientId}/me/usage*\` requires path \`{clientId}\` to match.`,
+    },
+    {
+      name: OPENAPI_TAGS.endUserBilling,
+      description:
+        `Self-serve billing for the authenticated end user on \`${API_V2_PREFIX}/apps/{clientId}/me/billing/*\`. ` +
+        "Subject is the Bearer credential only — do not pass `externalUserId`.",
+    },
+    {
+      name: OPENAPI_TAGS.billing,
+      description:
+        version === "v2"
+          ? "Owner wallet, billing profile, plan list, and merchant ops for integrator backends. " +
+            "M2M cannot act on an end user's wallet in v2 — use End-user Billing."
+          : "Billing profile, plan list, and checkout for integrator backends.",
+    },
+    {
+      name: OPENAPI_TAGS.discovery,
+      description: "Read discovery profiles and app manifest.",
+    },
+    {
+      name: OPENAPI_TAGS.marketplace,
+      description: "Public marketplace catalog.",
+    },
+    {
+      name: OPENAPI_TAGS.platform,
+      description: "Health, prices, and auth validate.",
+    },
+    {
+      name: OPENAPI_TAGS.oidc,
+      description: "OIDC provider token endpoint (issuer protocol).",
+    },
+    {
+      name: OPENAPI_TAGS.network,
+      description:
+        "Headless agent network registration (Ed25519 challenge) on the platform default app.",
+    },
+  ];
+}
 
 export const BUILDER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }> = [
   {
@@ -338,18 +361,33 @@ export const INTERNAL_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }
   },
 ];
 
-export const BUILDER_INFO_DESCRIPTION = `PymtHouse **public API** — Builder (M2M) and End-user contracts.
+/** Builder doc description for one API version. */
+export function builderInfoDescription(version: ApiVersion): string {
+  const prefix = apiPrefix(version);
+  const header =
+    version === "v2"
+      ? `PymtHouse **public API v2** — Builder (M2M) and End-user contracts. Legacy v1: \`${API_V1_PREFIX}/docs\`.`
+      : `PymtHouse **public API v1 (legacy)** — Builder (M2M) and End-user contracts. Current: \`${API_V2_PREFIX}/docs\`.`;
+  const billing =
+    version === "v2"
+      ? `End-user billing: \`${API_V2_PREFIX}/apps/{clientId}/me/billing/*\` with the end user's Bearer credential. M2M provisions users and mints their credentials; it does not act on their wallet.`
+      : `End-user billing moved to v2: \`${API_V2_PREFIX}/apps/{clientId}/me/billing/*\`. v1 M2M routes that name the billed user are deprecated.`;
+  return `${header}
 
 **Builder (M2M):** HTTP Basic (\`m2m_*\` + \`pmth_cs_*\`) for integrator backends — users, keys, tokens, app usage, billing reads, discovery.
 
 **End-user:** \`Authorization: Bearer\` with a bare \`pmth_*\` API key, programmatic user JWT, or signer JWT (optional composite \`app_*_*\` still accepted). Identity comes **only** from the token — do not pass \`externalUserId\`.
 
-OIDC discovery: \`{issuer}/.well-known/openid-configuration\`.
+OIDC discovery: \`{issuer}/.well-known/openid-configuration\` (the issuer stays on \`${API_V1_PREFIX}/oidc\`).
 
-Canonical Builder usage: \`GET /api/v1/builder/apps/{clientId}/usage*\`.
-End-user usage: \`GET /api/v1/user/usage*\` (app from credential) or \`GET /api/v1/apps/{clientId}/me/usage*\` (path must match).
-End-user billing reads: \`GET /api/v1/apps/{clientId}/me/billing/{allowances,wallet,state,invoices,payment-methods,subscription}\`.
+Canonical Builder usage: \`GET ${prefix}/builder/apps/{clientId}/usage*\`.
+End-user usage: \`GET ${prefix}/user/usage*\` (app from credential) or \`GET ${prefix}/apps/{clientId}/me/usage*\` (path must match).
+${billing}
 `;
+}
+
+/** Current (v2) Builder doc description. */
+export const BUILDER_INFO_DESCRIPTION = builderInfoDescription("v2");
 
 export const INTERNAL_INFO_DESCRIPTION = `PymtHouse **Internal API** — dashboard, admin, and platform ops for the PymtHouse application (not linked from public docs).
 

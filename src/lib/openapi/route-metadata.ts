@@ -1,5 +1,6 @@
 import type { RouteConfig } from "@asteasolutions/zod-to-openapi";
 
+import { apiVersionOfPath, toV1Path } from "@/lib/api-version/v2-surface";
 import { routeKey } from "@/lib/openapi/route-scan";
 
 export type RouteMetadataInput = Omit<RouteConfig, "method" | "path"> & {
@@ -26,6 +27,35 @@ export function getRouteMetadata(
   path: string,
 ): RouteMetadataInput | undefined {
   return metadataByKey.get(routeKey(method, path));
+}
+
+/** Rewrite `/api/v1/…` references in doc text to v2 (the OIDC issuer stays v1). */
+function rewriteDocTextForV2(text: string | undefined): string | undefined {
+  return text?.replaceAll(/\/api\/v1\/(?!oidc(?:\/|\b))/g, "/api/v2/");
+}
+
+/**
+ * Metadata for an operation. v2 aliases and guarded wrappers without their own
+ * entry reuse the v1 entry, with path references in summary/description moved
+ * onto `/api/v2`.
+ */
+export function resolveRouteMetadata(
+  method: string,
+  path: string,
+): RouteMetadataInput | undefined {
+  const own = getRouteMetadata(method, path);
+  if (own || apiVersionOfPath(path) !== "v2") {
+    return own;
+  }
+  const v1 = getRouteMetadata(method, toV1Path(path));
+  if (!v1) {
+    return undefined;
+  }
+  return {
+    ...v1,
+    summary: rewriteDocTextForV2(v1.summary),
+    description: rewriteDocTextForV2(v1.description),
+  };
 }
 
 export function registeredMetadataKeys(): ReadonlySet<string> {

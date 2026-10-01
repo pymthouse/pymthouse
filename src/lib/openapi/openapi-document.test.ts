@@ -8,38 +8,56 @@ import {
 } from "@/lib/openapi/document";
 import "@/lib/openapi/routes";
 
-test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal", () => {
+test("buildPublicOpenApiDocument (v2 default) includes Builder + End-user and omits Internal", () => {
   const doc = buildPublicOpenApiDocument();
   assert.equal(doc.openapi, "3.1.0");
   assert.equal(doc.info.title, "PymtHouse Builder API");
+  assert.equal(doc.info.version, "2.0.0");
   assert.ok(doc.info.description?.includes("Builder (M2M)"));
   assert.ok(doc.info.description?.includes("End-user"));
+  assert.ok(Object.keys(doc.paths).every((path) => path.startsWith("/api/v2/")));
 
-  assert.ok(doc.paths["/api/v1/apps/{clientId}"]?.get);
-  assert.equal(doc.paths["/api/v1/apps/{clientId}"]?.put, undefined);
-  assert.equal(doc.paths["/api/v1/apps/{clientId}"]?.delete, undefined);
-  assert.equal(doc.paths["/api/v1/apps"], undefined);
-  assert.equal(doc.paths["/api/v1/apps/{clientId}/admins"], undefined);
-  assert.equal(doc.paths["/api/v1/internal/apps"], undefined);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}"]?.get);
+  assert.equal(doc.paths["/api/v2/apps/{clientId}"]?.put, undefined);
+  assert.equal(doc.paths["/api/v2/apps/{clientId}"]?.delete, undefined);
+  assert.equal(doc.paths["/api/v2/apps"], undefined);
+  assert.equal(doc.paths["/api/v2/apps/{clientId}/admins"], undefined);
+  assert.equal(doc.paths["/api/v2/end-users"], undefined);
 
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/users"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.patch);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/users"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/billing/wallet"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/billing/wallet"]?.patch);
   assert.equal(
-    doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.patch?.summary,
+    doc.paths["/api/v2/apps/{clientId}/billing/wallet"]?.patch?.summary,
     "Set merchant auto top-up prefs",
   );
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/oidc/token"]?.post);
-  assert.ok(doc.paths["/api/v1/builder/apps/{clientId}/usage"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/balance"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/requests"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/billing/allowances"]?.get);
-  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/billing/wallet"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/oidc/token"]?.post);
+  assert.ok(doc.paths["/api/v2/builder/apps/{clientId}/usage"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/me/usage"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/me/usage/balance"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/me/usage/requests"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/me/billing/allowances"]?.get);
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/me/billing/wallet"]?.get);
   assert.ok(doc.tags?.some((tag) => tag.name === "End-user Billing"));
-  assert.ok(doc.paths["/api/v1/user/usage"]?.get);
-  assert.equal(doc.paths["/api/v1/user/usage"]?.get?.deprecated, undefined);
-  assert.equal(doc.paths["/api/v1/signer"], undefined);
+  assert.ok(doc.paths["/api/v2/user/usage"]?.get);
+  assert.equal(doc.paths["/api/v2/user/usage"]?.get?.deprecated, undefined);
+  assert.equal(doc.paths["/api/v2/signer"], undefined);
+
+  // Legacy M2M operations that name the billed end user are not in v2.
+  assert.equal(
+    doc.paths["/api/v2/apps/{clientId}/users/{externalUserId}/payment-methods"]?.post,
+    undefined,
+  );
+  assert.ok(doc.paths["/api/v2/apps/{clientId}/users/{externalUserId}/payment-methods"]?.get);
+  assert.equal(doc.paths["/api/v2/apps/{clientId}/billing/checkout"], undefined);
+  assert.equal(
+    doc.paths["/api/v2/apps/{clientId}/users/{externalUserId}/allowances"]?.post,
+    undefined,
+  );
+  // Reused v1 metadata points at v2 paths, but the OIDC issuer stays on v1.
+  const meUsage = doc.paths["/api/v2/user/usage"]?.get?.description ?? "";
+  assert.ok(meUsage.includes("/api/v2/apps/{clientId}/me/usage"), meUsage);
+  assert.ok(!meUsage.includes("/api/v1/apps/"), meUsage);
 
   assert.ok(doc.components?.securitySchemes?.m2mBasic);
   assert.ok(doc.components?.securitySchemes?.endUserBearer);
@@ -51,6 +69,27 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
   assert.ok(tagGroups?.some((group) => group.name === "Integrator"));
   assert.ok(tagGroups?.some((group) => group.name === "End-user"));
   assert.ok(!tagGroups?.some((group) => group.name === "Dashboard"));
+});
+
+test("buildPublicOpenApiDocument v1 is legacy: no /me/billing, deprecated user-billing mutations", () => {
+  const doc = buildPublicOpenApiDocument({ version: "v1" });
+  assert.equal(doc.info.version, "1.0.0");
+  assert.ok(doc.info.title.includes("legacy"));
+  assert.ok(Object.keys(doc.paths).every((path) => path.startsWith("/api/v1/")));
+
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/users"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage"]?.get);
+  assert.equal(doc.paths["/api/v1/apps/{clientId}/me/billing/allowances"], undefined);
+  assert.equal(doc.paths["/api/v1/apps/{clientId}/me/billing/wallet"], undefined);
+  assert.ok(doc.tags?.every((tag) => tag.name !== "End-user Billing"));
+
+  const pmPost =
+    doc.paths["/api/v1/apps/{clientId}/users/{externalUserId}/payment-methods"]?.post;
+  assert.equal(pmPost?.deprecated, true);
+  assert.ok(pmPost?.description?.includes("/api/v2/apps/{clientId}/me/billing/payment-methods"));
+  const checkout = doc.paths["/api/v1/apps/{clientId}/billing/checkout"]?.post;
+  assert.equal(checkout?.deprecated, true);
+  assert.equal(doc.paths["/api/v1/apps/{clientId}/users"]?.get?.deprecated, undefined);
 });
 
 test("buildInternalOpenApiDocument documents /internal paths and session auth", () => {
@@ -74,12 +113,12 @@ test("buildInternalOpenApiDocument documents /internal paths and session auth", 
   assert.ok(tagGroups?.some((group) => group.name === "Dashboard"));
 });
 
-test("buildOpenApiDocument aliases public", () => {
-  const legacy = buildOpenApiDocument();
+test("buildOpenApiDocument is the current (v2) public document", () => {
+  const current = buildOpenApiDocument();
   const publicDoc = buildPublicOpenApiDocument();
-  assert.equal(legacy.info.title, publicDoc.info.title);
-  assert.ok(legacy.paths["/api/v1/builder/apps/{clientId}/usage"]);
-  assert.ok(legacy.paths["/api/v1/apps/{clientId}/me/usage"]);
+  assert.equal(current.info.title, publicDoc.info.title);
+  assert.ok(current.paths["/api/v2/builder/apps/{clientId}/usage"]);
+  assert.ok(current.paths["/api/v2/apps/{clientId}/me/usage"]);
 });
 
 test("buildPublicOpenApiDocument servers follow NEXTAUTH_URL", () => {

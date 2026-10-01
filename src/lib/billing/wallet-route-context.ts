@@ -50,7 +50,7 @@ export async function resolveWalletRouteContext(input: {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: billingTarget.error },
+        { error: billingTarget.error, code: billingTarget.code },
         { status: billingTarget.status },
       ),
     };

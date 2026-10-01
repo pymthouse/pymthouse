@@ -4,9 +4,17 @@ export type WalletBillingTarget =
   | { mode: "owner_rollup"; ownerUserId: string }
   | { mode: "merchant"; externalUserId: string };
 
+/** Error code when a merchant-mode wallet route is called without an end user. */
+export const EXTERNAL_USER_ID_REQUIRED_CODE = "external_user_id_required";
+
 export type WalletBillingTargetResult =
   | { ok: true; target: WalletBillingTarget }
-  | { ok: false; status: 400; error: string };
+  | {
+      ok: false;
+      status: 400;
+      error: string;
+      code: typeof EXTERNAL_USER_ID_REQUIRED_CODE;
+    };
 
 /** Trim a query/body `externalUserId` — empty / non-string → null. */
 export function readOptionalExternalUserId(value: unknown): string | null {
@@ -38,6 +46,7 @@ export async function resolveWalletBillingTarget(input: {
         ok: false,
         status: 400,
         error: "externalUserId is required when billingMode is merchant",
+        code: EXTERNAL_USER_ID_REQUIRED_CODE,
       };
     }
     return { ok: true, target: { mode: "merchant", externalUserId } };
