@@ -39,11 +39,10 @@ function b64urlDecode(value: string): Buffer {
 
 export function signPayload(encodedBody: string): string {
   // HMAC-SHA256 authenticates OAuth state (integrity MAC), not password hashing.
+  const mac = createHmac("sha256", signingSecret());
   // codeql[js/insufficient-password-hash]
-  // lgtm[js/insufficient-password-hash]
-  return createHmac("sha256", signingSecret())
-    .update(encodedBody)
-    .digest("base64url");
+  mac.update(encodedBody);
+  return mac.digest("base64url");
 }
 
 export function createGithubOauthCsrf(): string {
