@@ -24,3 +24,17 @@ exclude:
     # file so the exclusion is as narrow as possible; all other source keeps Snyk
     # Code coverage. The SSRF guard itself is covered by konnect-routes.test.ts.
     - src/lib/openmeter/konnect-fetch.ts
+
+# No published zod release fixes SNYK-JS-ZOD-20510278. The installed 4.6.5
+# build is rewritten before dev, test, and Next build (see
+# scripts/patch-zod-array-bounds.mjs): arrays longer than 100000 are rejected,
+# and a failing array keeps at most 100 issues. Snyk Open Source matches the
+# lockfile version, not that rewritten file, so the finding is ignored here
+# until upstream publishes a fix.
+ignore:
+  SNYK-JS-ZOD-20510278:
+    - "*":
+        reason: >-
+          Patched locally in scripts/patch-zod-array-bounds.mjs. No fixed zod
+          version. Caps array length and accumulated validation issues.
+        expires: 2027-04-06T00:00:00.000Z

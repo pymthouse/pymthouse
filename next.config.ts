@@ -1,5 +1,20 @@
-import type { NextConfig } from "next";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import type { NextConfig } from "next";
+
+const zodArrayPatch = path.join(
+  process.cwd(),
+  "scripts/patch-zod-array-bounds.mjs",
+);
+if (existsSync(zodArrayPatch)) {
+  const patched = spawnSync(process.execPath, [zodArrayPatch], {
+    stdio: "inherit",
+  });
+  if (patched.status !== 0) {
+    throw new Error("Failed to apply zod array bounds patch");
+  }
+}
 
 const turnkeyAuthComponent = path.join(
   process.cwd(),

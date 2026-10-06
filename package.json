@@ -6,9 +6,9 @@
     "node": "24.x"
   },
   "scripts": {
-    "predev": "npm run db:prepare",
+    "predev": "node scripts/patch-zod-array-bounds.mjs && npm run db:prepare",
     "dev": "next dev -p 3001 --webpack",
-    "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
+    "prebuild": "node scripts/patch-zod-array-bounds.mjs && ([ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare)",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
@@ -52,7 +52,7 @@
     "openapi:generate": "npx tsx scripts/generate-openapi-routes.ts",
     "check:openapi": "npm run openapi:generate && npx tsx scripts/check-openapi.ts",
     "e2e:merchant-payments": "npx tsx scripts/e2e/merchant-payments.ts",
-    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\"",
+    "test": "node scripts/patch-zod-array-bounds.mjs && node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\"",
     "test:coverage": "mkdir -p coverage && c8 --reporter=text --reporter=lcov --report-dir=coverage --include='src/**' --exclude='**/*.test.ts' --exclude='**/*.test.mjs' node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
   },
   "dependencies": {
