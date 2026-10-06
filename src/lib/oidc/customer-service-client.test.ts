@@ -232,7 +232,10 @@ test("ensureCustomerServiceOidcClient does not add localhost when CS env unset o
   const csClient = await ensureCustomerServiceOidcClient({
     clientId: csClientId,
   });
-  assert.equal(csClient.redirectUris.includes(STAGING_CALLBACK), true);
+  assert.equal(
+    csClient.redirectUris.some((uri) => uri === STAGING_CALLBACK),
+    true,
+  );
   assert.equal(csClient.redirectUris.includes(PRODUCTION_CALLBACK), false);
   assert.notEqual(second.clientSecret, first.clientSecret);
 });
