@@ -368,6 +368,33 @@ test("tryAutoTopUpIfEnabled charges, grants, and uses the parsed amount", async 
     "autotopup:pi_25",
   );
   assert.equal((granted as { billingMode?: string }).billingMode, "merchant");
+  assert.equal((granted as { stripeLivemode?: boolean }).stripeLivemode, true);
+});
+
+test("tryAutoTopUpIfEnabled grants onto the sandbox plane when stripeLivemode is false", async (t) => {
+  let granted: { stripeLivemode?: boolean; billingMode?: string } | undefined;
+  withRuntime(t, {
+    getAppBillingConfig: async () => ({
+      billingMode: "merchant",
+      stripeConnectedAccountId: "acct_1",
+      stripeLivemode: false,
+    }),
+    createConnectedOffSessionPaymentIntent: async () => ({
+      id: "pi_sbx_grant",
+      status: "succeeded",
+    }),
+    grantAllowanceUsdMicros: async (input) => {
+      granted = input;
+      return GRANT_RESULT;
+    },
+  });
+  assert.deepEqual(await tryAutoTopUpIfEnabled(uniqueIds("sbx_grant")), {
+    status: "charged",
+    paymentIntentId: "pi_sbx_grant",
+    grantedUsdMicros: "10000000",
+  });
+  assert.equal(granted?.stripeLivemode, false);
+  assert.equal(granted?.billingMode, "merchant");
 });
 
 test("tryAutoTopUpIfEnabled falls back to $10 when prefs amount is invalid", async (t) => {
