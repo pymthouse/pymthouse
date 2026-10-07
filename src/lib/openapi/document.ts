@@ -1,9 +1,15 @@
+import {
+  API_V2_PREFIX,
+  apiVersionOfPath,
+  type ApiVersion,
+  V2_EXCLUDED_V1_OPERATIONS,
+} from "@/lib/api-version/v2-surface";
 import { OIDC_MOUNT_PATH } from "@/lib/oidc/issuer-urls";
 import { generateOpenApiDocument } from "@/lib/openapi/registry";
 import {
-  BUILDER_INFO_DESCRIPTION,
-  BUILDER_TAG_DEFINITIONS,
   BUILDER_TAG_GROUPS,
+  builderInfoDescription,
+  builderTagDefinitions,
   INTERNAL_INFO_DESCRIPTION,
   INTERNAL_TAG_DEFINITIONS,
   INTERNAL_TAG_GROUPS,
@@ -70,6 +76,7 @@ function filterPathItem(
 function filterOperations(
   paths: OpenApiDoc["paths"],
   audiences: OpenApiAudience[],
+  version?: ApiVersion,
 ): OpenApiDoc["paths"] {
   if (!paths) {
     return paths;
@@ -80,12 +87,64 @@ function filterOperations(
     if (!item || typeof item !== "object") {
       continue;
     }
+    if (version && apiVersionOfPath(path) !== version) {
+      continue;
+    }
     const filtered = filterPathItem(path, item, allowed);
     if (filtered) {
       next[path] = filtered;
     }
   }
   return next;
+}
+
+type Operation = {
+  deprecated?: boolean;
+  description?: string;
+  tags?: string[];
+};
+
+/** v1 doc: flag legacy ops that v2 dropped, pointing at the successor. */
+function markV1LegacyOperations(paths: OpenApiDoc["paths"]): void {
+  if (!paths) {
+    return;
+  }
+  for (const [key, excluded] of V2_EXCLUDED_V1_OPERATIONS) {
+    if (!excluded.meBillingSuccessor) {
+      continue;
+    }
+    const space = key.indexOf(" ");
+    const method = key.slice(0, space).toLowerCase();
+    const path = key.slice(space + 1);
+    const op = (paths[path] as Record<string, Operation> | undefined)?.[method];
+    if (!op) {
+      continue;
+    }
+    op.deprecated = true;
+    const successor = `${API_V2_PREFIX}/apps/{clientId}/me/billing${excluded.meBillingSuccessor}`;
+    op.description = [
+      `**Deprecated.** ${excluded.reason} Use \`${successor}\` with the end user's Bearer credential.`,
+      op.description,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+}
+
+/** Drop tag definitions with no operations left after filtering. */
+function usedTags<T extends { name: string }>(
+  paths: OpenApiDoc["paths"],
+  definitions: T[],
+): T[] {
+  const used = new Set<string>();
+  for (const item of Object.values(paths ?? {})) {
+    for (const op of Object.values((item ?? {}) as Record<string, Operation>)) {
+      for (const tag of op?.tags ?? []) {
+        used.add(tag);
+      }
+    }
+  }
+  return definitions.filter((definition) => used.has(definition.name));
 }
 
 function publicSecuritySchemes() {
@@ -123,21 +182,34 @@ function internalSecuritySchemes() {
   };
 }
 
-/** Public OpenAPI — Builder (M2M) + End-user usage. */
-export function buildPublicOpenApiDocument(): OpenApiDoc {
+/** Public OpenAPI — Builder (M2M) + End-user for one API version (default v2). */
+export function buildPublicOpenApiDocument(
+  options: { version?: ApiVersion } = {},
+): OpenApiDoc {
+  const version = options.version ?? "v2";
   const doc = generateOpenApiDocument() as OpenApiDoc;
   const serverUrl = resolveApiServerUrl();
   const oidcIssuer = `${serverUrl}${OIDC_MOUNT_PATH}`;
 
   doc.servers = [{ url: serverUrl, description: "PymtHouse API origin" }];
-  doc.paths = filterOperations(doc.paths, PUBLIC_AUDIENCES);
+  doc.paths = filterOperations(doc.paths, PUBLIC_AUDIENCES, version);
+  if (version === "v1") {
+    markV1LegacyOperations(doc.paths);
+  }
   doc.info = {
     ...doc.info,
-    title: "PymtHouse Builder API",
-    description: BUILDER_INFO_DESCRIPTION,
+    title:
+      version === "v2" ? "PymtHouse Builder API" : "PymtHouse Builder API (v1, legacy)",
+    version: version === "v2" ? "2.0.0" : "1.0.0",
+    description: builderInfoDescription(version),
   };
-  doc.tags = BUILDER_TAG_DEFINITIONS;
-  doc["x-tagGroups"] = BUILDER_TAG_GROUPS;
+  const tags = usedTags(doc.paths, builderTagDefinitions(version));
+  const tagNames = new Set(tags.map((tag) => tag.name));
+  doc.tags = tags;
+  doc["x-tagGroups"] = BUILDER_TAG_GROUPS.map((group) => ({
+    ...group,
+    tags: group.tags.filter((tag) => tagNames.has(tag)),
+  })).filter((group) => group.tags.length > 0);
   doc.components = doc.components ?? {};
   doc.components.securitySchemes = publicSecuritySchemes();
   doc.externalDocs = {
@@ -171,7 +243,7 @@ export function buildInternalOpenApiDocument(): OpenApiDoc {
   return doc;
 }
 
-/** Alias for `/api/v1/openapi.json`. */
+/** Current public document (`/api/v2/openapi.json`). */
 export function buildOpenApiDocument(): OpenApiDoc {
-  return buildPublicOpenApiDocument();
+  return buildPublicOpenApiDocument({ version: "v2" });
 }

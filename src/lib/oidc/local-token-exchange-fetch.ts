@@ -6,7 +6,8 @@ import {
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
 import { getProviderApp } from "@/lib/provider-apps";
 
-const APP_TOKEN_PATH = /^\/api\/v1\/apps\/([^/]+)\/oidc\/token$/;
+/** App-scoped token exchange on v1 or its v2 alias (same handler). */
+const APP_TOKEN_PATH = /^\/api\/v[12]\/apps\/([^/]+)\/oidc\/token$/;
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;

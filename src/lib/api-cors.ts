@@ -5,17 +5,23 @@ import { appAllowedDomains, developerApps, oidcClients } from "@/db/schema";
 import { normalizeDomainWhitelist } from "@/lib/domain-whitelist";
 
 const KONG_PORTALS_SUFFIX = ".kongportals.com";
-const APP_SCOPED_API_PATH_RE = /^\/api\/v1\/apps\/([^/]+)/;
+/** `/api/v1` and `/api/v2` share CORS policy (v2 aliases the v1 handlers). */
+const APP_SCOPED_API_PATH_RE = /^\/api\/v[12]\/apps\/([^/]+)/;
+
+/** True for paths under `/api/v1` or `/api/v2` (the Builder API CORS scope). */
+export function isBuilderApiPath(pathname: string): boolean {
+  return /^\/api\/v[12](?:\/|$)/.test(pathname);
+}
 
 /** Unauthenticated platform metadata paths may use any tenant allowlisted origin. */
 const PLATFORM_METADATA_CORS_PATH_RES = [
-  /^\/api\/v1\/health(?:\/|$)/,
-  /^\/api\/v1\/docs(?:\/|$)/,
+  /^\/api\/v[12]\/health(?:\/|$)/,
+  /^\/api\/v[12]\/docs(?:\/|$)/,
   /^\/api\/v1\/mcp$/,
-  /^\/api\/v1\/pipeline-catalog(?:\/|$)/,
-  /^\/api\/v1\/openapi\.json$/,
+  /^\/api\/v[12]\/pipeline-catalog(?:\/|$)/,
+  /^\/api\/v[12]\/openapi\.json$/,
   /^\/api\/v1\/internal\/(?:docs|openapi\.json)(?:\/|$)/,
-  /^\/api\/v1\/marketplace(?:\/|$)/,
+  /^\/api\/v[12]\/marketplace(?:\/|$)/,
 ] as const;
 
 export type ApiCorsResolveInput = {
@@ -224,9 +230,9 @@ export function invalidateAppCorsCache(): void {
 /**
  * Resolve ACAO for a Builder API request.
  *
- * - `/api/v1/apps/{clientId}/…` → Origin must be on **that app's** domain allowlist
+ * - `/api/v{1,2}/apps/{clientId}/…` → Origin must be on **that app's** domain allowlist
  *   (App Settings), or localhost for local tooling (non-production / opt-in).
- * - Other `/api/v1/…` → platform allow (env / NEXTAUTH / localhost / `*.kongportals.com`).
+ * - Other `/api/v{1,2}/…` → platform allow (env / NEXTAUTH / localhost / `*.kongportals.com`).
  * - Tenant-shared allowlist fallback applies only to public metadata paths.
  */
 export async function resolveBuilderApiCorsOrigin(

@@ -57,6 +57,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Check OpenAPI inventory and /api/v2 aliases
+        run: |
+          npm run check:openapi
+          git diff --exit-code -- src/lib/openapi/generated-route-inventory.ts src/app/api/v2
+
       - name: Apply database migrations
         run: npm run db:prepare
 

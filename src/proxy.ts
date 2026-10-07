@@ -3,6 +3,7 @@ import { getToken } from "next-auth/jwt";
 
 import {
   buildApiCorsHeaders,
+  isBuilderApiPath,
   resolveBuilderApiCorsOrigin,
 } from "@/lib/api-cors";
 import { isOidcHandshakePath } from "@/lib/oidc/handshake-path";
@@ -17,22 +18,22 @@ const nextAuthSecret = getNextAuthSecret({ suppressDevWarning: true });
 
 /**
  * Node.js request proxy:
- * - Conditional CORS for `/api/v1/*`
+ * - Conditional CORS for `/api/v1/*` and `/api/v2/*`
  * - Clear invalid/mismatched NextAuth session cookies on other routes
  * - Leave OIDC authorize/interaction/resume responses alone (those Set-Cookie
  *   headers are the handshake; wiping NextAuth here restarts login).
  *
  * CORS:
- * - App routes `/api/v1/apps/{clientId}/…`: Origin must be on that app's domain allowlist
+ * - App routes `/api/v{1,2}/apps/{clientId}/…`: Origin must be on that app's domain allowlist
  *   (App Settings → Domain allowlist), or localhost (non-production / opt-in).
- * - Other `/api/v1/…`: platform allow (env, NEXTAUTH_URL, localhost, *.kongportals.com);
+ * - Other `/api/v{1,2}/…`: platform allow (env, NEXTAUTH_URL, localhost, *.kongportals.com);
  *   tenant-shared allowlist fallback only for public metadata paths.
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   let corsHeaders: Record<string, string> | null = null;
 
-  if (pathname === "/api/v1" || pathname.startsWith("/api/v1/")) {
+  if (isBuilderApiPath(pathname)) {
     try {
       const origin = request.headers.get("origin");
       const allowOrigin = await resolveBuilderApiCorsOrigin(origin, pathname);

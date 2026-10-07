@@ -7,6 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import UserMenu from "@/components/UserMenu";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
+import { API_REFERENCE_URL } from "@/lib/api-version/v2-surface";
 
 interface NavItem {
   label: string;
@@ -31,7 +32,6 @@ const APP_SUB_NAV_ITEMS: AppSubNavItem[] = [
   { id: "usage", label: "Usage", href: "/usage" },
 ];
 
-const API_REFERENCE_URL = "/api/v1/docs";
 const DOCS_URL = "https://docs.pymthouse.com";
 
 const allNavItems: NavItem[] = [

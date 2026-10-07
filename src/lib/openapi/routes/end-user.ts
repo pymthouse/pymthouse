@@ -204,3 +204,84 @@ defineUserUsageRoute(
   "End-user signed-ticket request history",
   endUserRequestsQueryParams,
 );
+
+const meBillingPath = (suffix: string) =>
+  `/api/v2/apps/{clientId}/me/billing${suffix}`;
+
+function defineMeBillingGet(
+  suffix: string,
+  summary: string,
+  description: string,
+  params: z.ZodObject<z.ZodRawShape> = z.object({ clientId }),
+) {
+  defineRouteMetadata("get", meBillingPath(suffix), {
+    tags: [OPENAPI_TAGS.endUserBilling],
+    summary,
+    description,
+    security: endUserSecurity,
+    request: { params },
+    responses: {
+      200: jsonSuccess,
+      ...builderErrorResponses,
+      400: {
+        ...builderErrorResponses[400],
+        description: "Disallowed cross-user filter",
+      },
+      401: {
+        ...builderErrorResponses[401],
+        description: "Missing or invalid end-user credential",
+      },
+      403: {
+        ...builderErrorResponses[403],
+        description:
+          "`merchant_billing_required` (money reads on an owner_rollup app) or " +
+          "`owner_wallet_not_app_user` (the credential resolves to the owner wallet)",
+      },
+    },
+  });
+}
+
+defineMeBillingGet(
+  "/allowances",
+  "End-user prepaid allowances",
+  "Konnect credit snapshot for the Bearer subject. Do not pass `externalUserId`.",
+);
+defineMeBillingGet(
+  "/wallet",
+  "End-user prepaid wallet",
+  "Merchant-mode prepaid wallet (balance, auto-top-up, billing state) for the Bearer subject.",
+);
+defineMeBillingGet(
+  "/state",
+  "End-user billing state",
+  "Spend posture for the Bearer subject (included usage, prepaid, overage).",
+);
+defineMeBillingGet(
+  "/invoices",
+  "End-user invoices",
+  "Invoice list for the Bearer subject. Optional `page` / `pageSize`.",
+);
+defineMeBillingGet(
+  "/payment-methods",
+  "End-user payment methods",
+  "Cards on the Bearer subject's retail Stripe customer.",
+);
+defineMeBillingGet(
+  "/subscription",
+  "End-user subscription",
+  "Live OpenMeter subscription for the Bearer subject.",
+);
+defineMeBillingGet(
+  "/wallet/transactions",
+  "End-user wallet transactions",
+  "Merchant prepaid ledger for the Bearer subject: credit adds, usage drawdowns, and Connect invoices. `degraded: true` when an upstream read failed.",
+);
+defineMeBillingGet(
+  "/invoices/{invoiceId}/hosted-url",
+  "End-user invoice hosted URL",
+  "Stripe hosted invoice URL / PDF for one of the Bearer subject's invoices. Another user's invoice id is 404.",
+  z.object({
+    clientId,
+    invoiceId: z.string().min(1).openapi({ param: { name: "invoiceId", in: "path" } }),
+  }),
+);

@@ -29,8 +29,7 @@ import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 import DomainAllowlistBlock from "./DomainAllowlistBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
-
-const API_REFERENCE_URL = "/api/v1/docs";
+import { API_REFERENCE_URL, API_V2_PREFIX } from "@/lib/api-version/v2-surface";
 
 export { API_REFERENCE_URL };
 
@@ -180,7 +179,13 @@ function buildDevicePollCurl(origin: string, publicClientId: string): string {
 
 function buildBearerUsageCurl(origin: string, publicClientId: string): string {
   const encodedClientId = encodeURIComponent(publicClientId);
-  return String.raw`curl -sS ${origin}/api/v1/apps/${encodedClientId}/me/usage \
+  return String.raw`curl -sS ${origin}${API_V2_PREFIX}/apps/${encodedClientId}/me/usage \
+  -H "Authorization: Bearer pmth_YOUR_BARE_API_KEY"`;
+}
+
+function buildBearerBillingCurl(origin: string, publicClientId: string): string {
+  const encodedClientId = encodeURIComponent(publicClientId);
+  return String.raw`curl -sS ${origin}${API_V2_PREFIX}/apps/${encodedClientId}/me/billing/wallet \
   -H "Authorization: Bearer pmth_YOUR_BARE_API_KEY"`;
 }
 
@@ -222,6 +227,11 @@ function resolveCurlSnippetsForSelection(input: {
         id: "bearer-usage",
         title: "2. Use the API key as Bearer",
         body: buildBearerUsageCurl(origin, publicClientId),
+      },
+      {
+        id: "bearer-billing",
+        title: "2b. Read the end user's wallet (merchant billing apps)",
+        body: buildBearerBillingCurl(origin, publicClientId),
       },
       {
         id: "api-key-exchange",
