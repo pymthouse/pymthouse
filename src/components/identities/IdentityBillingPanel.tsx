@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { identityPlanChangeCheckoutRedirectUrl } from "@/lib/billing/identity-plan-change-redirect";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import { formatBillingUtcDate } from "@/lib/billing-format";
 import { billingCycleHref, invoiceOverlapsCycle } from "@/lib/billing-utils";
@@ -546,8 +547,11 @@ export default function IdentityBillingPanel({
       if (!res.ok) {
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      if (body?.checkoutUrl && !body.subscriptionId) {
-        globalThis.location.href = body.checkoutUrl;
+      // PM-collect responses include the current subscriptionId alongside
+      // checkoutUrl — do not require subscriptionId to be absent.
+      const checkoutUrl = identityPlanChangeCheckoutRedirectUrl(body);
+      if (checkoutUrl) {
+        globalThis.location.href = checkoutUrl;
         return;
       }
       await load();
