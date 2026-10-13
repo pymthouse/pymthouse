@@ -3,11 +3,11 @@ module github.com/pymthouse/signer-turnkey-bootstrap
 go 1.26.6
 
 require (
-	github.com/ethereum/go-ethereum v1.17.6
+	github.com/ethereum/go-ethereum v1.17.8
 	github.com/google/uuid v1.6.0
 	github.com/tkhq/go-sdk v0.17.0
 	github.com/tkhq/go-sdk/pkg/enclave_encrypt v0.0.0-20250602160912-e8b775f28273
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 )
 
 require (
@@ -41,7 +41,7 @@ require (
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
