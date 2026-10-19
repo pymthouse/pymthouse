@@ -221,22 +221,37 @@ export async function getPrepaidCreditBalancesByClientId(
 }
 
 /**
- * Single shared prepaid wallet for an app owner (`owner:{users.id}`).
+ * Result of probing an owner's prepaid wallet for safety rails.
+ *
+ * - `disabled`: Konnect/OpenMeter credits are not in use — no prepaid ledger to strand.
+ * - `empty`: lookup succeeded and the ledger is absent or all-zero.
+ * - `credited`: lookup succeeded with a usable prepaid balance.
+ * - `error`: credits are configured but the balance could not be determined.
  */
-export async function getOwnerPrepaidCreditBalance(
+export type OwnerPrepaidCreditLookup =
+  | { status: "disabled" }
+  | { status: "empty" }
+  | { status: "credited"; balance: CreditAllowanceSummary }
+  | { status: "error"; message: string };
+
+/**
+ * Distinguish "no prepaid wallet" from "could not determine balance".
+ * Prefer this over {@link getOwnerPrepaidCreditBalance} for irreversible ownership moves.
+ */
+export async function lookupOwnerPrepaidCreditBalance(
   ownerUserId: string,
-): Promise<CreditAllowanceSummary | null> {
+): Promise<OwnerPrepaidCreditLookup> {
   if (!isHostedAdminClientAvailable()) {
-    return null;
+    return { status: "disabled" };
   }
   const trimmed = ownerUserId.trim();
   if (!trimmed) {
-    return null;
+    return { status: "empty" };
   }
 
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
   if (!shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
-    return null;
+    return { status: "disabled" };
   }
 
   const client = getHostedAdminClient();
@@ -248,27 +263,49 @@ export async function getOwnerPrepaidCreditBalance(
       apiKey,
     });
     if (!balance) {
-      return null;
+      return {
+        status: "error",
+        message: "Prepaid credit balance lookup returned no data",
+      };
     }
     // Treat an all-zero ledger as "no prepaid wallet" so UI empty-states render
     // instead of a blank AllowanceStrip (which hides when granted+remaining are 0).
     if (balance.balanceUsdMicros <= 0n && balance.lifetimeGrantedUsdMicros <= 0n) {
-      return null;
+      return { status: "empty" };
     }
     return {
-      hasAccess: balance.balanceUsdMicros > 0n,
-      balanceUsdMicros: balance.balanceUsdMicros.toString(),
-      lifetimeGrantedUsdMicros: balance.lifetimeGrantedUsdMicros.toString(),
-      consumedUsdMicros: balance.consumedUsdMicros.toString(),
+      status: "credited",
+      balance: {
+        hasAccess: balance.balanceUsdMicros > 0n,
+        balanceUsdMicros: balance.balanceUsdMicros.toString(),
+        lifetimeGrantedUsdMicros: balance.lifetimeGrantedUsdMicros.toString(),
+        consumedUsdMicros: balance.consumedUsdMicros.toString(),
+      },
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.warn(
       "credit-allowance-summary: owner balance lookup failed",
       trimmed,
-      err instanceof Error ? err.message : String(err),
+      message,
     );
-    return null;
+    return { status: "error", message };
   }
+}
+
+/**
+ * Single shared prepaid wallet for an app owner (`owner:{users.id}`).
+ * Soft-fails to `null` for UI reads; use {@link lookupOwnerPrepaidCreditBalance}
+ * when a null must not be treated as "no credits".
+ */
+export async function getOwnerPrepaidCreditBalance(
+  ownerUserId: string,
+): Promise<CreditAllowanceSummary | null> {
+  const lookup = await lookupOwnerPrepaidCreditBalance(ownerUserId);
+  if (lookup.status === "credited") {
+    return lookup.balance;
+  }
+  return null;
 }
 
 /** Dated prepaid credit grant for the transactions ledger. */
