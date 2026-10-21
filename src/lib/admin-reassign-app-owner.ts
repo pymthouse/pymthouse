@@ -6,7 +6,10 @@ import {
   fundedOwnerBlocksReassign,
   ownerHasPrepaidCredits,
 } from "@/lib/account-deletion";
-import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
+import {
+  lookupOwnerPrepaidCreditBalance,
+  type OwnerPrepaidCreditLookup,
+} from "@/lib/openmeter/credit-allowance-summary";
 import { isPlatformDefaultAppRow } from "@/lib/platform-default-app";
 import {
   ensureProviderAdminMembership,
@@ -16,12 +19,54 @@ import {
 
 export type ReassignAppOwnerResult =
   | { ok: true; ownerId: string }
-  | { ok: false; status: 400 | 404; error: string };
+  | { ok: false; status: 400 | 404 | 503; error: string };
 
-export async function reassignAppOwner(input: {
-  appId: string;
-  newOwnerUserId: string;
-}): Promise<ReassignAppOwnerResult> {
+type ReassignAppOwnerDeps = {
+  lookupOwnerPrepaidCreditBalance: (
+    ownerUserId: string,
+  ) => Promise<OwnerPrepaidCreditLookup>;
+};
+
+const defaultDeps: ReassignAppOwnerDeps = {
+  lookupOwnerPrepaidCreditBalance,
+};
+
+/**
+ * Fail closed when prepaid balance cannot be determined; block when credited.
+ * Returns `null` when reassignment may proceed.
+ */
+export function prepaidCreditBlocksReassign(
+  creditLookup: OwnerPrepaidCreditLookup,
+): Extract<ReassignAppOwnerResult, { ok: false }> | null {
+  if (creditLookup.status === "error") {
+    return {
+      ok: false,
+      status: 503,
+      error:
+        "Could not verify the current owner's prepaid credits. Try again when billing is available.",
+    };
+  }
+  if (
+    creditLookup.status === "credited" &&
+    fundedOwnerBlocksReassign(ownerHasPrepaidCredits(creditLookup.balance))
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "Current owner has prepaid credits. Reassigning owner would strand those credits. Remap login onto the owning row instead.",
+    };
+  }
+  return null;
+}
+
+export async function reassignAppOwner(
+  input: {
+    appId: string;
+    newOwnerUserId: string;
+  },
+  deps: ReassignAppOwnerDeps = defaultDeps,
+): Promise<ReassignAppOwnerResult> {
   const newOwnerUserId = input.newOwnerUserId.trim();
   if (!newOwnerUserId) {
     return { ok: false, status: 400, error: "newOwnerUserId is required" };
@@ -52,14 +97,10 @@ export async function reassignAppOwner(input: {
     return { ok: true, ownerId: newOwnerUserId };
   }
 
-  const balance = await getOwnerPrepaidCreditBalance(app.ownerId).catch(() => null);
-  if (fundedOwnerBlocksReassign(ownerHasPrepaidCredits(balance))) {
-    return {
-      ok: false,
-      status: 400,
-      error:
-        "Current owner has prepaid credits. Reassigning owner would strand those credits. Remap login onto the owning row instead.",
-    };
+  const creditLookup = await deps.lookupOwnerPrepaidCreditBalance(app.ownerId);
+  const creditBlock = prepaidCreditBlocksReassign(creditLookup);
+  if (creditBlock) {
+    return creditBlock;
   }
 
   const previousOwnerId = app.ownerId;
