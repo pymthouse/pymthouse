@@ -2,5 +2,5 @@
 UPDATE "developer_apps"
 SET "jwks_uri" = 'https://pymthouse.com/api/v1/oidc/jwks'
 WHERE "jwks_uri" IS NULL
-   OR "jwks_uri" LIKE '%localhost%'
-   OR "jwks_uri" LIKE '%127.0.0.1%';
+   OR position('localhost' in "jwks_uri") > 0
+   OR position('127.0.0.1' in "jwks_uri") > 0;
