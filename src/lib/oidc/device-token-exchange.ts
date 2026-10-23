@@ -272,12 +272,12 @@ export async function handleDeviceApprovalTokenExchange(
   }
 
   const rec = payload as Record<string, unknown>;
-  const tokenClientId =
-    typeof rec.client_id === "string"
-      ? rec.client_id
-      : typeof rec.azp === "string"
-        ? rec.azp
-        : null;
+  let tokenClientId: string | null = null;
+  if (typeof rec.client_id === "string") {
+    tokenClientId = rec.client_id;
+  } else if (typeof rec.azp === "string") {
+    tokenClientId = rec.azp;
+  }
   if (!tokenClientId || tokenClientId !== publicClientId) {
     throw new TokenExchangeError(
       "invalid_grant",

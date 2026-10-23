@@ -59,7 +59,7 @@ async function resolveKeyValidation(keyHash: string): Promise<ResolvedKey> {
     .where(eq(apiKeys.keyHash, keyHash))
     .limit(1);
   const apiKey = apiKeyRows[0];
-  if (!apiKey || apiKey.status !== "active") {
+  if (apiKey?.status !== "active") {
     return { kind: "invalid" };
   }
 
