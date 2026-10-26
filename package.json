@@ -96,8 +96,8 @@
     "proxy-addr": "2.0.8"
   },
   "devDependencies": {
-    "@redocly/cli": "^2.62.1",
-    "@turnkey/sdk-server": "^8.6.0",
+    "@redocly/cli": "^2.70.0",
+    "@turnkey/sdk-server": "^8.7.1",
     "@types/node": "^26.6.5",
     "@types/oidc-provider": "^9.12.1",
     "@types/react": "^19.3.0",
@@ -106,8 +106,8 @@
     "c8": "^12.0.0",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.4.0",
-    "postcss": "^8.5.29",
+    "eslint-config-next": "16.4.2",
+    "postcss": "^8.5.31",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
