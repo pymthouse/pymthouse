@@ -3,7 +3,7 @@ module github.com/pymthouse/signer-turnkey-bootstrap
 go 1.26.10
 
 require (
-	github.com/ethereum/go-ethereum v1.17.8
+	github.com/ethereum/go-ethereum v1.17.10
 	github.com/google/uuid v1.6.0
 	github.com/tkhq/go-sdk v0.17.0
 	github.com/tkhq/go-sdk/pkg/enclave_encrypt v0.0.0-20250602160912-e8b775f28273
