@@ -129,17 +129,19 @@ export default function SignerLogs({
         ref={scrollRef}
         className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-xs leading-relaxed max-h-96 overflow-auto"
       >
-        {loading ? (
+        {loading && (
           <p className="text-zinc-500 animate-pulse">Loading logs...</p>
-        ) : lines.length === 0 ? (
+        )}
+        {!loading && lines.length === 0 && (
           <p className="text-zinc-500">No logs available</p>
-        ) : (
+        )}
+        {!loading &&
+          lines.length > 0 &&
           lines.map((line, i) => (
             <div key={i} className={`${classifyLine(line)} whitespace-pre-wrap`}>
               {line}
             </div>
-          ))
-        )}
+          ))}
       </div>
     </div>
   );
