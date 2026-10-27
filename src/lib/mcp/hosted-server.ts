@@ -134,8 +134,8 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       description:
         "Query ranked orchestrators for capability names. Requests are filtered to this app's network allowlist.",
       inputSchema: {
-        capabilities: z.array(z.string()).min(1),
-        service_types: z.array(z.string()).optional(),
+        capabilities: z.array(z.string()).min(1).max(100),
+        service_types: z.array(z.string()).max(100).optional(),
         top_n: z.number().int().positive().max(DISCOVERY_TOP_N_MAX).optional(),
       },
     },
