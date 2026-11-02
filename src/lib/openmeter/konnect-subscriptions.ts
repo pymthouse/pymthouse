@@ -229,6 +229,8 @@ export async function listActiveKonnectSubscriptions(): Promise<
 > {
   const out: KonnectSubscription[] = [];
   let page = 1;
+  /** Hard cap — if Konnect omits `total` and always returns a full page, stop. */
+  const maxPages = 50;
   for (;;) {
     const body = await konnectAdminFetch<{
       data?: KonnectSubscription[];
@@ -255,6 +257,9 @@ export async function listActiveKonnectSubscriptions(): Promise<
       break;
     }
     if (typeof total !== "number" && items.length < pageSize) {
+      break;
+    }
+    if (page >= maxPages) {
       break;
     }
     page += 1;

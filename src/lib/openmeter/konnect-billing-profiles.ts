@@ -172,6 +172,7 @@ export async function listKonnectBillingProfiles(): Promise<KonnectBillingProfil
   const profiles: KonnectBillingProfileListItem[] = [];
   let pageNumber = 1;
   const pageSize = 100;
+  const maxPages = 50;
 
   while (true) {
     const params = new URLSearchParams();
@@ -184,7 +185,11 @@ export async function listKonnectBillingProfiles(): Promise<KonnectBillingProfil
     profiles.push(...batch);
 
     const total = page.meta?.page?.total;
-    if (batch.length < pageSize || (total !== undefined && profiles.length >= total)) {
+    if (
+      batch.length < pageSize ||
+      (total !== undefined && profiles.length >= total) ||
+      pageNumber >= maxPages
+    ) {
       break;
     }
     pageNumber += 1;
@@ -210,6 +215,7 @@ export async function listKonnectApps(): Promise<KonnectBillingApp[]> {
   const apps: KonnectBillingApp[] = [];
   let pageNumber = 1;
   const pageSize = 100;
+  const maxPages = 50;
 
   while (true) {
     const params = new URLSearchParams();
@@ -222,7 +228,11 @@ export async function listKonnectApps(): Promise<KonnectBillingApp[]> {
     apps.push(...batch);
 
     const total = page.meta?.page?.total;
-    if (batch.length < pageSize || (total !== undefined && apps.length >= total)) {
+    if (
+      batch.length < pageSize ||
+      (total !== undefined && apps.length >= total) ||
+      pageNumber >= maxPages
+    ) {
       break;
     }
     pageNumber += 1;

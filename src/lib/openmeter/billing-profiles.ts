@@ -93,6 +93,7 @@ async function findBillingProfileForSandboxApp(
 ): Promise<string | null> {
   let page = 1;
   const pageSize = 100;
+  const maxPages = 50;
   for (;;) {
     const listed = await client.billing.profiles.list({ page, pageSize });
     const items = listed?.items ?? [];
@@ -101,7 +102,7 @@ async function findBillingProfileForSandboxApp(
         return profile.id;
       }
     }
-    if (!listed || items.length < pageSize) {
+    if (!listed || items.length < pageSize || page >= maxPages) {
       break;
     }
     page += 1;
@@ -115,6 +116,7 @@ async function findBillingProfileByName(
 ): Promise<string | null> {
   let page = 1;
   const pageSize = 100;
+  const maxPages = 50;
   for (;;) {
     const listed = await client.billing.profiles.list({ page, pageSize });
     const items = listed?.items ?? [];
@@ -123,7 +125,7 @@ async function findBillingProfileByName(
         return profile.id;
       }
     }
-    if (!listed || items.length < pageSize) {
+    if (!listed || items.length < pageSize || page >= maxPages) {
       break;
     }
     page += 1;
