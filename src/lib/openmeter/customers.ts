@@ -618,6 +618,8 @@ async function listTenantCustomersFromOpenMeterPrefix(
   const rows: Array<{ id: string; key: string }> = [];
   let page = 1;
   const pageSize = 100;
+  /** Hard cap — if Konnect ignores `page`, never spin forever. */
+  const maxPages = 50;
   const keyPrefix = `${clientId}:`;
 
   for (;;) {
@@ -632,7 +634,7 @@ async function listTenantCustomersFromOpenMeterPrefix(
         rows.push({ id: item.id, key: item.key });
       }
     }
-    if (!result || items.length < pageSize) {
+    if (!result || items.length < pageSize || page >= maxPages) {
       break;
     }
     page += 1;
