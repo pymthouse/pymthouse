@@ -23,6 +23,7 @@ import {
   signerBalanceGateSubject,
   signerSpendableCacheSubject,
   signerSpendableLookupSubject,
+  UnboundOwnerWireSubjectError,
   wireUsageSubjectFromJwt,
 } from "@/lib/openmeter/billing-identity";
 import {
@@ -884,5 +885,57 @@ test("assertAppUserRetailBillingSubject rejects platform-default members", async
         }),
       (err: unknown) => err instanceof AppUserOwnerWalletMutationError,
     );
+  });
+});
+
+test("merchant rejects unbound owner: wire for a foreign platform user", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const victimId = await createTestUserWithCleanup(t);
+
+  await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
+  resetBillingIdentityCache();
+  await assert.rejects(
+    () =>
+      resolveOpenMeterBillingIdentity({
+        clientId: seeded.clientId,
+        externalUserId: `owner:${victimId}`,
+      }),
+    (err: unknown) =>
+      err instanceof UnboundOwnerWireSubjectError &&
+      err.code === "unbound_owner_wire_subject",
+  );
+});
+
+test("merchant still accepts owner: wire for the app owner", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
+  resetBillingIdentityCache();
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: `owner:${seeded.userId}`,
+  });
+  assert.equal(identity.isOwner, true);
+  assert.equal(identity.payerPlatformUserId, seeded.userId);
+  assert.equal(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
+});
+
+test("platform-default still accepts owner: wire for Explorer members", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const memberId = await createTestUserWithCleanup(t);
+
+  resetBillingIdentityCache();
+  await withTemporaryPlatformDefault(seeded.clientId, async () => {
+    resetBillingIdentityCache();
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId: seeded.clientId,
+      externalUserId: `owner:${memberId}`,
+    });
+    assert.equal(identity.isOwner, true);
+    assert.equal(identity.payerPlatformUserId, memberId);
+    assert.equal(identity.customerKey, buildOwnerCustomerKey(memberId));
   });
 });
