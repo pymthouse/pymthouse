@@ -594,6 +594,17 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
 
   if (isOwnerWireSubject(externalUserId)) {
     const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
+    // `owner:{id}` is a privileged wire form for this app's cost-rail wallet.
+    // Accept only the app owner (or any Explorer on the platform-default app).
+    // Unbound `owner:{victim}` on a merchant/rollup app would otherwise resolve
+    // to the victim's prepaid customer — IDOR on wallet reads and wrong-subject
+    // grants via admin / M2M top-up paths.
+    if (
+      ownerUserId !== app.ownerId &&
+      !app.isPlatformDefault
+    ) {
+      throw new UnboundOwnerWireSubjectError(ownerUserId, app.publicClientId);
+    }
     return platformUserIdentity({
       platformUserId: ownerUserId,
       isOwner: true,
@@ -744,6 +755,24 @@ export class AppUserOwnerWalletMutationError extends Error {
   ) {
     super(message);
     this.name = "AppUserOwnerWalletMutationError";
+  }
+}
+
+/**
+ * Thrown when `owner:{users.id}` names a platform user who is not this app's
+ * owner (and the app is not the platform-default Explorer surface). Callers
+ * must not resolve that subject onto the foreign prepaid wallet.
+ */
+export class UnboundOwnerWireSubjectError extends Error {
+  readonly code = "unbound_owner_wire_subject" as const;
+
+  constructor(
+    ownerUserId: string,
+    publicClientId: string,
+    message = `owner:${ownerUserId} is not the billing owner for ${publicClientId}`,
+  ) {
+    super(message);
+    this.name = "UnboundOwnerWireSubjectError";
   }
 }
 

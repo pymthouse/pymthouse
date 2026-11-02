@@ -24,6 +24,10 @@ import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/plat
 import { clampPageParam } from "@/lib/billing/wallet-http";
 import { parseUsdMicrosString } from "@/lib/format-usd-micros";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
+import {
+  isOwnerWireSubject,
+  normalizePlatformUserId,
+} from "@/lib/openmeter/customer-key";
 import { queryOpenMeterIdentityTotals } from "@/lib/openmeter/usage-read";
 
 export const ADMIN_APP_LIST_DEFAULT_PAGE_SIZE = 25;
@@ -56,6 +60,12 @@ export type AppUserCreditDecision =
       status: 409;
       code: "owner_rollup_credit_owner";
       ownerUserId: string;
+      error: string;
+    }
+  | {
+      ok: false;
+      status: 400;
+      code: "owner_wire_not_end_user";
       error: string;
     };
 
@@ -319,8 +329,24 @@ export function decideAppUserCreditGrant(input: {
         "/grants.",
     };
   }
+  // Merchant end-user grants must not accept privileged `owner:{id}` wire
+  // subjects — those rematerialize as platform prepaid wallets and can credit
+  // a foreign owner when the id is not this app's owner.
+  if (
+    !input.isPlatformDefault &&
+    isOwnerWireSubject(input.externalUserId)
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      code: "owner_wire_not_end_user",
+      error:
+        "externalUserId must be an end-user id; use POST /api/v1/admin/billing/owners/{userId}/grants for owner wallets",
+    };
+  }
   if (input.isPlatformDefault) {
-    const ownerUserId = input.externalUserId.trim();
+    // Strip owner:/user: so CS can paste either form; credit the bare users.id.
+    const ownerUserId = normalizePlatformUserId(input.externalUserId);
     return { ok: true, mode: "self_owner_wallet", ownerUserId };
   }
   return { ok: true, mode: "user_wallet" };

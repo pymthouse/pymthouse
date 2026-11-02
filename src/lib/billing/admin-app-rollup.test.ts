@@ -150,12 +150,40 @@ test("decideAppUserCreditGrant allows merchant user wallets", () => {
   assert.deepEqual(allowed, { ok: true, mode: "user_wallet" });
 });
 
+test("decideAppUserCreditGrant rejects owner: wire on merchant apps", () => {
+  const denied = decideAppUserCreditGrant({
+    sharesOwnerCostRail: false,
+    isPlatformDefault: false,
+    ownerUserId: "owner-1",
+    externalUserId: "owner:victim-user",
+  });
+  assert.equal(denied.ok, false);
+  if (!denied.ok) {
+    assert.equal(denied.status, 400);
+    assert.equal(denied.code, "owner_wire_not_end_user");
+  }
+});
+
 test("decideAppUserCreditGrant credits platform-default members as owners", () => {
   const allowed = decideAppUserCreditGrant({
     sharesOwnerCostRail: false,
     isPlatformDefault: true,
     ownerUserId: "app-owner",
     externalUserId: "member-owner",
+  });
+  assert.deepEqual(allowed, {
+    ok: true,
+    mode: "self_owner_wallet",
+    ownerUserId: "member-owner",
+  });
+});
+
+test("decideAppUserCreditGrant strips owner: on platform-default grants", () => {
+  const allowed = decideAppUserCreditGrant({
+    sharesOwnerCostRail: false,
+    isPlatformDefault: true,
+    ownerUserId: "app-owner",
+    externalUserId: "owner:member-owner",
   });
   assert.deepEqual(allowed, {
     ok: true,
