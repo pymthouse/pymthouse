@@ -1,16 +1,24 @@
-name: SonarQube Cloud analysis
+name: SonarQube Community analysis
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'releases/**']
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonarqube-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sonarqube:
-    name: SonarQube Cloud
+    name: SonarQube Quality Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -38,6 +46,8 @@ jobs:
         with:
           # Shallow clones should be disabled for a better relevancy of analysis
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -55,7 +65,32 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
-      - name: SonarQube Cloud scan
+      - name: Restore SonarQube scanner cache
+        id: sonar-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: sonarqube-${{ runner.os }}-${{ runner.arch }}-26.5-${{ hashFiles('sonar-project.properties') }}
+      - name: Set up scanner Java runtime
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: SonarQube Quality Gate scan
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_COMMUNITY_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          args: >-
+            -Dsonar.scanner.skipJreProvisioning=true
+            -Dsonar.scanner.javaExePath=${{ env.JAVA_HOME }}/bin/java
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=600
+            -Dsonar.scm.revision=${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Save SonarQube scanner cache
+        if: always() && steps.sonar-cache.outcome == 'success' && steps.sonar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ steps.sonar-cache.outputs.cache-primary-key }}
