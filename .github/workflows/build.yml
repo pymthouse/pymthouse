@@ -2,7 +2,7 @@ name: SonarQube Community analysis
 
 on:
   push:
-    branches: ['**']
+    branches: [main, 'releases/**']
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
   sonarqube:
     name: SonarQube Quality Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -65,6 +65,12 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
+      - name: Restore SonarQube scanner cache
+        id: sonar-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: sonarqube-${{ runner.os }}-${{ runner.arch }}-26.5-${{ hashFiles('sonar-project.properties') }}
       - name: Set up scanner Java runtime
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -82,3 +88,9 @@ jobs:
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=600
             -Dsonar.scm.revision=${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Save SonarQube scanner cache
+        if: always() && steps.sonar-cache.outcome == 'success' && steps.sonar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ steps.sonar-cache.outputs.cache-primary-key }}
