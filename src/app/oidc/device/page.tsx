@@ -5,7 +5,7 @@ import { authOptions } from "@/lib/next-auth-options";
 import DeviceVerifyForm from "./device-verify-form";
 import { resolveHostContext } from "@/lib/oidc/host-resolution";
 import { getInitiateLoginUriForDeviceFlow } from "@/lib/oidc/clients";
-import { SqliteAdapter } from "@/lib/oidc/adapter";
+import { PostgresOidcAdapter } from "@/lib/oidc/adapter";
 import { normalizeUserCode } from "@/lib/oidc/device";
 import { isDeviceCodeBound, isDeviceCodeDenied } from "@/lib/oidc/device-approval";
 import {
@@ -43,7 +43,7 @@ async function lookupDeviceCodeForPage(
 ): Promise<DeviceCodePageLookup> {
   if (userCode) {
     try {
-      const adapter = new SqliteAdapter("DeviceCode");
+      const adapter = new PostgresOidcAdapter("DeviceCode");
       const normalized = normalizeUserCode(userCode);
       const payload = await adapter.findByUserCode(normalized);
       if (payload) {

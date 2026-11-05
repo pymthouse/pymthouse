@@ -6,7 +6,11 @@
 export const OIDC_MOUNT_PATH = "/api/v1/oidc";
 
 function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
 }
 
 /** HTTP may stay http for loopback, RFC1918, IPv6 link-local, and *.local dev hosts. */

@@ -74,7 +74,11 @@ function parseDeviceCodeFromResource(resource: string): string | null {
 
 /** Normalize issuer / audience strings for comparison (trailing slashes). */
 function normalizeResourceOrAudienceUri(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  let out = value.trim();
+  while (out.endsWith("/")) {
+    out = out.slice(0, -1);
+  }
+  return out;
 }
 
 /**
