@@ -88,6 +88,26 @@ function joinScopes(scopes: string[]): string {
   return scopes.join(" ");
 }
 
+function parseCreateAppError(text: string, status: number): string {
+  try {
+    const data = text ? JSON.parse(text) : {};
+    if (data && typeof data === "object") {
+      if (typeof (data as { error_description?: unknown }).error_description === "string") {
+        return (data as { error_description: string }).error_description;
+      }
+      if (typeof (data as { message?: unknown }).message === "string") {
+        return (data as { message: string }).message;
+      }
+      if (typeof (data as { error?: unknown }).error === "string") {
+        return (data as { error: string }).error;
+      }
+    }
+  } catch {
+    if (text?.trim()) return text.trim().slice(0, 500);
+  }
+  return `Failed to create app (${status})`;
+}
+
 export default function AppWizard({ initialData }: Readonly<Props>) {
   const router = useRouter();
   const [formData, setFormData] = useState<AppFormData>({
@@ -211,23 +231,7 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const text = await res.text();
-        let msg = `Failed to create app (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data && typeof data === "object") {
-            if (typeof (data as { error_description?: unknown }).error_description === "string") {
-              msg = (data as { error_description: string }).error_description;
-            } else if (typeof (data as { message?: unknown }).message === "string") {
-              msg = (data as { message: string }).message;
-            } else if (typeof (data as { error?: unknown }).error === "string") {
-              msg = (data as { error: string }).error;
-            }
-          }
-        } catch {
-          if (text?.trim()) msg = text.trim().slice(0, 500);
-        }
-        throw new Error(msg);
+        throw new Error(parseCreateAppError(await res.text(), res.status));
       }
       const data = await res.json();
       router.push(`/apps/${data.id}`);
