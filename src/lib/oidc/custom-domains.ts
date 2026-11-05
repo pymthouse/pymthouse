@@ -40,7 +40,7 @@ export async function getAppByCustomDomain(
     .limit(1);
   const app = rows[0];
 
-  if (!app || !app.customDomainVerifiedAt) {
+  if (!app?.customDomainVerifiedAt) {
     return null;
   }
 
@@ -173,7 +173,7 @@ export async function enableCustomLoginDomain(appId: string): Promise<boolean> {
     .limit(1);
   const app = appRows[0];
 
-  if (!app || !app.customDomainVerifiedAt) {
+  if (!app?.customDomainVerifiedAt) {
     return false;
   }
 
@@ -222,7 +222,7 @@ export async function getCustomDomainStatus(
     .limit(1);
   const app = appRows[0];
 
-  if (!app || !app.customLoginDomain) {
+  if (!app?.customLoginDomain) {
     return null;
   }
 
