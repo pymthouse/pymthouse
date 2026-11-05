@@ -238,8 +238,8 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
   tags: [OPENAPI_TAGS.usage],
   summary: "Usage balance",
   description:
-    "M2M Basic only. Requires `externalUserId`. Returns plan included-usage " +
-    "allowance for that end user (not prepaid ledger fields).",
+    "M2M Basic only. Requires `externalUserId`. `remainingUsdMicros` is the " +
+    "plan included-usage discount. `spendableUsdMicros` adds prepaid credits.",
   security: m2mSecurity,
   request: {
     params: z.object({ clientId }),

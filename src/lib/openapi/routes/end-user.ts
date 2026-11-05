@@ -123,6 +123,7 @@ defineRouteMetadata("get", meUsagePath("/balance"), {
   description:
     "Plan included-usage allowance for the authenticated subject " +
     "(`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount). " +
+    "`spendableUsdMicros` is prepaid credits plus that remaining discount. " +
     "Prepaid credits settle invoices/charges and are not the meter source. " +
     "`userId` / `externalUserId` query overrides are rejected.",
   security: endUserSecurity,

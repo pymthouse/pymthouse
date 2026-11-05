@@ -277,6 +277,7 @@ export async function getUsageBalanceAllowance(input: {
   lifetimeGrantedUsdMicros: string;
   hasAccess: boolean;
   remainingUsdMicros: string;
+  spendableUsdMicros: string;
 } | null> {
   const details = await getSpendableAllowanceDetails(input);
   if (!details) {
@@ -294,6 +295,9 @@ export async function getUsageBalanceAllowance(input: {
     remainingUsdMicros: remaining.toString(),
     lifetimeGrantedUsdMicros: granted.toString(),
     consumedUsdMicros: consumed.toString(),
+    // Prepaid credits plus remaining plan discount. This is the balance a
+    // client should show as available credit.
+    spendableUsdMicros: spendable.toString(),
     hasAccess: spendable > 0n,
   };
 }
