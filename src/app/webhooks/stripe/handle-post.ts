@@ -4,6 +4,7 @@ import {
   restoreAppUserBillingProfileAfterPaymentMethodAttached,
   restoreAppUserBillingProfileForCheckoutSession,
 } from "@/lib/openmeter/app-user-payment-method";
+import { UnboundOwnerWireSubjectError } from "@/lib/openmeter/billing-identity";
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
@@ -469,6 +470,18 @@ async function settleMerchantTopUp(input: {
       sessionId: input.sessionId,
     });
   } catch (err) {
+    if (err instanceof UnboundOwnerWireSubjectError) {
+      console.warn(
+        TAG,
+        "merchant top-up ignored: unbound owner wire subject",
+        sanitizeForLog(input.clientId),
+        sanitizeForLog(input.externalUserId),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "unbound_owner_wire_subject",
+      });
+    }
     logHandlerError("merchant top-up settle", err);
     return NextResponse.json({ error: "handler_failed" }, { status: 500 });
   }
@@ -670,6 +683,18 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
       paymentIntentId,
     });
   } catch (err) {
+    if (err instanceof UnboundOwnerWireSubjectError) {
+      console.warn(
+        TAG,
+        "auto-topup ignored: unbound owner wire subject",
+        sanitizeForLog(clientId),
+        sanitizeForLog(externalUserId),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "unbound_owner_wire_subject",
+      });
+    }
     logHandlerError("auto-topup settle", err);
     return NextResponse.json({ error: "handler_failed" }, { status: 500 });
   }

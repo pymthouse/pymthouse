@@ -594,6 +594,15 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
 
   if (isOwnerWireSubject(externalUserId)) {
     const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
+    // `owner:{id}` is the cost-rail wallet for this app's owner (or any
+    // Explorer on the platform-default app). Anywhere else it is a foreign
+    // prepaid customer — wallet reads and top-up grants must not land there.
+    assertOwnerWireSubjectBound({
+      ownerUserId,
+      appOwnerId: app.ownerId,
+      isPlatformDefault: app.isPlatformDefault,
+      publicClientId: app.publicClientId,
+    });
     return platformUserIdentity({
       platformUserId: ownerUserId,
       isOwner: true,
@@ -745,6 +754,45 @@ export class AppUserOwnerWalletMutationError extends Error {
     super(message);
     this.name = "AppUserOwnerWalletMutationError";
   }
+}
+
+/**
+ * Thrown when `owner:{users.id}` names a platform user who is not this app's
+ * owner (and the app is not the platform-default Explorer surface). Callers
+ * must not resolve that subject onto the foreign prepaid wallet.
+ */
+export class UnboundOwnerWireSubjectError extends Error {
+  readonly code = "unbound_owner_wire_subject" as const;
+
+  constructor(
+    ownerUserId: string,
+    publicClientId: string,
+    message = `owner:${ownerUserId} is not the billing owner for ${publicClientId}`,
+  ) {
+    super(message);
+    this.name = "UnboundOwnerWireSubjectError";
+  }
+}
+
+/**
+ * Accept `owner:{id}` only for this app's owner, or for any Explorer when the
+ * app is the platform default. Pure so the bind rule can be tested without a
+ * database; {@link resolveOpenMeterBillingIdentity} calls it before returning
+ * a platform wallet.
+ */
+export function assertOwnerWireSubjectBound(input: {
+  ownerUserId: string;
+  appOwnerId: string | null;
+  isPlatformDefault: boolean;
+  publicClientId: string;
+}): void {
+  if (input.isPlatformDefault || input.ownerUserId === input.appOwnerId) {
+    return;
+  }
+  throw new UnboundOwnerWireSubjectError(
+    input.ownerUserId,
+    input.publicClientId,
+  );
 }
 
 /**
