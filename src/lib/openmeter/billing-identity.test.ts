@@ -11,7 +11,9 @@ import {
   appUserOpenMeterLookupKeys,
   appUserRetailCustomerKey,
   AppUserOwnerWalletMutationError,
+  assertOwnerWireSubjectBound,
   assertAppUserRetailBillingSubject,
+  UnboundOwnerWireSubjectError,
   billingSubjectClaim,
   buildPayerActorWireSubject,
   costOwnerUserIdClaim,
@@ -48,6 +50,38 @@ import {
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 import { withTemporaryPlatformDefault } from "@/test-utils/platform-default-lock";
+
+nodeTest("assertOwnerWireSubjectBound rejects a foreign owner: subject", () => {
+  assert.throws(
+    () =>
+      assertOwnerWireSubjectBound({
+        ownerUserId: "victim-user",
+        appOwnerId: "app-owner",
+        isPlatformDefault: false,
+        publicClientId: "app_merchant",
+      }),
+    (err: unknown) =>
+      err instanceof UnboundOwnerWireSubjectError &&
+      err.code === "unbound_owner_wire_subject" &&
+      err.message.includes("owner:victim-user") &&
+      err.message.includes("app_merchant"),
+  );
+});
+
+nodeTest("assertOwnerWireSubjectBound allows the app owner and platform-default explorers", () => {
+  assertOwnerWireSubjectBound({
+    ownerUserId: "app-owner",
+    appOwnerId: "app-owner",
+    isPlatformDefault: false,
+    publicClientId: "app_merchant",
+  });
+  assertOwnerWireSubjectBound({
+    ownerUserId: "explorer-user",
+    appOwnerId: "app-owner",
+    isPlatformDefault: true,
+    publicClientId: "app_platform",
+  });
+});
 
 nodeTest("rejectOwnerWireRetailSubject rejects owner: subjects only", () => {
   assert.throws(

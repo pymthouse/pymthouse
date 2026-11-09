@@ -51,6 +51,21 @@ export const POST = withAdminGuardParams<{
     externalUserId,
   });
   if (!decision.ok) {
+    if (decision.code === "owner_wire_not_end_user") {
+      return NextResponse.json(
+        {
+          type: "https://pymthouse.com/problems/owner-wire-not-end-user",
+          title: "Owner wire subject not allowed",
+          status: 400,
+          code: decision.code,
+          error: decision.error,
+        },
+        {
+          status: 400,
+          headers: { "Content-Type": "application/problem+json" },
+        },
+      );
+    }
     return NextResponse.json(
       {
         type: "https://pymthouse.com/problems/owner-rollup-credit-owner",
