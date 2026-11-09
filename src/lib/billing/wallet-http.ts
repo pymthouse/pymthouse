@@ -22,6 +22,12 @@ export function walletUpstreamErrorResponse(err: unknown, context: string): Next
       { status: 409 },
     );
   }
+  if (/unbound_owner_wire_subject|is not the billing owner for/i.test(message)) {
+    return NextResponse.json(
+      { error: "externalUserId is not valid for this app wallet" },
+      { status: 400 },
+    );
+  }
   return NextResponse.json(
     { error: "Billing provider request failed" },
     { status: 502 },
