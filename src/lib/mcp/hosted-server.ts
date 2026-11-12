@@ -9,6 +9,10 @@ import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
 import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
+import {
+  discoveryFreshnessFromDocument,
+  queryNodeDiscovery,
+} from "@/lib/mcp/discovery-query";
 import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
 import { MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
@@ -153,20 +157,26 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
           manifest_version: manifest.manifestVersion,
         });
       }
-      const data = await discoveryFetch("/v1/discovery/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          capabilities: filtered,
-          serviceTypes: service_types ?? ["live-video-to-video", "live-runner"],
-          topN: top_n ?? 50,
-          sortBy: "avail",
-        }),
+      const document = await discoveryFetch("/discovery");
+      const result = queryNodeDiscovery(document, {
+        capabilities,
+        manifestCapabilities: manifest.capabilities,
+        topN: top_n ?? 50,
+        sortBy: "avail",
+        // service_types is advisory only: node runners have no service type.
+        serviceTypes: service_types,
       });
       return textResult({
-        filtered_capabilities: filtered,
-        dropped_capabilities: capabilities.filter((c) => !filtered.includes(c)),
-        result: data,
+        filtered_capabilities: result.filteredCapabilities,
+        dropped_capabilities: result.droppedCapabilities,
+        result: {
+          results: result.results,
+          truncated: result.truncated,
+          freshest_observed_at: result.freshestObservedAt,
+          // Legacy `serviceTypes` filter is not expressible on the node
+          // contract; surfaced for transparency.
+          service_types: service_types ?? ["live-video-to-video", "live-runner"],
+        },
       });
     },
   );
@@ -174,12 +184,12 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
   server.registerTool(
     "get_discovery_freshness",
     {
-      description: "Discovery-service dataset freshness.",
+      description: "Builder-engine discovery dataset freshness (derived from the node `livepeer-discovery` document).",
       inputSchema: {},
     },
     async () => {
-      const data = await discoveryFetch("/v1/discovery/freshness");
-      return textResult(data);
+      const document = await discoveryFetch("/discovery");
+      return textResult(discoveryFreshnessFromDocument(document));
     },
   );
 

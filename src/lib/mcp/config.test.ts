@@ -63,7 +63,12 @@ test("readDiscoveryServiceUrl falls back to DISCOVERY_URL then default", () => {
       DISCOVERY_URL: undefined,
     },
     () => {
-      assert.match(readDiscoveryServiceUrl(), /^https:\/\//);
+      // Default is the builder-engine discovery base (no /discovery suffix:
+      // discoveryFetch appends the path).
+      assert.equal(
+        readDiscoveryServiceUrl(),
+        "https://discovery-production-70c1.up.railway.app",
+      );
     },
   );
 });
