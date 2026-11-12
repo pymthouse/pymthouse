@@ -38,7 +38,7 @@ function attachSdkToken(
         discovery:
           session.discovery_url?.trim() ||
           getSignerDiscoveryUrl() ||
-          `${readDiscoveryServiceUrl()}/v1/discovery/raw?serviceType=live-runner`,
+          `${readDiscoveryServiceUrl()}/discovery`,
       });
     } catch {
       sdkToken = undefined;

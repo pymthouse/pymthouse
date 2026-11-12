@@ -2,7 +2,7 @@ export function readDiscoveryServiceUrl(): string {
   return (
     process.env.DISCOVERY_SERVICE_URL?.trim() ||
     process.env.DISCOVERY_URL?.trim() ||
-    "https://discovery-service-production-8955.up.railway.app"
+    "https://discovery-production-70c1.up.railway.app"
   ).replace(/\/$/, "");
 }
 
