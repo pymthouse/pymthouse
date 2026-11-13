@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { capabilityAllowKeys } from "@/lib/mcp/capability-allow";
 import {
-  capabilityAllowKeys,
   discoveryFreshnessFromDocument,
   filterRunnersByCapabilities,
   flattenDiscoveryDocument,

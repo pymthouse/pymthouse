@@ -12,6 +12,7 @@
  */
 
 import {
+  capabilityAllowKeys,
   isCapabilityAllowed,
   type ManifestCapability,
 } from "@/lib/mcp/capability-allow";
@@ -54,6 +55,18 @@ export interface QueryOrchestratorsOptions {
   serviceTypes?: string[];
   /** App manifest capability allowlist used to gate which capabilities may be requested. */
   manifestCapabilities?: ManifestCapability[];
+  /**
+   * Pre-filtered capability list (already allowlist-checked by the caller,
+   * e.g. `filterAllowedCapabilities`). When provided, `queryNodeDiscovery`
+   * uses it directly and skips the internal re-filter, so the allowlist
+   * check happens exactly once.
+   */
+  filteredCapabilities?: string[];
+  /**
+   * Capabilities the manifest allowlist rejected. Set by the caller so the
+   * result's `droppedCapabilities` is accurate without re-deriving it.
+   */
+  droppedCapabilities?: string[];
 }
 
 export interface QueryOrchestratorsResult {
@@ -107,22 +120,6 @@ export function filterRunnersByCapabilities(
   return { kept, filteredCapabilities: filtered, droppedCapabilities: dropped };
 }
 
-export function capabilityAllowKeys(
-  capabilities: ManifestCapability[],
-): Set<string> {
-  const keys = new Set<string>();
-  const seps = ["/", "|", ":"] as const;
-  for (const capability of capabilities ?? []) {
-    const pipeline = capability?.pipeline?.trim();
-    const modelId = capability?.modelId?.trim();
-    if (!pipeline || !modelId) continue;
-    for (const sep of seps) {
-      keys.add(pipeline + sep + modelId);
-    }
-    if (pipeline === modelId) keys.add(pipeline);
-  }
-  return keys;
-}
 
 function parseStamp(stamp: string | undefined): number | null {
   if (!stamp) return null;
@@ -195,11 +192,33 @@ export function queryNodeDiscovery(
   options: QueryOrchestratorsOptions = {},
 ): QueryOrchestratorsResult {
   const runners = flattenDiscoveryDocument(document);
-  const { kept, filteredCapabilities, droppedCapabilities } = filterRunnersByCapabilities(
-    runners,
-    options.capabilities ?? [],
-    options.manifestCapabilities,
-  );
+
+  // If the caller has already run the manifest allowlist check (e.g.
+  // `filterAllowedCapabilities` in `hosted-server.ts`), reuse its output
+  // and skip the internal re-filter so the allowlist check happens once.
+  const preFiltered = options.filteredCapabilities;
+  let kept: DiscoveryRunner[];
+  let filteredCapabilities: string[];
+  let droppedCapabilities: string[];
+  if (preFiltered !== undefined) {
+    const wanted = new Set(preFiltered.map((c) => c.trim()).filter(Boolean));
+    kept = runners.filter((r) => {
+      const app = (r.app ?? "").trim();
+      return app && wanted.has(app);
+    });
+    filteredCapabilities = preFiltered;
+    droppedCapabilities = options.droppedCapabilities ?? [];
+  } else {
+    const filtered = filterRunnersByCapabilities(
+      runners,
+      options.capabilities ?? [],
+      options.manifestCapabilities,
+    );
+    kept = filtered.kept;
+    filteredCapabilities = filtered.filteredCapabilities;
+    droppedCapabilities = filtered.droppedCapabilities;
+  }
+
   const ranked = rankRunners(kept, options.sortBy ?? "avail", options.topN);
   return {
     results: ranked.results,

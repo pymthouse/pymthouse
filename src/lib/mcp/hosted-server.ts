@@ -158,9 +158,14 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         });
       }
       const document = await discoveryFetch("/discovery");
+      // `filtered` is already the allowlist-checked subset of `capabilities`
+      // (line above), so pass it as pre-filtered and let queryNodeDiscovery
+      // skip the redundant internal re-filter.
+      const dropped = capabilities.filter((c) => !filtered.includes(c));
       const result = queryNodeDiscovery(document, {
-        capabilities,
-        manifestCapabilities: manifest.capabilities,
+        capabilities: filtered,
+        filteredCapabilities: filtered,
+        droppedCapabilities: dropped,
         topN: top_n ?? 50,
         sortBy: "avail",
         // service_types is advisory only: node runners have no service type.
