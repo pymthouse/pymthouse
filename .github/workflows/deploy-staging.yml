@@ -110,9 +110,30 @@ jobs:
       - name: Deploy, assign branch, and alias staging
         run: |
           set -euo pipefail
-          url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          # `vercel alias set` calls GET /v2/user. Project tokens have no user
+          # and that call returns "User not found", so alias through the API.
+          deploy_json=$(vercel deploy --prebuilt --json --token="$VERCEL_TOKEN")
+          read -r deployment_id deployment_url < <(printf '%s' "$deploy_json" | python3 -c '
+          import json, sys
+          text = sys.stdin.read()
+          data = json.loads(text[text.find("{") :])
+          deployment = data.get("deployment") or data
+          print(deployment["id"], deployment["url"])
+          ')
           STAGING_GIT_BRANCH="$DEPLOY_BRANCH" bash scripts/assign-staging-domain-branch.sh
-          vercel alias set "$url" staging.pymthouse.com --token="$VERCEL_TOKEN"
-          echo "Deployment URL: $url"
+          alias_file=$(mktemp)
+          alias_status=$(curl -sS -o "$alias_file" -w '%{http_code}' -X POST \
+            "https://api.vercel.com/v2/deployments/${deployment_id}/aliases?teamId=${VERCEL_ORG_ID}" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"alias":"staging.pymthouse.com"}')
+          if (( alias_status < 200 || alias_status >= 300 )); then
+            echo "Alias request failed (HTTP ${alias_status})" >&2
+            cat "$alias_file" >&2
+            rm -f "$alias_file"
+            exit 1
+          fi
+          rm -f "$alias_file"
+          echo "Deployment URL: $deployment_url"
           echo "Staging branch: $DEPLOY_BRANCH"
           echo "Staging alias: https://staging.pymthouse.com"
