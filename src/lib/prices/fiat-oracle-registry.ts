@@ -43,7 +43,7 @@ export function resolveBillingOracleProviderKey(
 ): FiatOracleProviderDefinition {
   const normalized = key?.trim() ?? "";
   const provider = providerByKey.get(normalized);
-  if (!provider || !provider.enabled) {
+  if (!provider?.enabled) {
     return providerByKey.get("global_eth_usd")!;
   }
   return provider;
