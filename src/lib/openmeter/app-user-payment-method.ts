@@ -30,11 +30,11 @@ import {
   type OwnerPaymentMethodListItem,
   unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
+import { createMerchantConnectCheckoutForUser } from "@/lib/stripe/merchant-connect-checkout";
 import {
   appActiveLivemodeMatchesWebhookPlane,
   appStripeLivemode,
   connectPaymentsOnlyEnabled,
-  createMerchantConnectCheckoutForUser,
   getAppUserStripeCustomer,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";

@@ -9,11 +9,8 @@ import {
   resolveWalletBillingTarget,
 } from "@/lib/billing/wallet-billing-target";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
-import {
-  createMerchantEndUserTopUpCheckoutSession,
-  createOwnerTopUpCheckoutSession,
-  parseTopUpAmountUsd,
-} from "@/lib/stripe/topup-checkout";
+import { createOwnerTopUpCheckoutSession, parseTopUpAmountUsd } from "@/lib/stripe/topup-checkout";
+import { createMerchantEndUserTopUpCheckoutSession } from "@/lib/stripe/topup-checkout-session";
 
 /**
  * POST /api/v1/apps/{clientId}/billing/wallet/top-up
