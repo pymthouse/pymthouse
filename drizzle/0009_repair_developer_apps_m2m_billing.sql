@@ -7,12 +7,14 @@ BEGIN
   -- Clear dangling M2M FK targets so ADD CONSTRAINT cannot fail if oidc_clients rows were removed.
   UPDATE "developer_apps" d
   SET "m2m_oidc_client_id" = NULL
-  WHERE d."m2m_oidc_client_id" IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1
-      FROM "public"."oidc_clients" c
-      WHERE c."id" = d."m2m_oidc_client_id"
-    );
+  FROM (
+    SELECT d2."id"
+    FROM "developer_apps" d2
+    LEFT JOIN "public"."oidc_clients" c ON c."id" = d2."m2m_oidc_client_id"
+    WHERE d2."m2m_oidc_client_id" IS NOT NULL
+      AND c."id" IS NULL
+  ) dangling
+  WHERE d."id" = dangling."id";
 
   IF NOT EXISTS (
     SELECT 1
