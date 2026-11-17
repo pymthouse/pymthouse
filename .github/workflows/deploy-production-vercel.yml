@@ -69,7 +69,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Vercel CLI
-        run: npm install -g vercel@56.4.0 --ignore-scripts
+        # 56.x loads the team via GET /teams/:id before the project. Project-scoped
+        # tokens are forbidden from that call and pull fails with
+        # "Could not retrieve Project Settings". 65.x skips the team lookup.
+        run: npm install -g vercel@65.17.0 --ignore-scripts
 
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
@@ -90,10 +93,37 @@ jobs:
       - name: Deploy to pymthouse production
         id: vercel_deploy
         run: |
-          deployment_url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
-          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
-          echo "Vercel alias: $deployment_url"
+          set -euo pipefail
+          deploy_json=$(vercel deploy --prebuilt --prod --json --token="$VERCEL_TOKEN")
+          read -r deployment_id deployment_url < <(printf '%s' "$deploy_json" | python3 -c '
+          import json, sys
+          text = sys.stdin.read()
+          data = json.loads(text[text.find("{") :])
+          deployment = data.get("deployment") or data
+          print(deployment["id"], deployment["url"])
+          ')
+          {
+            echo "deployment_id=$deployment_id"
+            echo "deployment_url=$deployment_url"
+          } >> "$GITHUB_OUTPUT"
+          echo "Vercel deployment: $deployment_url"
           echo "Canonical URL: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}"
 
       - name: Promote deployment (assign custom domains)
-        run: vercel promote "${{ steps.vercel_deploy.outputs.deployment_url }}" --yes --token="$VERCEL_TOKEN"
+        run: |
+          set -euo pipefail
+          # `vercel promote` resolves the caller with GET /v2/user. Project tokens
+          # have no user, so queue promotion on the project API instead.
+          promote_file=$(mktemp)
+          promote_status=$(curl -sS -o "$promote_file" -w '%{http_code}' -X POST \
+            "https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/promote/${{ steps.vercel_deploy.outputs.deployment_id }}?teamId=${VERCEL_ORG_ID}" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          if (( promote_status < 200 || promote_status >= 300 )); then
+            echo "Promote request failed (HTTP ${promote_status})" >&2
+            cat "$promote_file" >&2
+            rm -f "$promote_file"
+            exit 1
+          fi
+          rm -f "$promote_file"

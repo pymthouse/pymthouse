@@ -3,7 +3,7 @@
 #
 # After assignment, Vercel auto-points the domain at the latest Preview deployment
 # from that branch on every git push — no per-deploy `vercel alias set` needed for
-# git-triggered builds. CI deploy-staging still runs `vercel alias set` after
+# git-triggered builds. CI deploy-staging still assigns the deployment alias after
 # prebuilt deploys because those deployments are not always picked up by branch
 # routing alone.
 #
