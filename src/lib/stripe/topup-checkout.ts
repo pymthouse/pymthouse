@@ -303,7 +303,10 @@ export async function createMerchantEndUserTopUpCheckoutSession(input: {
   if (!isMerchantConnectPaymentsReady(config)) {
     throw new Error("Merchant Stripe Connect is not ready to accept payments");
   }
-  const accountId = config!.stripeConnectedAccountId!.trim();
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  if (!accountId) {
+    throw new Error("Merchant Stripe Connect is not ready to accept payments");
+  }
   const livemode = appStripeLivemode(config);
 
   let openmeterCustomerId: string | undefined;
@@ -354,7 +357,7 @@ export async function createMerchantEndUserTopUpCheckoutSession(input: {
     amountCents,
     currency: "usd",
     productName: "PymtHouse prepaid credits",
-    applicationFeeBps: config!.applicationFeeBps ?? 0,
+    applicationFeeBps: config?.applicationFeeBps ?? 0,
     livemode,
     metadata: {
       [TOP_UP_METADATA_FLAG]: "1",

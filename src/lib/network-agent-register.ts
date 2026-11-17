@@ -473,7 +473,7 @@ export async function registerNetworkAgent(input: {
     });
   }
 
-  const appUser = inserted[0]!;
+  const appUser = inserted[0];
 
   // Mint the API key before billing so a mint failure only rolls back app_users
   // and never leaves orphaned OpenMeter / end-user billing state.

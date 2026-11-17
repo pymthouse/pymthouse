@@ -1771,7 +1771,10 @@ export async function createMerchantConnectCheckoutForUser(input: {
   if (!isMerchantConnectPaymentsReady(config)) {
     throw new Error("Merchant Stripe Connect is not ready to accept payments");
   }
-  const accountId = config!.stripeConnectedAccountId!;
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  if (!accountId) {
+    throw new Error("Merchant Stripe Connect is not ready to accept payments");
+  }
   const livemode = appStripeLivemode(config);
   const customerId = await ensureMerchantOwnedStripeCustomer({
     clientId: input.clientId,
@@ -1787,8 +1790,8 @@ export async function createMerchantConnectCheckoutForUser(input: {
     successUrl: input.successUrl,
     cancelUrl: input.cancelUrl,
     mode: "setup",
-    currency: config!.defaultCurrency ?? "usd",
-    applicationFeeBps: config!.applicationFeeBps ?? 0,
+    currency: config?.defaultCurrency ?? "usd",
+    applicationFeeBps: config?.applicationFeeBps ?? 0,
     livemode,
     metadata: {
       pymthouse_client_id: input.clientId,

@@ -421,6 +421,9 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
 }> {
   const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
   const plan = planRows[0];
+  if (!plan) {
+    return { ok: false, error: "Plan not active" };
+  }
   const resolved = resolveActivePlanClientId(plan);
   if (!resolved.ok) {
     return { ok: false, error: resolved.error };
@@ -447,7 +450,7 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
 
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
     clientId: planClientId,
-    plan: plan!,
+    plan,
     capabilities: capabilityRows,
     client,
   });

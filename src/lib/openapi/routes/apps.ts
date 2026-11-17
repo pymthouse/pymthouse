@@ -86,7 +86,7 @@ type MetadataRoute = [
     includeExternalUserId?: boolean;
     /** Also document 201 Created (upsert/create handlers). */
     created?: boolean;
-    body?: z.ZodTypeAny;
+    body?: z.ZodType;
   },
 ];
 

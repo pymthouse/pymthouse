@@ -210,7 +210,7 @@ export default function DashboardLayout({
     }
   }, [status, router]);
 
-  const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
+  const appDetailMatch = /^\/apps\/(app_[^/]+)/.exec(pathname);
   const activeAppId = appDetailMatch?.[1] ?? null;
 
   useEffect(() => {
