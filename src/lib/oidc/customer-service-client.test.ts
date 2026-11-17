@@ -233,7 +233,10 @@ test("ensureCustomerServiceOidcClient does not add localhost when CS env unset o
     clientId: csClientId,
   });
   assert.equal(csClient.redirectUris.includes(STAGING_CALLBACK), true);
-  assert.equal(csClient.redirectUris.includes(PRODUCTION_CALLBACK), false);
+  assert.equal(
+    csClient.redirectUris.some((uri) => uri === PRODUCTION_CALLBACK),
+    false,
+  );
   assert.notEqual(second.clientSecret, first.clientSecret);
 });
 
