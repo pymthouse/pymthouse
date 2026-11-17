@@ -149,5 +149,5 @@ for key, value in sorted(source.items()):
     created += 1
 
 print(f"Done: {created} preview vars written. Production records unchanged.")
-print("Verify: vercel link --project pymthouse --yes && vercel env ls preview")
+print("Verify: vercel link --yes --scope livepeer-foundation --project pymthouse && vercel env ls preview")
 PY
