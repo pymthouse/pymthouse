@@ -96,7 +96,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Vercel CLI
-        run: npm install -g vercel@56.4.0 --ignore-scripts
+        # 56.x loads the team via GET /teams/:id before the project. Project-scoped
+        # tokens are forbidden from that call and pull fails with
+        # "Could not retrieve Project Settings". 65.x skips the team lookup.
+        run: npm install -g vercel@65.17.0 --ignore-scripts
 
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=preview --git-branch="$DEPLOY_BRANCH" --token="$VERCEL_TOKEN"
