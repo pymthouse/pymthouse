@@ -17,7 +17,7 @@ set -euo pipefail
 
 STAGING_DOMAIN="${STAGING_DOMAIN:-staging.pymthouse.com}"
 STAGING_GIT_BRANCH="${STAGING_GIT_BRANCH:-staging}"
-VERCEL_ORG_ID="${VERCEL_ORG_ID:-team_JoeNhmK7pgiuSeOwgQASAUFl}"
+VERCEL_ORG_ID="${VERCEL_ORG_ID:-team_GOhUouAF8PsQO4CVvzpIriQV}"
 VERCEL_PROJECT_ID="${VERCEL_PROJECT_ID:-prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG}"
 
 if [[ -z "${VERCEL_TOKEN:-}" ]]; then

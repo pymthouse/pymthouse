@@ -10,8 +10,9 @@ name: Deploy staging
 # so only this workflow deploys to the pymthouse project. The legacy pymthouse-preview
 # Vercel project should stay disconnected from Git.
 #
-# pymthouse.com must be a verified team domain under ecs-vercel (TXT verification,
-# no nameserver migration) — otherwise `vercel alias set` returns "no access".
+# pymthouse.com must be a verified team domain under livepeer-foundation (TXT
+# verification, no nameserver migration) — otherwise `vercel alias set` returns
+# "no access".
 #
 # Enable with repository variables:
 #   RAILWAY_PREVIEW_AUTO_DEPLOY=true   (Railway half, staging branch only)
@@ -67,7 +68,7 @@ jobs:
       name: vercel / preview
       url: https://staging.pymthouse.com
     env:
-      VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
+      VERCEL_ORG_ID: team_GOhUouAF8PsQO4CVvzpIriQV
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       DEPLOY_BRANCH: ${{ inputs.branch || github.ref_name }}

@@ -50,7 +50,7 @@ add_preview_env() {
   echo "  set $key (preview / $PREVIEW_GIT_BRANCH)"
 }
 
-vercel link --project pymthouse --yes >/dev/null
+vercel link --yes --scope livepeer-foundation --project pymthouse >/dev/null
 
 echo "Applying Preview env for branch: $PREVIEW_GIT_BRANCH"
 

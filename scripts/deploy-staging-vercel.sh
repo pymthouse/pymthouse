@@ -6,7 +6,7 @@
 # (Preview scope); run scripts/apply-pymthouse-preview-vercel-env.sh once to sync.
 #
 # Requires: vercel CLI logged in (`vercel login`) or VERCEL_TOKEN set. The alias
-# only works because pymthouse.com is a verified team domain under ecs-vercel
+# only works because pymthouse.com is a verified team domain under livepeer-foundation
 # (TXT verification, no nameserver migration); without that, `vercel alias set`
 # fails with "you don't have access to the domain".
 #
@@ -28,7 +28,7 @@ host_of() {
   printf '%s' "${value%%/*}"
 }
 
-vercel link --project pymthouse --yes >/dev/null
+vercel link --yes --scope livepeer-foundation --project pymthouse >/dev/null
 
 # `vercel deploy` prints a bare URL on a TTY but a JSON envelope under
 # --non-interactive (the default once the CLI detects an agent), so its stdout

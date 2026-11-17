@@ -44,7 +44,7 @@ jobs:
       name: vercel / production
       url: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}
     env:
-      VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
+      VERCEL_ORG_ID: team_GOhUouAF8PsQO4CVvzpIriQV
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
