@@ -393,7 +393,9 @@ export async function verifyOpenMeterPlanId(
 
 function resolveActivePlanClientId(
   plan: typeof plans.$inferSelect | undefined,
-): { ok: true; clientId: string } | { ok: false; error: string } {
+):
+  | { ok: true; clientId: string; plan: typeof plans.$inferSelect }
+  | { ok: false; error: string } {
   if (!plan) {
     return { ok: false, error: "Plan not active" };
   }
@@ -411,7 +413,7 @@ function resolveActivePlanClientId(
   if (!planClientId) {
     return { ok: false, error: "Platform-scoped plans are not synced per app" };
   }
-  return { ok: true, clientId: planClientId };
+  return { ok: true, clientId: planClientId, plan };
 }
 
 export async function syncPlanToOpenMeter(planId: string): Promise<{
@@ -420,15 +422,11 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
   error?: string;
 }> {
   const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
-  const plan = planRows[0];
-  if (!plan) {
-    return { ok: false, error: "Plan not active" };
-  }
-  const resolved = resolveActivePlanClientId(plan);
+  const resolved = resolveActivePlanClientId(planRows[0]);
   if (!resolved.ok) {
     return { ok: false, error: resolved.error };
   }
-  const planClientId = resolved.clientId;
+  const { clientId: planClientId, plan } = resolved;
 
   if (!isHostedAdminClientAvailable()) {
     return {
