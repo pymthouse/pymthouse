@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { getServerSession } from "next-auth";
+import { eq } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
 import { getAdminUser } from "@/lib/admin-auth";
 import {
@@ -12,7 +13,8 @@ import {
   requireAuth,
   type AuthResult,
 } from "@/lib/auth";
-import type { users } from "@/db/schema";
+import { db } from "@/db/index";
+import { users } from "@/db/schema";
 
 export type PlatformUser = typeof users.$inferSelect;
 
@@ -72,6 +74,27 @@ export async function resolveAdmin(
   return result.ok ? result.context.admin : null;
 }
 
+export type SessionRoleDecision = "ok" | "unauthorized" | "forbidden";
+
+/**
+ * `users.role` is the source of truth, matching `getAdminUser`.
+ * NextAuth stamps `role` only at sign-in and the strategy is JWT, so a
+ * deleted or demoted account keeps the old claim until the cookie expires.
+ * `null` means the user row is gone.
+ */
+export function authorizeSessionRole(input: {
+  dbRole: string | null;
+  allowedRoles: readonly string[];
+}): SessionRoleDecision {
+  if (input.dbRole == null) {
+    return "unauthorized";
+  }
+  if (!input.allowedRoles.includes(input.dbRole)) {
+    return "forbidden";
+  }
+  return "ok";
+}
+
 export async function requireSessionRole(
   roles: readonly string[],
 ): Promise<GuardResult<SessionRoleContext>> {
@@ -82,17 +105,32 @@ export async function requireSessionRole(
 
   const sessionUser = session.user as Record<string, unknown>;
   const userId = sessionUser.id;
-  const role = sessionUser.role;
 
-  if (typeof userId !== "string" || typeof role !== "string") {
+  if (typeof userId !== "string" || userId.length === 0) {
     return jsonUnauthorized();
   }
 
-  if (!roles.includes(role)) {
+  const rows = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const dbRole = rows[0]?.role ?? null;
+  const decision = authorizeSessionRole({
+    dbRole,
+    allowedRoles: roles,
+  });
+  if (decision === "unauthorized" || dbRole == null) {
+    return jsonUnauthorized();
+  }
+  if (decision === "forbidden") {
     return jsonForbidden();
   }
 
-  return { ok: true, context: { session, userId, role } };
+  return {
+    ok: true,
+    context: { session, userId, role: dbRole },
+  };
 }
 
 export async function requireBearerScope(
