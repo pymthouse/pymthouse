@@ -332,6 +332,10 @@ async function executeEnabledAutoTopUp(input: {
       amountUsdMicros: input.amountUsdMicros,
       source: "topup",
       idempotencyKey: legacyAutoTopUpGrantIdempotencyKey(pi.id),
+      // Pin the PaymentIntent plane so a Live↔Sandbox switch between charge
+      // and grant cannot credit the opposite eu_/sbx_eu_ wallet (webhook
+      // settle already passes stripeLivemode for the same reason).
+      stripeLivemode: livemode,
       // Charge ran while merchant; pin eu_/sbx_eu_ if billingMode flipped
       // to owner_rollup between PaymentIntent success and this grant.
       billingMode: "merchant",
