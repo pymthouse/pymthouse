@@ -176,12 +176,12 @@ Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-
 | `subject_token` | User access JWT **or** per-app-user API key (`pmth_*` / composite) |
 | `subject_token_type` | API key: `urn:pymthouse:oauth:token-type:api_key` (canonical). JWT: `urn:ietf:params:oauth:token-type:access_token`. Legacy: `access_token` is still accepted for key-shaped subjects. |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
-| `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`) |
+| `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`; MCP/SDK fallbacks use the builder-engine discovery `https://discovery-production-70c1.up.railway.app/discovery`, the node `livepeer-discovery` array) |
 | `caps` | Optional; repeatable capability filters for remote-signer discovery (`caps=pipeline/model`) |
 
 Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange. Do not use client secrets (`pmth_cs_*`) as `subject_token`.
 
-Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (defaults to `{signer_url}/discover-orchestrators`; not OIDC metadata), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
+Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (defaults to `{signer_url}/discover-orchestrators`; not OIDC metadata — the builder-engine discovery service, `https://discovery-production-70c1.up.railway.app/discovery`, serves the node `livepeer-discovery` array as an MCP/SDK fallback), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
 
 Example (bare API key on the issuer token endpoint — personal key, no `{clientId}` in the URL):
 
