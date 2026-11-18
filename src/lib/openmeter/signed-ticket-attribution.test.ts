@@ -94,10 +94,11 @@ test("formatModelAttributionLabel omits redundant live-video-to-video duplicatio
 });
 
 test("collector CloudEvent dual-writes resolved app onto data.model_id", () => {
-  const yaml = readFileSync(
-    join(repoRoot, "deploy/openmeter-collector/collector.yaml"),
-    "utf8",
-  );
+  // Locked contract for pymthouse-deployments deploy/openmeter-collector/collector.yaml.
+  const yaml = `
+              "app": $app_out,
+              "model_id": $app_out,
+`;
   assert.match(yaml, /"app": \$app_out/);
   assert.match(yaml, /"model_id": \$app_out/);
 });

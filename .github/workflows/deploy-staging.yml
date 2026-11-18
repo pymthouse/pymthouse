@@ -1,22 +1,8 @@
 name: Deploy staging
 
-# Auto-deploys on push to any branch except `main`, or manually deploys a chosen branch.
-# Vercel (pymthouse project, Preview environment): every feature branch push creates a
-# prebuilt Preview deployment, assigns staging.pymthouse.com to that branch, and
-# re-aliases the domain onto the new deployment.
-# Railway preview stack: only on push to `staging` (or manual dispatch with branch=staging).
-#
-# Git-triggered Vercel builds are disabled repo-wide (`vercel.json` deploymentEnabled=false)
-# so only this workflow deploys to the pymthouse project. The legacy pymthouse-preview
-# Vercel project should stay disconnected from Git.
-#
-# pymthouse.com must be a verified team domain under livepeer-foundation (TXT
-# verification, no nameserver migration) — otherwise `vercel alias set` returns
-# "no access".
-#
-# Enable with repository variables:
-#   RAILWAY_PREVIEW_AUTO_DEPLOY=true   (Railway half, staging branch only)
-#   VERCEL_PREVIEW_AUTO_DEPLOY=true    (Vercel half, all non-main branches)
+# Thin caller. Deploy logic lives in pymthouse/pymthouse-deployments.
+# Auto-deploys on push to any branch except main, or manually deploys a chosen branch.
+# Railway preview runs only when the ref is staging.
 
 on:
   push:
@@ -25,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch to deploy to staging"
+        description: Branch to deploy to staging
         required: true
         type: string
 
@@ -35,105 +21,11 @@ concurrency:
 
 permissions:
   contents: read
+  deployments: write
 
 jobs:
-  deploy-railway:
-    if: >
-      (github.event_name == 'push' && github.ref_name == 'staging') ||
-      (github.event_name == 'workflow_dispatch' && inputs.branch == 'staging')
-    permissions:
-      contents: read
-      deployments: write
-    uses: ./.github/workflows/deploy-railway-preview.yml
+  deploy:
+    uses: pymthouse/pymthouse-deployments/.github/workflows/deploy-staging.yml@main
     with:
       ref: ${{ inputs.branch || github.ref_name }}
-    secrets:
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
-      OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
-      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
-
-  deploy-vercel:
-    needs: deploy-railway
-    if: >
-      always() &&
-      vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true' &&
-      (needs.deploy-railway.result == 'success' || needs.deploy-railway.result == 'skipped')
-    permissions:
-      contents: read
-      deployments: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment:
-      name: vercel / preview
-      url: https://staging.pymthouse.com
-    env:
-      VERCEL_ORG_ID: team_GOhUouAF8PsQO4CVvzpIriQV
-      VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      DEPLOY_BRANCH: ${{ inputs.branch || github.ref_name }}
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-      AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
-      # Branch-scoped Preview vars are not always present in `vercel pull` during CI
-      # prebuild — inject the canonical staging URL so validate:env passes.
-      NEXTAUTH_URL: https://staging.pymthouse.com
-
-    steps:
-      - name: Checkout requested branch
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.branch || github.ref_name }}
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Install Vercel CLI
-        # 56.x loads the team via GET /teams/:id before the project. Project-scoped
-        # tokens are forbidden from that call and pull fails with
-        # "Could not retrieve Project Settings". 65.x skips the team lookup.
-        run: npm install -g vercel@65.17.0 --ignore-scripts
-
-      - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=preview --git-branch="$DEPLOY_BRANCH" --token="$VERCEL_TOKEN"
-
-      - name: Build
-        run: vercel build --token="$VERCEL_TOKEN"
-
-      - name: Deploy, assign branch, and alias staging
-        run: |
-          set -euo pipefail
-          # `vercel alias set` calls GET /v2/user. Project tokens have no user
-          # and that call returns "User not found", so alias through the API.
-          deploy_json=$(vercel deploy --prebuilt --json --token="$VERCEL_TOKEN")
-          read -r deployment_id deployment_url < <(printf '%s' "$deploy_json" | python3 -c '
-          import json, sys
-          text = sys.stdin.read()
-          data = json.loads(text[text.find("{") :])
-          deployment = data.get("deployment") or data
-          print(deployment["id"], deployment["url"])
-          ')
-          STAGING_GIT_BRANCH="$DEPLOY_BRANCH" bash scripts/assign-staging-domain-branch.sh
-          alias_file=$(mktemp)
-          alias_status=$(curl -sS -o "$alias_file" -w '%{http_code}' -X POST \
-            "https://api.vercel.com/v2/deployments/${deployment_id}/aliases?teamId=${VERCEL_ORG_ID}" \
-            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"alias":"staging.pymthouse.com"}')
-          if (( alias_status < 200 || alias_status >= 300 )); then
-            echo "Alias request failed (HTTP ${alias_status})" >&2
-            cat "$alias_file" >&2
-            rm -f "$alias_file"
-            exit 1
-          fi
-          rm -f "$alias_file"
-          echo "Deployment URL: $deployment_url"
-          echo "Staging branch: $DEPLOY_BRANCH"
-          echo "Staging alias: https://staging.pymthouse.com"
+    secrets: inherit

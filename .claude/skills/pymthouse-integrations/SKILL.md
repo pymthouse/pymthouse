@@ -55,7 +55,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 | Area | File |
 | --- | --- |
-| **OpenMeter writer (metering)** | Kafka `create_signed_ticket` → `deploy/openmeter-collector/collector.yaml` → Konnect OpenMeter |
+| **OpenMeter writer (metering)** | Kafka `create_signed_ticket` → `pymthouse-deployments` `deploy/openmeter-collector/collector.yaml` → Konnect OpenMeter |
 | Signer ops (no HTTP proxy) | `src/lib/signer-proxy.ts` — DMZ URL, health/sync only; `POST /api/signer/device/exchange` for JWT mint |
 | OpenMeter facade | `src/lib/openmeter/` — `customers.ts` (`ensureOpenMeterCustomer` → `{ id, key }`), `invoices.ts`, `plans-sync.ts`, `usage-read.ts`, `stripe-connect.ts` |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |

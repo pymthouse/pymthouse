@@ -70,8 +70,11 @@ Open:
 
 ## 4) Start the signer (signer-dmz)
 
-The local stack uses the full **signer-dmz** image from `docker/signer-dmz/Dockerfile` (same as
-production: Apache, JWT verification, and go-livepeer in one process). The container
+The local stack uses the full **signer-dmz** image from
+[pymthouse-deployments](https://github.com/pymthouse/pymthouse-deployments)
+`docker/signer-dmz/Dockerfile` (same as production: Apache, JWT verification, and
+go-livepeer in one process). Check that repo out next to this one, or set
+`PYMTHOUSE_DEPLOYMENTS`. The container
 must be able to download the OIDC public key at start time, so the app in step 3
 must be running *before* the first `docker compose up`. Default DMZ URL:
 `http://127.0.0.1:8080` — match `SIGNER_INTERNAL_URL` and `SIGNER_CLI_URL` in `.env`.
@@ -159,26 +162,10 @@ npm run lint
 
 ### Vercel + Railway/Render
 
-Pymthouse can be deployed to Vercel (for the Next.js app) with the Docker signer on Railway and **OpenMeter on a separate Railway project** (usage / trial credits). See [docs/openmeter-railway.md](docs/openmeter-railway.md).
-
-**Quick Deploy (15 minutes):**
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a quick checklist.
-
-**Detailed Guide:**
-See [docs/vercel-deployment.md](docs/vercel-deployment.md) for full step-by-step instructions including:
-- Deploying the go-livepeer signer to Railway/Render/Fly.io
-- Deploying OpenMeter to Railway ([openmeter-railway.md](docs/openmeter-railway.md))
-- Deploying the Next.js app to Vercel
-- Configuring environment variables
-- Setting up PostgreSQL (Neon/Vercel Postgres)
-- OAuth callback URLs
-- Custom domains
+Pymthouse deploys the Next.js app to Vercel from this repo. The Docker signer, Railway stack, and deployment docs live in [pymthouse-deployments](https://github.com/pymthouse/pymthouse-deployments).
 
 **Files included:**
-- `vercel.json` - Vercel configuration
-- `docker/signer-dmz/` — go-livepeer signer Dockerfiles, Apache JWT DMZ, `docker-compose.yml`, and `scripts/jwks_to_pem.py` (see [docker/signer-dmz/README.md](docker/signer-dmz/README.md))
-- `railway.json` - Railway configuration
-- `render.yaml` - Render Blueprint
+- `vercel.json` - Vercel configuration for the Next.js app
 
 ## Troubleshooting
 

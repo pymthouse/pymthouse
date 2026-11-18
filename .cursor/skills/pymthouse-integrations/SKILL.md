@@ -56,7 +56,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 | Area | File |
 | --- | --- |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |
-| Signer-authoritative metering | go-livepeer `create_signed_ticket` → Kafka → OpenMeter collector (normalizes `subject` = `usage_subject`, explicit `data.client_id`); `/api/signer/*` proxy removed |
+| Signer-authoritative metering | go-livepeer `create_signed_ticket` → Kafka → `pymthouse-deployments` `deploy/openmeter-collector/collector.yaml` (normalizes `subject` = `usage_subject`, explicit `data.client_id`); `/api/signer/*` proxy removed |
 | Usage API OpenMeter reads | `src/lib/openmeter/usage-read.ts` (requires `OPENMETER_URL`) |
 | Bootstrap meters/features | `npm run openmeter:bootstrap`, `docker-compose.openmeter.yml` |
 

@@ -1,31 +1,17 @@
 name: Deploy production (Vercel)
 
-# Deploys the pymthouse Vercel project (pymthouse.com) on v* tag push or via release workflow.
-# Non-sensitive Production vars come from `vercel pull`. Sensitive vars are injected
-# from GitHub environment `vercel / production` secrets for CI `vercel build`.
-#
-# Enable with repository variable:
-#   VERCEL_PRODUCTION_AUTO_DEPLOY=true
-#
-# Required secrets (repo or `vercel / production` environment):
-#   VERCEL_TOKEN
-#   DATABASE_URL          — Neon production Postgres (migrations run before build)
-#   NEXTAUTH_SECRET
-#   AUTH_TOKEN_PEPPER
-#
-# Recommended: disable native Git auto-builds on the pymthouse Vercel project
-# (Settings → Git → Ignored Build Step: exit 1) so only this workflow deploys prod.
+# Thin caller. The build runs in pymthouse/pymthouse-deployments against this ref.
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-  workflow_call:
     inputs:
       ref:
-        type: string
+        description: Tag or SHA to deploy
         required: false
+        type: string
 
 concurrency:
   group: deploy-production-vercel
@@ -37,93 +23,7 @@ permissions:
 
 jobs:
   deploy:
-    if: vars.VERCEL_PRODUCTION_AUTO_DEPLOY == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment:
-      name: vercel / production
-      url: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}
-    env:
-      VERCEL_ORG_ID: team_GOhUouAF8PsQO4CVvzpIriQV
-      VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-      AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Install Vercel CLI
-        # 56.x loads the team via GET /teams/:id before the project. Project-scoped
-        # tokens are forbidden from that call and pull fails with
-        # "Could not retrieve Project Settings". 65.x skips the team lookup.
-        run: npm install -g vercel@65.17.0 --ignore-scripts
-
-      - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-
-      - name: Apply database migrations
-        run: |
-          set -euo pipefail
-          if [ -z "${DATABASE_URL:-}" ]; then
-            echo "DATABASE_URL secret is required on the vercel / production environment."
-            echo "Set it to the Neon production Postgres URL before deploying."
-            exit 1
-          fi
-          npm run db:prepare
-
-      - name: Build
-        run: vercel build --prod --token="$VERCEL_TOKEN"
-
-      - name: Deploy to pymthouse production
-        id: vercel_deploy
-        run: |
-          set -euo pipefail
-          deploy_json=$(vercel deploy --prebuilt --prod --json --token="$VERCEL_TOKEN")
-          read -r deployment_id deployment_url < <(printf '%s' "$deploy_json" | python3 -c '
-          import json, sys
-          text = sys.stdin.read()
-          data = json.loads(text[text.find("{") :])
-          deployment = data.get("deployment") or data
-          print(deployment["id"], deployment["url"])
-          ')
-          {
-            echo "deployment_id=$deployment_id"
-            echo "deployment_url=$deployment_url"
-          } >> "$GITHUB_OUTPUT"
-          echo "Vercel deployment: $deployment_url"
-          echo "Canonical URL: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}"
-
-      - name: Promote deployment (assign custom domains)
-        run: |
-          set -euo pipefail
-          # `vercel promote` resolves the caller with GET /v2/user. Project tokens
-          # have no user, so queue promotion on the project API instead.
-          promote_file=$(mktemp)
-          promote_status=$(curl -sS -o "$promote_file" -w '%{http_code}' -X POST \
-            "https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/promote/${{ steps.vercel_deploy.outputs.deployment_id }}?teamId=${VERCEL_ORG_ID}" \
-            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{}')
-          if (( promote_status < 200 || promote_status >= 300 )); then
-            echo "Promote request failed (HTTP ${promote_status})" >&2
-            cat "$promote_file" >&2
-            rm -f "$promote_file"
-            exit 1
-          fi
-          rm -f "$promote_file"
+    uses: pymthouse/pymthouse-deployments/.github/workflows/deploy-production-vercel.yml@main
+    with:
+      ref: ${{ inputs.ref || github.ref_name }}
+    secrets: inherit

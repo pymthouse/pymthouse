@@ -57,7 +57,7 @@ npm run dev                    # http://localhost:3001
 Optional clearinghouse stack (not required for OpenMeter-only demo):
 
 ```bash
-docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build
+docker compose -f ../pymthouse-deployments/docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build
 ```
 
 No Railway deploy is required for this demo.

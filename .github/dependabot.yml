@@ -55,39 +55,6 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: gomod
-    directory: /docker/signer-dmz/turnkey-bootstrap
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 15
-    commit-message:
-      prefix: "build"
-      include: scope
-    # Nested module lives at a pseudo-version. Dependabot tries
-    # github.com/tkhq/go-sdk@v0.17.0 which does not contain this package
-    # and marks the whole gomod update job failed.
-    ignore:
-      - dependency-name: github.com/tkhq/go-sdk/pkg/enclave_encrypt
-    groups:
-      go-security:
-        applies-to: security-updates
-        patterns:
-          - "*"
-      go-minor-patch:
-        applies-to: version-updates
-        update-types:
-          - minor
-          - patch
-        patterns:
-          - "*"
-      go-major:
-        applies-to: version-updates
-        update-types:
-          - major
-        patterns:
-          - "*"
-
   - package-ecosystem: github-actions
     directory: /
     schedule:

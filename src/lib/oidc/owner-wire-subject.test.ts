@@ -26,7 +26,7 @@ import {
  * meter groupBy.external_user_id. No `#` means legacy single-subject form.
  *
  * These tests pin the contract in the same shape the collector implements
- * (deploy/openmeter-collector/collector.yaml), so a change on either side
+ * (pymthouse-deployments deploy/openmeter-collector/collector.yaml), so a change on either side
  * that breaks attribution fails here.
  */
 

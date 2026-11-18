@@ -88,12 +88,6 @@ jobs:
         # auditable builds under PCI DSS 6.3.2 (inventory of bespoke/custom software).
         run: npm ci --ignore-scripts
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: docker/signer-dmz/turnkey-bootstrap/go.mod
-          cache-dependency-path: docker/signer-dmz/turnkey-bootstrap/go.sum
-
       - name: Set up Snyk CLI
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1
 

@@ -12,6 +12,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEPLOYMENTS="${PYMTHOUSE_DEPLOYMENTS:-${ROOT}/../pymthouse-deployments}"
 GO_LIVEPEER_DIR="${GO_LIVEPEER_DIR:-${ROOT}/../go-livepeer}"
 LPCLEARINGHOUSE_DIR="${LPCLEARINGHOUSE_DIR:-${ROOT}/../lpclearinghouse}"
 LIVEPEER_IMAGE="${LIVEPEER_IMAGE:-livepeer/go-livepeer:0.9.3}"
@@ -33,13 +34,21 @@ else
   LIVEPEER_IMAGE="${REMOTE_SIGNER_IMAGE}"
 fi
 
+if [[ ! -f "${DEPLOYMENTS}/docker/signer-dmz/Dockerfile" ]]; then
+  echo "Signer Dockerfile not found at ${DEPLOYMENTS}/docker/signer-dmz/Dockerfile" >&2
+  echo "Clone https://github.com/pymthouse/pymthouse-deployments next to this repo or set PYMTHOUSE_DEPLOYMENTS." >&2
+  exit 1
+fi
+
 echo "Building ${SIGNER_DMZ_IMAGE} (signer-dmz-local, livepeer from ${LIVEPEER_IMAGE})..."
 docker build \
-  -f "${ROOT}/docker/signer-dmz/Dockerfile" \
+  -f "${DEPLOYMENTS}/docker/signer-dmz/Dockerfile" \
   --target signer-dmz-local \
   --build-arg "LIVEPEER_IMAGE=${LIVEPEER_IMAGE}" \
   -t "${SIGNER_DMZ_IMAGE}" \
-  "${ROOT}"
+  "${DEPLOYMENTS}"
 
-echo "Done. Start the full clearinghouse stack (signer + kafka + collector):"
-echo "  cd ${ROOT} && docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build"
+echo "Done. Start the signer from this repo:"
+echo "  cd ${ROOT} && docker compose up -d signer-dmz"
+echo "Or the full clearinghouse stack from the deployments repo:"
+echo "  cd ${DEPLOYMENTS} && docker compose -f docker-compose.clearinghouse.railway.yml --env-file ${ROOT}/.env.local up -d --build"

@@ -1,25 +1,22 @@
 name: OpenMeter Railway bootstrap
 
+# Thin caller. Bootstrap script stays in this repo; the workflow runs from
+# pymthouse/pymthouse-deployments so it can target a chosen ref.
+
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or SHA to bootstrap
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   bootstrap:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Bootstrap meters and features
-        env:
-          OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
-          OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
-          OPENMETER_TRIAL_FEATURE_KEY: ${{ vars.OPENMETER_TRIAL_FEATURE_KEY || 'network_spend' }}
-        run: npm run openmeter:railway:bootstrap
+    uses: pymthouse/pymthouse-deployments/.github/workflows/openmeter-railway-bootstrap.yml@main
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+    secrets: inherit

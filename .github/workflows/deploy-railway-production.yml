@@ -1,45 +1,18 @@
 name: Deploy Railway production clearinghouse stack
 
-# Deploys Kafka + OpenMeter collector + signer DMZ in the Railway "production" environment.
-# Enable with repository variable:
-#   RAILWAY_PRODUCTION_AUTO_DEPLOY=true
-#
-# Required secrets:
-#   RAILWAY_API_TOKEN  (Account → Tokens — workspace scope; required for CI deploy)
-#   OPENMETER_URL
-#   OPENMETER_API_KEY
-#   WEBHOOK_SECRET
-#
-# Optional: RAILWAY_TOKEN (Project → Settings → Tokens, production env only) if you
-# do not use an account token; scripts pass --project so link/whoami are not needed.
-#
-# Optional secrets:
-#   RAILWAY_PRODUCTION_DATABASE_URL, RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER,
-#   RAILWAY_PRODUCTION_NEXTAUTH_SECRET, ETH_RPC_URL
-#   Turnkey signer bootstrap (all four required together on pymthouse service):
-#   TURNKEY_ORG_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY,
-#   SIGNER_ETH_KEYSTORE_PASSWORD
-#
-# Optional repository variables (defaults applied when unset):
-#   RAILWAY_PRODUCTION_NEXTAUTH_URL → https://pymthouse.com
-#   RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true — post-deploy meter bootstrap
-#   SIGNER_NETWORK → arbitrum-one-mainnet
-#
-# OIDC_ISSUER / OIDC_AUDIENCE / JWKS_URI on the pymthouse service are derived from
-# NEXTAUTH_URL in scripts/railway-apply-stack-env.sh (see config/railway/production.env.example).
-#
-# Triggered by v* tag push, manual dispatch, or the release workflow (workflow_call).
+# Thin caller. Railway uploads the tree in pymthouse/pymthouse-deployments.
+# OpenMeter meter bootstrap still runs from this repo's checkout.
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-  workflow_call:
     inputs:
       ref:
-        type: string
+        description: Tag or SHA to bootstrap OpenMeter against
         required: false
+        type: string
 
 concurrency:
   group: deploy-railway-production
@@ -51,53 +24,7 @@ permissions:
 
 jobs:
   deploy:
-    if: vars.RAILWAY_PRODUCTION_AUTO_DEPLOY == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment:
-      name: railway / production
-      url: ${{ vars.RAILWAY_PRODUCTION_SIGNER_URL || 'https://railway.app/project/dab233aa-dd5f-429d-8cc4-9042e8735e2b' }}
-    env:
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      RAILWAY_ENVIRONMENT: production
-      RAILWAY_PROJECT_ID: dab233aa-dd5f-429d-8cc4-9042e8735e2b
-      OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
-      OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
-      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
-      NEXTAUTH_URL: ${{ vars.RAILWAY_PRODUCTION_NEXTAUTH_URL || 'https://pymthouse.com' }}
-      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
-      SIGNER_NETWORK: ${{ vars.SIGNER_NETWORK || 'arbitrum-one-mainnet' }}
-      DATABASE_URL: ${{ secrets.RAILWAY_PRODUCTION_DATABASE_URL }}
-      AUTH_TOKEN_PEPPER: ${{ secrets.RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER }}
-      NEXTAUTH_SECRET: ${{ secrets.RAILWAY_PRODUCTION_NEXTAUTH_SECRET }}
-      TURNKEY_ORG_ID: ${{ secrets.TURNKEY_ORG_ID }}
-      TURNKEY_API_PUBLIC_KEY: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
-      TURNKEY_API_PRIVATE_KEY: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
-      SIGNER_ETH_KEYSTORE_PASSWORD: ${{ secrets.SIGNER_ETH_KEYSTORE_PASSWORD }}
-      TURNKEY_WALLET_NAME: ${{ vars.TURNKEY_WALLET_NAME }}
-      SIGNER_ETH_ADDR: ${{ vars.SIGNER_ETH_ADDR }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          persist-credentials: false
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli@5.27.1 --ignore-scripts
-
-      - name: Apply production environment variables
-        run: bash scripts/railway-apply-stack-env.sh
-
-      - name: Deploy full stack
-        run: bash scripts/railway-deploy-stack.sh production
-
-      - name: Bootstrap OpenMeter meters
-        if: vars.RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER == 'true'
-        env:
-          OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
-          OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
-        run: |
-          npm ci --ignore-scripts
-          npm run openmeter:railway:bootstrap
+    uses: pymthouse/pymthouse-deployments/.github/workflows/deploy-railway-production.yml@main
+    with:
+      ref: ${{ inputs.ref || github.ref_name }}
+    secrets: inherit
