@@ -32,7 +32,6 @@ import { isLegacyAutoTopUpPaymentIntentMetadata } from "@/lib/stripe/legacy-auto
 import {
   connectAccountLinkUrls,
   createAccountOnboardingLink,
-  createConnectedCheckoutSession,
   createConnectedCustomer,
   createMerchantConnectedAccount,
   exchangeConnectOAuthCode,
@@ -1139,9 +1138,14 @@ export async function syncMerchantConnectStatus(clientId: string): Promise<void>
   await syncConnectedAccountFlags(clientId, accountId, appStripeLivemode(config));
 }
 
+export type MerchantConnectPaymentsReadyConfig =
+  typeof appBillingConfig.$inferSelect & {
+    stripeConnectedAccountId: string;
+  };
+
 export function isMerchantConnectPaymentsReady(
   config: typeof appBillingConfig.$inferSelect | null | undefined,
-): boolean {
+): config is MerchantConnectPaymentsReadyConfig {
   return Boolean(
     config?.stripeConnectedAccountId?.trim() &&
       config.stripeChargesEnabled &&
@@ -1757,43 +1761,4 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     openmeterCustomerKey: canonical.openmeterCustomerKey,
   });
   return stripeCustomerId;
-}
-
-export async function createMerchantConnectCheckoutForUser(input: {
-  clientId: string;
-  externalUserId: string;
-  successUrl: string;
-  cancelUrl: string;
-  openmeterCustomerId?: string;
-  openmeterCustomerKey?: string;
-}): Promise<{ checkoutUrl: string; sessionId: string }> {
-  const config = await getAppBillingConfig(input.clientId);
-  if (!isMerchantConnectPaymentsReady(config)) {
-    throw new Error("Merchant Stripe Connect is not ready to accept payments");
-  }
-  const accountId = config!.stripeConnectedAccountId!;
-  const livemode = appStripeLivemode(config);
-  const customerId = await ensureMerchantOwnedStripeCustomer({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    accountId,
-    openmeterCustomerId: input.openmeterCustomerId,
-    openmeterCustomerKey: input.openmeterCustomerKey,
-    livemode,
-  });
-  const session = await createConnectedCheckoutSession({
-    accountId,
-    customerId,
-    successUrl: input.successUrl,
-    cancelUrl: input.cancelUrl,
-    mode: "setup",
-    currency: config!.defaultCurrency ?? "usd",
-    applicationFeeBps: config!.applicationFeeBps ?? 0,
-    livemode,
-    metadata: {
-      pymthouse_client_id: input.clientId,
-      external_user_id: input.externalUserId,
-    },
-  });
-  return { checkoutUrl: session.url, sessionId: session.sessionId };
 }

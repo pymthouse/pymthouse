@@ -140,7 +140,7 @@ function requireEnv(name: string): string {
   if (!value) {
     fail(`${name} is required`);
   }
-  return value as string;
+  return value;
 }
 
 function basicAuthHeader(): string {

@@ -5,9 +5,9 @@ import { plans, subscriptions } from "@/db/schema";
 import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { createMerchantConnectCheckoutForUser } from "@/lib/stripe/merchant-connect-checkout";
 import {
   connectPaymentsOnlyEnabled,
-  createMerchantConnectCheckoutForUser,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
 import { getHostedAdminClient } from "./admin-client";
