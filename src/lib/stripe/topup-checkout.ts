@@ -12,13 +12,8 @@ import { randomUUID } from "node:crypto";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import { prepareOwnerCustomerStripeBilling } from "@/lib/openmeter/billing-profiles";
 import {
-  getAppBillingConfig,
-  prepareOwnerCustomerStripeBilling,
-} from "@/lib/openmeter/billing-profiles";
-import {
-  ensureOpenMeterCustomer,
   ensureOwnerCustomer,
   listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
