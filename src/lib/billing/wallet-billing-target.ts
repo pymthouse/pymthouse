@@ -1,4 +1,5 @@
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import { isOwnerWireSubject } from "@/lib/openmeter/customer-key";
 
 export type WalletBillingTarget =
   | { mode: "owner_rollup"; ownerUserId: string }
@@ -7,6 +8,24 @@ export type WalletBillingTarget =
 export type WalletBillingTargetResult =
   | { ok: true; target: WalletBillingTarget }
   | { ok: false; status: 400; error: string };
+
+/**
+ * Merchant wallets are end-user customers. `owner:{id}` would otherwise
+ * rematerialize as a platform prepaid wallet (cross-tenant read / top-up).
+ */
+export function merchantOwnerWireTargetError(
+  externalUserId: string,
+): Extract<WalletBillingTargetResult, { ok: false }> | null {
+  if (!isOwnerWireSubject(externalUserId)) {
+    return null;
+  }
+  return {
+    ok: false,
+    status: 400,
+    error:
+      "externalUserId must be an end-user id; owner:{users.id} is not valid for merchant wallets",
+  };
+}
 
 /** Trim a query/body `externalUserId` — empty / non-string → null. */
 export function readOptionalExternalUserId(value: unknown): string | null {
@@ -39,6 +58,10 @@ export async function resolveWalletBillingTarget(input: {
         status: 400,
         error: "externalUserId is required when billingMode is merchant",
       };
+    }
+    const ownerWireError = merchantOwnerWireTargetError(externalUserId);
+    if (ownerWireError) {
+      return ownerWireError;
     }
     return { ok: true, target: { mode: "merchant", externalUserId } };
   }
