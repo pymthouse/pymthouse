@@ -24,10 +24,15 @@ test("reassignAppOwner moves owner_id when the current owner has no credits", as
   });
   await ensureProviderAdminMembership(app.userId, app.clientId);
 
-  const result = await reassignAppOwner({
-    appId: app.clientId,
-    newOwnerUserId: nextOwner,
-  });
+  const result = await reassignAppOwner(
+    {
+      appId: app.clientId,
+      newOwnerUserId: nextOwner,
+    },
+    {
+      lookupOwnerPrepaidCreditBalance: async () => ({ status: "empty" }),
+    },
+  );
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.equal(result.ownerId, nextOwner);
@@ -65,4 +70,79 @@ test("reassignAppOwner refuses an unknown user", async (t) => {
   if (!result.ok) {
     assert.equal(result.status, 404);
   }
+});
+
+test("reassignAppOwner refuses when the current owner has prepaid credits", async (t) => {
+  const nextOwner = await createTestUser();
+  const app = await seedDeveloperAppWithClient({
+    name: `Funded owner ${nextOwner.slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+    await deleteTestUser(nextOwner);
+  });
+
+  const result = await reassignAppOwner(
+    {
+      appId: app.clientId,
+      newOwnerUserId: nextOwner,
+    },
+    {
+      lookupOwnerPrepaidCreditBalance: async () => ({
+        status: "credited",
+        balance: {
+          hasAccess: true,
+          balanceUsdMicros: "5000000",
+          lifetimeGrantedUsdMicros: "5000000",
+          consumedUsdMicros: "0",
+        },
+      }),
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 400);
+  }
+
+  const rows = await db
+    .select({ ownerId: developerApps.ownerId })
+    .from(developerApps)
+    .where(eq(developerApps.id, app.clientId))
+    .limit(1);
+  assert.equal(rows[0]?.ownerId, app.userId);
+});
+
+test("reassignAppOwner fails closed when prepaid credit lookup errors", async (t) => {
+  const nextOwner = await createTestUser();
+  const app = await seedDeveloperAppWithClient({
+    name: `Lookup fail ${nextOwner.slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+    await deleteTestUser(nextOwner);
+  });
+
+  const result = await reassignAppOwner(
+    {
+      appId: app.clientId,
+      newOwnerUserId: nextOwner,
+    },
+    {
+      lookupOwnerPrepaidCreditBalance: async () => ({
+        status: "error",
+        message: "Konnect credits/balance failed",
+      }),
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 503);
+  }
+
+  const rows = await db
+    .select({ ownerId: developerApps.ownerId })
+    .from(developerApps)
+    .where(eq(developerApps.id, app.clientId))
+    .limit(1);
+  assert.equal(rows[0]?.ownerId, app.userId);
 });
