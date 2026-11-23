@@ -10,6 +10,7 @@ import IdentityLifecycleActions from "@/components/identities/IdentityLifecycleA
 import IdentityRequestLog from "@/components/identities/IdentityRequestLog";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillableDuration } from "@/lib/billing-format";
+import { identityBillingPanelKey } from "@/lib/billing/identity-plan-selection";
 import { dateKeysInclusiveUtc, resolveBillingCycle } from "@/lib/billing-utils";
 import { queryEarliestUsageCycleKey } from "@/lib/usage/usage-cycle-keys";
 import {
@@ -236,6 +237,7 @@ export default async function AppIdentityDetailPage({
 
       <div className="mb-6 sm:mb-8">
         <IdentityBillingPanel
+          key={identityBillingPanelKey(id, externalUserId)}
           appId={id}
           externalUserId={externalUserId}
           billingMode={billingMode}

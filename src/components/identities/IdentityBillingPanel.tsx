@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { identityPlanSelectValue } from "@/lib/billing/identity-plan-selection";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import { formatBillingUtcDate } from "@/lib/billing-format";
 import { billingCycleHref, invoiceOverlapsCycle } from "@/lib/billing-utils";
@@ -504,11 +505,12 @@ export default function IdentityBillingPanel({
   }, [billingMode, load]);
 
   const livePlanId = subscription?.livePlan?.id ?? subscription?.subscription?.planId ?? "";
+  // Re-sync when the viewed identity or its live plan changes. Seeding only
+  // when selectedPlanId is empty leaves identity A's plan selected after
+  // soft-nav to B, and Apply would POST that planId to B's change endpoint.
   useEffect(() => {
-    if (!selectedPlanId && livePlanId) {
-      setSelectedPlanId(livePlanId);
-    }
-  }, [livePlanId, selectedPlanId]);
+    setSelectedPlanId(identityPlanSelectValue(livePlanId));
+  }, [appId, externalUserId, livePlanId]);
 
   const selectablePlans = useMemo(
     () => plans.filter((plan) => plan.status === "active"),
